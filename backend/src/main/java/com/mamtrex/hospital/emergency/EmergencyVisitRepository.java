@@ -1,0 +1,1 @@
+package com.mamtrex.hospital.emergency; import org.springframework.data.jpa.repository.JpaRepository; import java.util.UUID; public interface EmergencyVisitRepository extends JpaRepository<EmergencyVisit,UUID>{}

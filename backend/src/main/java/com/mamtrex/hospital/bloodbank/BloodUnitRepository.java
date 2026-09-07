@@ -1,0 +1,1 @@
+package com.mamtrex.hospital.bloodbank; import org.springframework.data.jpa.repository.JpaRepository; import java.util.UUID; public interface BloodUnitRepository extends JpaRepository<BloodUnit,UUID>{}

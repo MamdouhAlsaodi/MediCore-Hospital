@@ -1,0 +1,1 @@
+package com.mamtrex.hospital.nursing; import org.springframework.data.jpa.repository.JpaRepository; import java.util.UUID; public interface NursingObservationRepository extends JpaRepository<NursingObservation,UUID>{}

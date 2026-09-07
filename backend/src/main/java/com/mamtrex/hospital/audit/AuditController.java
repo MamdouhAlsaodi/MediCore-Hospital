@@ -1,0 +1,1 @@
+package com.mamtrex.hospital.audit; import org.springframework.web.bind.annotation.*; import java.util.*; @RestController @RequestMapping("/api/audit") public class AuditController { private final AuditEventRepository repo; public AuditController(AuditEventRepository r){repo=r;} @GetMapping public List<AuditEvent> all(){return repo.findAll();} }

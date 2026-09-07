@@ -1,0 +1,3 @@
+package com.mamtrex.hospital.laboratory;
+import com.mamtrex.hospital.shared.BaseEntity; import jakarta.persistence.*;
+@Entity @Table(name="lab_orders") public class LabOrder extends BaseEntity { private String patientId; private String testCode; private String specimen; private String result; private String status; protected LabOrder(){} public LabOrder(String patientId, String testCode, String specimen, String result, String status){this.patientId=patientId; this.testCode=testCode; this.specimen=specimen; this.result=result; this.status=status;} public String getPatientId(){return patientId;} public String getTestCode(){return testCode;} public String getSpecimen(){return specimen;} public String getResult(){return result;} public String getStatus(){return status;} }

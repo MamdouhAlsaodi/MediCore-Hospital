@@ -1,0 +1,8 @@
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/medicore}
+    username: ${DB_USER:medicore}
+    password: ${DB_PASSWORD:medicore}
+  jpa:
+    hibernate:
+      ddl-auto: validate

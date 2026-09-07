@@ -1,0 +1,3 @@
+package com.mamtrex.hospital.facility;
+import com.mamtrex.hospital.shared.BaseEntity; import jakarta.persistence.*;
+@Entity @Table(name="work_orders") public class WorkOrder extends BaseEntity { private String area; private String category; private String description; private String priority; private String status; protected WorkOrder(){} public WorkOrder(String area, String category, String description, String priority, String status){this.area=area; this.category=category; this.description=description; this.priority=priority; this.status=status;} public String getArea(){return area;} public String getCategory(){return category;} public String getDescription(){return description;} public String getPriority(){return priority;} public String getStatus(){return status;} }

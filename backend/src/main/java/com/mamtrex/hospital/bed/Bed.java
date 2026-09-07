@@ -1,0 +1,3 @@
+package com.mamtrex.hospital.bed;
+import com.mamtrex.hospital.shared.BaseEntity; import jakarta.persistence.*;
+@Entity @Table(name="beds") public class Bed extends BaseEntity { private String ward; private String room; private String bedNumber; private String occupancyStatus; private String patientId; protected Bed(){} public Bed(String ward, String room, String bedNumber, String occupancyStatus, String patientId){this.ward=ward; this.room=room; this.bedNumber=bedNumber; this.occupancyStatus=occupancyStatus; this.patientId=patientId;} public String getWard(){return ward;} public String getRoom(){return room;} public String getBedNumber(){return bedNumber;} public String getOccupancyStatus(){return occupancyStatus;} public String getPatientId(){return patientId;} }

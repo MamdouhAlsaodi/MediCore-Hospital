@@ -1,0 +1,3 @@
+package com.mamtrex.hospital.department;
+import com.mamtrex.hospital.shared.BaseEntity; import jakarta.persistence.*;
+@Entity @Table(name="departments") public class Department extends BaseEntity { private String code; private String name; private String specialty; private String location; protected Department(){} public Department(String code, String name, String specialty, String location){this.code=code; this.name=name; this.specialty=specialty; this.location=location;} public String getCode(){return code;} public String getName(){return name;} public String getSpecialty(){return specialty;} public String getLocation(){return location;} }

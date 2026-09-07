@@ -1,0 +1,1 @@
+package com.mamtrex.hospital.medication; import org.springframework.data.jpa.repository.JpaRepository; import java.util.UUID; public interface MedicationOrderRepository extends JpaRepository<MedicationOrder,UUID>{}

@@ -1,0 +1,1 @@
+package com.mamtrex.hospital.patient; import org.springframework.data.jpa.repository.JpaRepository; import java.util.*; public interface PatientRepository extends JpaRepository<Patient,UUID>{Optional<Patient> findByMedicalRecordNumber(String mrn); List<Patient> findByFullNameContainingIgnoreCase(String q);}

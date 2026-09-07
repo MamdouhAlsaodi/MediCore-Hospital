@@ -1,0 +1,3 @@
+package com.mamtrex.hospital.hr;
+import com.mamtrex.hospital.shared.BaseEntity; import jakarta.persistence.*;
+@Entity @Table(name="shifts") public class Shift extends BaseEntity { private String staffId; private String department; private String startsAt; private String endsAt; private String status; protected Shift(){} public Shift(String staffId, String department, String startsAt, String endsAt, String status){this.staffId=staffId; this.department=department; this.startsAt=startsAt; this.endsAt=endsAt; this.status=status;} public String getStaffId(){return staffId;} public String getDepartment(){return department;} public String getStartsAt(){return startsAt;} public String getEndsAt(){return endsAt;} public String getStatus(){return status;} }

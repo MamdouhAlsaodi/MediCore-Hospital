@@ -1,0 +1,1 @@
+package com.mamtrex.hospital.radiology; import org.springframework.data.jpa.repository.JpaRepository; import java.util.UUID; public interface RadiologyOrderRepository extends JpaRepository<RadiologyOrder,UUID>{}

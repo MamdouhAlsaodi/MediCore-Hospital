@@ -1,0 +1,39 @@
+# Runtime environments and local overrides
+.env
+.env.*
+!.env.example
+
+# Java, Vite, and generated outputs
+**/target/
+**/node_modules/
+**/dist/
+*.class
+
+# H2 and local databases
+backend/data/
+*.mv.db
+*.trace.db
+
+# Logs and local tooling
+*.log
+.idea/
+.vscode/
+*.iml
+.husky/
+.hermes/
+
+# Keys and certificates
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+*.cer
+
+# Archives and OS debris
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+.DS_Store
+Thumbs.db

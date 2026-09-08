@@ -1,9 +1,9 @@
-# MediCore Hospital — Phase 29
+# MediCore Hospital
 
 MediCore is an educational, non-clinical Java/Spring Boot + React training implementation of a modular hospital-management system. It is not certified clinical software and must not be used for patient care or real clinical decisions.
 
 ## Start here
-- `docs/plan.md` — the 29-phase roadmap.
+- `docs/plan.md` — the implementation roadmap.
 - `docs/pdr.md` — product and architecture boundaries.
 - `docs/api.md` — API quick start.
 - `docs/runbook.md` — safe local review instructions.

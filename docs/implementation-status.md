@@ -1,4 +1,4 @@
-# Implementation Status — Phase 29
+# Implementation Status
 
 ## Implemented in code
 - Patient registry with create/read/list/update and audit events.
@@ -16,4 +16,4 @@
 - External integrations such as HL7/FHIR, PACS/Orthanc, payment gateways and insurer networks.
 - Production-grade MFA/SSO, fine-grained resource authorization and secret manager integration.
 
-The repository is therefore complete as the requested 29-phase **training/reference build**, not represented as deployable certified hospital software.
+The repository is therefore complete as the requested **training/reference build**, not represented as deployable certified hospital software.

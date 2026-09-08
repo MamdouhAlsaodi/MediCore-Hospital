@@ -1,4 +1,4 @@
-# MediCore Hospital — Implementation Plan (1–29)
+# MediCore Hospital — Implementation Plan
 
 > Status: training/reference implementation. Docker is intentionally deferred to conserve development-machine resources.
 

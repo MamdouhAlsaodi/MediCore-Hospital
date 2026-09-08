@@ -5,8 +5,10 @@ export default defineConfig({
   plugins: [react()],
   server: {
     host: process.env.REVIEW_BIND_HOST || '127.0.0.1',
+    port: 5502,
+    strictPort: true,
     proxy: {
-      '/api': 'http://127.0.0.1:5502'
+      '/api': 'http://127.0.0.1:5501'
     }
   }
 });

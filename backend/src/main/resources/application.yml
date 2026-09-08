@@ -23,4 +23,4 @@ hospital:
     ttl-minutes: 60
 server:
   address: 127.0.0.1
-  port: 5502
+  port: 5501

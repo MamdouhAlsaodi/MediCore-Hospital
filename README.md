@@ -9,8 +9,8 @@ MediCore is an educational, non-clinical Java/Spring Boot + React training imple
 - `docs/runbook.md` — safe local review instructions.
 
 ## Public-safe local review
-1. Set `HOSPITAL_JWT_SECRET` outside the repository.
-2. Start the backend on loopback port `5502`.
+1. Set `HOSPITAL_ADMIN_PASSWORD` (minimum 12 characters; required until the `admin` account exists) and `HOSPITAL_JWT_SECRET` outside the repository.
+2. Start the backend on loopback port `5501`.
 3. For private review, have the supervisor start Vite with `REVIEW_BIND_HOST` set to the narrow Tailnet interface address.
 4. Never expose or enable the H2 console. Do not use this project as clinical software.
 

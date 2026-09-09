@@ -136,6 +136,62 @@ class PatientJourneyApiTest {
         assertEquals(fullName, matches.get(0).get("fullName"));
     }
 
+    /**
+     * Duplicate MRN contract: a second create reusing an existing
+     * medicalRecordNumber is a client-visible 409 Conflict carrying the
+     * shared ApiError body with a clear, SQL-free message — never a raw 500
+     * from the DB unique constraint — and the failed attempt must neither
+     * overwrite nor persist any patient record.
+     */
+    @Test
+    void duplicateMrnCreateReturns409ConflictWithoutOverwritingOriginal() {
+        String token = login(RECEPTIONIST);
+        String mrn = "MRN-" + suffix + "-DUP";
+        String originalName = "Test Patient Original " + suffix;
+        ResponseEntity<Map<String, Object>> created = post("/api/patients", token, Map.ofEntries(
+                Map.entry("medicalRecordNumber", mrn),
+                Map.entry("fullName", originalName),
+                Map.entry("dateOfBirth", "2011-02-03"),
+                Map.entry("sex", "unspecified"),
+                Map.entry("phone", "+10000000003"),
+                Map.entry("email", "dup-" + suffix + "@synthetic.test"),
+                Map.entry("nationalId", "NID-" + suffix + "-DUP"),
+                Map.entry("address", "3 Synthetic Street")));
+        assertEquals(HttpStatus.OK, created.getStatusCode(), "the first create with this MRN must succeed");
+        Map<String, Object> createdBody = created.getBody();
+        assertNotNull(createdBody);
+        String patientId = String.valueOf(createdBody.get("id"));
+
+        ResponseEntity<Map<String, Object>> conflict = post("/api/patients", token, Map.of(
+                "medicalRecordNumber", mrn,
+                "fullName", "Test Patient Impostor " + suffix));
+        assertEquals(HttpStatus.CONFLICT, conflict.getStatusCode(),
+                "a duplicate MRN create must return 409, never a raw 500 from the DB constraint");
+        Map<String, Object> error = conflict.getBody();
+        assertNotNull(error, "conflict response must carry the shared ApiError body");
+        assertEquals(Set.of("timestamp", "status", "error", "message", "path"), error.keySet(),
+                "conflict must use the shared ApiError contract shape exactly");
+        assertEquals(409, ((Number) error.get("status")).intValue(), "ApiError.status must echo 409");
+        assertEquals("Conflict", error.get("error"));
+        assertEquals("Medical record number already exists", error.get("message"),
+                "the conflict message must be clear and must not leak SQL internals");
+        assertEquals("/api/patients", error.get("path"));
+
+        ResponseEntity<Map<String, Object>> detail = getMap("/api/patients/" + patientId, token);
+        assertEquals(HttpStatus.OK, detail.getStatusCode());
+        Map<String, Object> detailBody = detail.getBody();
+        assertNotNull(detailBody);
+        assertEquals(originalName, detailBody.get("fullName"),
+                "the failed duplicate create must not overwrite the original record");
+        assertEquals(mrn, detailBody.get("medicalRecordNumber"));
+
+        ResponseEntity<List<Map<String, Object>>> impostorSearch = getSearch("/api/patients?q={q}", token, "Impostor " + suffix);
+        assertEquals(HttpStatus.OK, impostorSearch.getStatusCode());
+        List<Map<String, Object>> impostors = impostorSearch.getBody();
+        assertNotNull(impostors, "search response must carry a body");
+        assertTrue(impostors.isEmpty(), "the failed duplicate create must not persist a second patient");
+    }
+
     @Test
     void patientResponsesExposeStableDtoFieldsWithoutPersistenceInternals() {
         String token = login(RECEPTIONIST);

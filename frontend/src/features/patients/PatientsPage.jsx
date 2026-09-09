@@ -1,16 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { ApiError } from '../../api.js';
+import { can } from '../../authorization.js';
 import { fetchPatients } from './patientApi.js';
 import PatientDetailPage from './PatientDetailPage.jsx';
 import PatientForm from './PatientForm.jsx';
-
-// Registration-permitted roles for the "New patient" action (UI convenience
-// only; backend authorization stays authoritative for every request).
-const REGISTER_ROLES = ['RECEPTIONIST', 'ADMIN'];
-
-function hasAnyRole(roles, wanted) {
-  return Array.isArray(roles) && wanted.some((role) => roles.includes(role));
-}
 
 // Patients screen (plan1.md Tasks 6-7): patient list and search over
 // GET /api/patients?q=..., plus the Task 7 record workflows — selecting a
@@ -117,7 +110,9 @@ export default function PatientsPage({ session, onSessionExpired }) {
     setView('list');
   }
 
-  const canRegister = hasAnyRole(session?.roles, REGISTER_ROLES);
+  // UI convenience hint from the shared permission map; backend stays
+  // authoritative for every request.
+  const canRegister = can(session, 'create', 'patient');
   const showList = view === 'list' && status === 'ready' && !loadError && patients.length > 0;
   const showEmpty = view === 'list' && status === 'ready' && !loadError && patients.length === 0;
 

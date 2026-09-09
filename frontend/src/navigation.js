@@ -1,12 +1,15 @@
 // Pure navigation registry + role filter. No router, no side effects.
 //
-// UI filtering is a convenience boundary only: it decides which destinations
-// the shell offers. It never authorizes anything — every API request stays
-// protected by the backend policy in
+// The destination role sets come from the shared permission map in
+// authorization.js — the single source of truth for UI capability hints
+// (plan1.md Task 9). UI filtering is a convenience boundary only: it decides
+// which destinations the shell offers. It never authorizes anything — every
+// API request stays protected by the backend policy in
 // backend/.../auth/SecurityConfig.java, which these role sets mirror:
 //   - /api/dashboard/**     -> authenticated() (any logged-in role)
 //   - /api/patients/**      -> ADMIN, DOCTOR, NURSE, RECEPTIONIST
 //   - /api/appointments/**  -> ADMIN, DOCTOR, NURSE, RECEPTIONIST
+import { PERMISSIONS } from './authorization.js';
 
 const DESTINATIONS = [
   {
@@ -20,14 +23,14 @@ const DESTINATIONS = [
     id: 'patients',
     label: 'Patients',
     heading: 'Patients',
-    roles: ['ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST'],
+    roles: PERMISSIONS.patient.read,
     implemented: true,
   },
   {
     id: 'appointments',
     label: 'Appointments',
     heading: 'Appointments',
-    roles: ['ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST'],
+    roles: PERMISSIONS.appointment.read,
     implemented: true,
   },
 ];

@@ -23,12 +23,11 @@ const PATIENT_MATRIX = {
 const APPOINTMENT_MATRIX = {
   ADMIN: { read: true, create: true },
   RECEPTIONIST: { read: true, create: true },
-  // DOCUMENTED POLICY MISMATCH (frontend side): the UI hides scheduling from
-  // DOCTOR/NURSE, but SecurityConfig admits every one of the four roles at
-  // the path level for POST /api/appointments — a direct API call from those
-  // roles would succeed. The UI hint is stricter than the server; server
-  // enforcement stays authoritative. Backend alignment needs its own packet;
-  // SecurityAuthorizationTest.java pins the server side of this gap.
+  // The UI hint mirrors the enforced server policy: SecurityConfig admits
+  // only ADMIN/RECEPTIONIST for POST /api/appointments (Task 9 write rule,
+  // b49e549 / PR #4) — a direct API call from DOCTOR/NURSE is refused with
+  // 403 and nothing persists (SecurityAuthorizationTest.java pins the server
+  // side). Server enforcement stays the only authority; the hint matches it.
   DOCTOR: { read: true, create: false },
   NURSE: { read: true, create: false },
 };

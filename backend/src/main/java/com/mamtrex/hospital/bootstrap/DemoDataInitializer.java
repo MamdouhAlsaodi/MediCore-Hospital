@@ -2,6 +2,7 @@ package com.mamtrex.hospital.bootstrap;
 
 import com.mamtrex.hospital.appointment.Appointment;
 import com.mamtrex.hospital.appointment.AppointmentRepository;
+import com.mamtrex.hospital.audit.AuditService;
 import com.mamtrex.hospital.patient.Patient;
 import com.mamtrex.hospital.patient.PatientRepository;
 import com.mamtrex.hospital.staff.StaffMember;
@@ -38,7 +39,14 @@ import java.time.LocalDateTime;
  * canonical UUID references. Patients and professionals are seeded first and
  * the appointments then store {@code getId().toString()} of the persisted
  * records, so every seeded reference resolves. Rows are written directly
- * through the repositories and therefore produce no audit events.</p>
+ * through the repositories; every <em>newly created</em> row is recorded as a
+ * CREATE audit event through {@link AuditService} using the same resource-type
+ * conventions the services use ({@code Patient}, {@code StaffMember},
+ * {@code Appointment}). No user is authenticated during startup, so
+ * {@code AuditService} attributes these events to the {@code system} actor,
+ * making the seeded journey visible on the ADMIN audit screen. Reused records
+ * record nothing — the absence of events for existing rows is exactly what
+ * keeps repeated startups idempotent in the audit trail too.</p>
  */
 @Component
 @ConditionalOnProperty(name = "medicore.demo.seed", havingValue = "true")
@@ -47,13 +55,16 @@ public class DemoDataInitializer implements ApplicationRunner {
     private final PatientRepository patientRepository;
     private final StaffMemberRepository staffMemberRepository;
     private final AppointmentRepository appointmentRepository;
+    private final AuditService auditService;
 
     public DemoDataInitializer(PatientRepository patientRepository,
                                StaffMemberRepository staffMemberRepository,
-                               AppointmentRepository appointmentRepository) {
+                               AppointmentRepository appointmentRepository,
+                               AuditService auditService) {
         this.patientRepository = patientRepository;
         this.staffMemberRepository = staffMemberRepository;
         this.appointmentRepository = appointmentRepository;
+        this.auditService = auditService;
     }
 
     @Override
@@ -79,32 +90,46 @@ public class DemoDataInitializer implements ApplicationRunner {
         seedAppointment(bravo, nurse, LocalDateTime.of(2031, 3, 9, 10, 30), "follow-up", "confirmed");
     }
 
-    /** Stable key: the medical record number. An existing demo patient is reused, never duplicated. */
+    /**
+     * Stable key: the medical record number. An existing demo patient is
+     * reused, never duplicated; only the creating path records the CREATE
+     * audit event (details = the MRN, matching {@code PatientService}).
+     */
     private Patient seedPatient(String mrn, String fullName, LocalDate dateOfBirth, String sex,
                                 String phone, String email, String nationalId, String address) {
-        return patientRepository.findByMedicalRecordNumber(mrn).orElseGet(
-                () -> patientRepository.save(
-                        new Patient(mrn, fullName, dateOfBirth, sex, phone, email, nationalId, address)));
+        return patientRepository.findByMedicalRecordNumber(mrn).orElseGet(() -> {
+            Patient saved = patientRepository.save(
+                    new Patient(mrn, fullName, dateOfBirth, sex, phone, email, nationalId, address));
+            auditService.record("CREATE", "Patient", saved.getId().toString(), mrn);
+            return saved;
+        });
     }
 
     /**
      * Stable key: the employee code. {@code StaffMemberRepository} exposes no
      * derived finder (the repository layer is frozen), so the key is resolved
      * in memory over {@code findAll()} — acceptable for a bounded demo cohort.
+     * Only the creating path records the CREATE audit event (details =
+     * {@code created}, matching the staff controller).
      */
     private StaffMember seedStaffMember(String employeeCode, String fullName, String profession,
                                         String licenseNumber, String department) {
         return staffMemberRepository.findAll().stream()
                 .filter(staff -> employeeCode.equals(staff.getEmployeeCode()))
                 .findFirst()
-                .orElseGet(() -> staffMemberRepository.save(
-                        new StaffMember(employeeCode, fullName, profession, licenseNumber, department)));
+                .orElseGet(() -> {
+                    StaffMember saved = staffMemberRepository.save(
+                            new StaffMember(employeeCode, fullName, profession, licenseNumber, department));
+                    auditService.record("CREATE", "StaffMember", saved.getId().toString(), "created");
+                    return saved;
+                });
     }
 
     /**
      * Stable key: patient + professional + scheduledAt + type. An existing
      * matching appointment is left exactly as it is — never duplicated,
-     * updated, or deleted.
+     * updated, or deleted. Only the creating path records the CREATE audit
+     * event (details = {@code created}, matching {@code AppointmentService}).
      */
     private void seedAppointment(Patient patient, StaffMember professional,
                                  LocalDateTime scheduledAt, String type, String status) {
@@ -117,8 +142,9 @@ public class DemoDataInitializer implements ApplicationRunner {
                         && scheduledAtKey.equals(appointment.getScheduledAt())
                         && type.equals(appointment.getType()));
         if (!alreadySeeded) {
-            appointmentRepository.save(
+            Appointment saved = appointmentRepository.save(
                     new Appointment(patientKey, professionalKey, scheduledAtKey, type, status));
+            auditService.record("CREATE", "Appointment", saved.getId().toString(), "created");
         }
     }
 }

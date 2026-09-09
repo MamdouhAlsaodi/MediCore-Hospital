@@ -52,18 +52,18 @@ What gets created (all values are obviously synthetic; no real personal or clini
 - 2 professionals: `Demo Physician Alpha` (`DEMO-STAFF-001`, internal medicine), `Demo Nurse Bravo` (`DEMO-STAFF-002`, nursing)
 - 2 appointments linking them: Alpha ↔ Physician (consultation, scheduled) and Bravo ↔ Nurse (follow-up, confirmed)
 
-Seeding is idempotent and safe to restart: every insert is lookup-before-create (patient MRN, professional employee code, appointment key), so restarting never duplicates rows, and it never deletes or modifies existing records. Seeded rows are written directly through the repositories, so they do not produce audit events, and no accounts or credentials are created.
+Seeding is idempotent and safe to restart: every insert is lookup-before-create (patient MRN, professional employee code, appointment key), so restarting never duplicates rows, and it never deletes or modifies existing records. Every newly created record is recorded as a CREATE audit event attributed to the `system` actor (no user is authenticated at startup), so the ADMIN Audit screen shows the full seeded journey; reused records add no events, which keeps restarts idempotent in the audit trail too. No accounts or credentials are created.
 
-Verify by logging in as an ADMIN and checking Patients (search `DEMO-`) and Appointments. Never enable demo seeding against a shared or production data store.
+Verify by logging in as an ADMIN and checking Patients (search `DEMO-`), Appointments, and the Audit screen (CREATE events with actor `system`, one per newly created seeded record). Never enable demo seeding against a shared or production data store.
 
 ## Automated verification
 
 Run the full test gates from the repository root:
 
 ```bash
-cd backend && mvn test                        # 32 tests (PatientJourneyApiTest 18,
+cd backend && mvn test                        # 34 tests (PatientJourneyApiTest 19,
                                               # SecurityAuthorizationTest 9,
-                                              # DemoDataInitializerTest 4,
+                                              # DemoDataInitializerTest 5,
                                               # ArchitectureSmokeTest 1)
 cd ../frontend && npm test && npm run build   # 61 tests across 7 files + production build
 cd .. && git diff --check                     # whitespace/conflict-marker gate

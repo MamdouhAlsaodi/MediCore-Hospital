@@ -147,8 +147,8 @@ Method-level rules for patient create/update and appointment create are ordered 
 
 ## Known structural limits (honest)
 
-- Duplicate medical record numbers are prevented only by the `patients.medical_record_number` unique constraint — `PatientService.create` has no pre-check and `GlobalExceptionHandler` has no integrity-violation handler, so a real duplicate may surface as `500` instead of `400`/`409`.
+- Duplicate medical record numbers are rejected with `409 Conflict` (closed in #9, `d3526ab`; formerly a DB-constraint-only `500` risk): `PatientService.create` pre-checks the MRN and `GlobalExceptionHandler` maps integrity violations to the shared `ApiError` conflict body ("Medical record number already exists") as defense-in-depth — pinned by `duplicateMrnCreateReturns409ConflictWithoutOverwritingOriginal`.
 - `Appointments` reference columns remain Strings (canonical UUID strings for new rows; legacy pre-Task-4 rows keep raw values read-only). No schema migration exists in this milestone.
-- The demo seeder writes through repositories, bypassing services — seeded rows carry no audit events (intentional and documented).
+- The demo seeder writes through repositories; every newly created row records a CREATE audit event attributed to `system` via `AuditService` (reused rows add none, preserving idempotency), so the ADMIN audit screen shows the seeded journey.
 - Professional availability/eligibility rules do not exist in the `StaffMember` model; selection only.
 - Single-workstation, single-process baseline: no caching layer, no horizontal scaling, no external integrations.

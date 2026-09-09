@@ -37,5 +37,24 @@ REVIEW_BIND_HOST=<operator-supplied-tailnet-interface-address> npm run preview
 
 Both the Vite dev server and the preview server bind only to the narrow Tailnet interface address supplied through `REVIEW_BIND_HOST`, listen on port `5502` with `strictPort` enabled, and proxy `/api` to the loopback backend on port `5501`. Do not replace this with a broad host bind.
 
+## Synthetic demo data (opt-in, disabled by default)
+
+Demo seeding is off unless explicitly enabled. To seed a small synthetic demo cohort into a local review backend, set `MEDICORE_DEMO_SEED=true` in the runtime environment before starting it:
+
+```bash
+cd backend
+MEDICORE_DEMO_SEED=true HOSPITAL_ADMIN_PASSWORD="$HOSPITAL_ADMIN_PASSWORD" HOSPITAL_JWT_SECRET="$HOSPITAL_JWT_SECRET" mvn spring-boot:run
+```
+
+What gets created (all values are obviously synthetic; no real personal or clinical data):
+
+- 3 patients: `Demo Patient Alpha` (`DEMO-0001`), `Demo Patient Bravo` (`DEMO-0002`), `Demo Patient Charlie` (`DEMO-0003`)
+- 2 professionals: `Demo Physician Alpha` (`DEMO-STAFF-001`, internal medicine), `Demo Nurse Bravo` (`DEMO-STAFF-002`, nursing)
+- 2 appointments linking them: Alpha ↔ Physician (consultation, scheduled) and Bravo ↔ Nurse (follow-up, confirmed)
+
+Seeding is idempotent and safe to restart: every insert is lookup-before-create (patient MRN, professional employee code, appointment key), so restarting never duplicates rows, and it never deletes or modifies existing records. Seeded rows are written directly through the repositories, so they do not produce audit events, and no accounts or credentials are created.
+
+Verify by logging in as an ADMIN and checking Patients (search `DEMO-`) and Appointments. Never enable demo seeding against a shared or production data store.
+
 ## PostgreSQL later
 Use the `postgres` Spring profile only with runtime-provided `DB_URL`, `DB_USER`, and `DB_PASSWORD`. Docker and public deployment are outside this phase.

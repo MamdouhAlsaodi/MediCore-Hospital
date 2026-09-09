@@ -24,3 +24,12 @@ hospital:
 server:
   address: 127.0.0.1
   port: 5501
+# Synthetic demo data seeding (Task 11): disabled by default.
+# Set MEDICORE_DEMO_SEED=true only for a local demo environment. When enabled,
+# startup inserts a small idempotent synthetic cohort (patients DEMO-0001..0003,
+# professionals DEMO-STAFF-001..002, two appointments). It never deletes or
+# modifies existing rows and creates no accounts or credentials; no real or
+# secret values belong in this file.
+medicore:
+  demo:
+    seed: ${MEDICORE_DEMO_SEED:false}

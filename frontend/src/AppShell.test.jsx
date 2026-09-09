@@ -20,6 +20,28 @@ const PATIENTS_PAGE = [
   },
 ];
 
+const STAFF_DIRECTORY = [
+  {
+    id: '66666666-6666-4666-8666-666666666666',
+    employeeCode: 'EMP-3001',
+    fullName: 'Synthetic Professional',
+    profession: 'Cardiologist',
+    licenseNumber: 'LIC-3001',
+    department: 'Cardiology',
+  },
+];
+
+const APPOINTMENTS_PAGE = [
+  {
+    id: '77777777-7777-4777-8777-777777777777',
+    patientId: '55555555-5555-4555-8555-555555555555',
+    professionalId: '66666666-6666-4666-8666-666666666666',
+    scheduledAt: '2026-03-01T09:30',
+    type: 'Consultation',
+    status: 'scheduled',
+  },
+];
+
 function jsonResponse(payload, status = 200) {
   return new Response(JSON.stringify(payload), {
     status,
@@ -31,6 +53,8 @@ function stubBackendApi() {
   return vi.fn((path) => {
     if (path === '/api/dashboard') return Promise.resolve(jsonResponse(DASHBOARD_STATS));
     if (path === '/api/patients') return Promise.resolve(jsonResponse(PATIENTS_PAGE));
+    if (path === '/api/appointments') return Promise.resolve(jsonResponse(APPOINTMENTS_PAGE));
+    if (path === '/api/staff') return Promise.resolve(jsonResponse(STAFF_DIRECTORY));
     return Promise.resolve(jsonResponse({ error: 'not found' }, 404));
   });
 }
@@ -101,11 +125,25 @@ describe('AppShell', () => {
     expect(screen.getByRole('button', { name: 'Appointments' })).toHaveAttribute('aria-current', 'page');
     expect(screen.getByRole('button', { name: 'Dashboard' })).not.toHaveAttribute('aria-current');
     expect(screen.getByRole('heading', { name: 'Appointments' })).toBeInTheDocument();
-    const appointmentsBoundary = screen.getByRole('region', { name: 'Appointments screen' });
-    expect(appointmentsBoundary).toHaveTextContent(/not implemented/i);
-    expect(appointmentsBoundary).toHaveTextContent('Task 8');
+    const appointmentsScreen = screen.getByRole('region', { name: 'Appointments screen' });
+    await within(appointmentsScreen).findByText('Synthetic Patient');
+    expect(
+      within(appointmentsScreen).getByRole('table', { name: 'Scheduled appointments' })
+    ).toBeInTheDocument();
+    expect(appointmentsScreen).toHaveTextContent('Synthetic Professional — Cardiologist (Cardiology)');
+    expect(appointmentsScreen).toHaveTextContent('2026-03-01T09:30');
+    expect(appointmentsScreen).toHaveTextContent('scheduled');
+    // DOCTOR may view the list but never sees the scheduling action (UI
+    // convenience only; the backend stays authoritative).
+    expect(
+      within(appointmentsScreen).queryByRole('button', { name: 'Schedule appointment' })
+    ).not.toBeInTheDocument();
     expect(screen.queryByText('patients')).not.toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledTimes(dashboardCalls);
+    // The real screen fetches its own data: appointments list, professionals,
+    // and patients for name resolution.
+    expect(fetchMock.mock.calls.filter(([path]) => path === '/api/appointments')).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([path]) => path === '/api/staff')).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(dashboardCalls + 3);
 
     await user.click(screen.getByRole('button', { name: 'Patients' }));
 
@@ -116,8 +154,8 @@ describe('AppShell', () => {
       within(patientsScreen).getByRole('searchbox', { name: 'Search patients' })
     ).toBeInTheDocument();
     await within(patientsScreen).findByText('Synthetic Patient');
-    expect(fetchMock.mock.calls.filter(([path]) => path === '/api/patients')).toHaveLength(1);
-    expect(fetchMock).toHaveBeenCalledTimes(dashboardCalls + 1);
+    expect(fetchMock.mock.calls.filter(([path]) => path === '/api/patients')).toHaveLength(2);
+    expect(fetchMock).toHaveBeenCalledTimes(dashboardCalls + 4);
 
     await user.click(screen.getByRole('button', { name: 'Dashboard' }));
 

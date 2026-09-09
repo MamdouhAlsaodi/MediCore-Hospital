@@ -393,3 +393,126 @@ button.patient-cancel:focus-visible {
   .patients-actions { justify-content: stretch; }
   .patients-actions .patient-new { width: 100%; }
 }
+
+/* Appointments screen — list and scheduling (Task 8) */
+.appointments-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin: 14px 0 0;
+}
+
+button.appointment-new,
+button.appointment-save,
+button.appointment-cancel {
+  min-height: 44px;
+  border-radius: 10px;
+  font: inherit;
+  font-size: 15px;
+  padding: 10px 16px;
+  cursor: pointer;
+}
+button.appointment-new,
+button.appointment-save {
+  border: 0;
+  background: var(--navy);
+  color: #fff;
+}
+button.appointment-cancel {
+  background: #fff;
+  border: 1px solid var(--line);
+  color: var(--navy);
+}
+button.appointment-new:hover,
+button.appointment-save:hover { background: var(--navy-2); }
+button.appointment-cancel:hover { border-color: var(--navy-2); }
+button.appointment-save:disabled,
+button.appointment-cancel:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+button.appointment-new:focus-visible,
+button.appointment-save:focus-visible,
+button.appointment-cancel:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+
+.appointments-table-wrap {
+  margin-top: 14px;
+  overflow-x: auto;
+}
+.appointments-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  font-size: 14px;
+}
+.appointments-table th,
+.appointments-table td {
+  text-align: left;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+.appointments-table thead th {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.appointments-table tbody tr:last-child td { border-bottom: 0; }
+
+.appointment-form { margin-top: 20px; }
+.appointment-form h3 { margin: 0; }
+.appointment-form .panel-hint { margin-top: 8px; }
+.appointment-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 18px;
+  margin-top: 14px;
+}
+.appointment-field { margin-bottom: 10px; min-width: 0; }
+.appointment-field label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.appointment-field input,
+.appointment-field select {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-size: 15px;
+  background: #fff;
+  color: inherit;
+}
+.appointment-field input:focus-visible,
+.appointment-field select:focus-visible {
+  outline: 2px solid var(--navy-2);
+  outline-offset: 1px;
+}
+.appointment-field input:disabled,
+.appointment-field select:disabled {
+  background: #f5f7fa;
+  color: var(--muted);
+}
+.appointment-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+@media (max-width: 560px) {
+  /* Scheduling forms collapse to one column with labels above inputs and
+     full-width 44px touch targets; the list scrolls inside its own wrap. */
+  .appointment-form-grid { grid-template-columns: 1fr; gap: 0; }
+  .appointment-form-actions,
+  .appointments-actions { flex-direction: column; align-items: stretch; }
+  .appointments-actions .appointment-new { width: 100%; }
+}

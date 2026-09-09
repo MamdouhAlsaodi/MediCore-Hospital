@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import DashboardPage from './DashboardPage.jsx';
+import AppointmentsPage from './features/appointments/AppointmentsPage.jsx';
 import PatientsPage from './features/patients/PatientsPage.jsx';
 import { defaultDestination, permittedDestinations } from './navigation.js';
 
@@ -21,6 +22,9 @@ function Screen({ destination, session, onSessionExpired }) {
   }
   if (destination.id === 'patients') {
     return <PatientsPage session={session} onSessionExpired={onSessionExpired} />;
+  }
+  if (destination.id === 'appointments') {
+    return <AppointmentsPage session={session} onSessionExpired={onSessionExpired} />;
   }
   return <DashboardPage session={session} onSessionExpired={onSessionExpired} />;
 }

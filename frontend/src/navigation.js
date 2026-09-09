@@ -28,8 +28,7 @@ const DESTINATIONS = [
     label: 'Appointments',
     heading: 'Appointments',
     roles: ['ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST'],
-    implemented: false,
-    arrivesIn: 'Task 8',
+    implemented: true,
   },
 ];
 

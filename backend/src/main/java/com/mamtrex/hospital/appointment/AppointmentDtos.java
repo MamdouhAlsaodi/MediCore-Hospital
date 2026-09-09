@@ -8,18 +8,24 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 /**
- * Public appointment contract for /api/appointments (docs/plan1.md Task 3).
- * patientId/professionalId intentionally remain raw non-blank strings for
- * now; docs/plan1.md Task 4 replaces them with verified relationships.
- * scheduledAt is a typed ISO {@link LocalDateTime} (unparseable JSON fails
- * deserialization with 400), and status is bound to the explicit lowercase
- * Training/Portfolio contract scheduled|confirmed|completed|cancelled.
+ * Public appointment contract for /api/appointments (docs/plan1.md Task 4).
+ * patientId/professionalId are typed UUID references resolved by
+ * {@link AppointmentService} against their repositories; a malformed
+ * non-UUID body value fails deserialization with 400 via the shared
+ * GlobalExceptionHandler malformed-body mapping. scheduledAt is a typed ISO
+ * {@link LocalDateTime} (unparseable JSON fails deserialization with 400),
+ * and status is bound to the explicit lowercase Training/Portfolio contract
+ * scheduled|confirmed|completed|cancelled.
  */
 public final class AppointmentDtos {
 
     private AppointmentDtos() {}
 
-    /** Stable public appointment representation; raw references survive until Task 4. */
+    /**
+     * Stable public appointment representation. patientId/professionalId are
+     * the canonical UUID strings of the verified references; legacy rows
+     * created before Task 4 keep their earlier stored values read-only.
+     */
     public record AppointmentResponse(UUID id, String patientId, String professionalId,
                                       String scheduledAt, String type, String status) {
 
@@ -29,8 +35,8 @@ public final class AppointmentDtos {
         }
     }
 
-    public record CreateAppointmentRequest(@NotBlank String patientId,
-                                           @NotBlank String professionalId,
+    public record CreateAppointmentRequest(@NotNull UUID patientId,
+                                           @NotNull UUID professionalId,
                                            @NotNull LocalDateTime scheduledAt,
                                            @NotBlank String type,
                                            @NotBlank

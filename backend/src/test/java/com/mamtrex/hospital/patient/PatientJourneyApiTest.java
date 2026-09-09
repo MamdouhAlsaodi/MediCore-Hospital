@@ -25,15 +25,20 @@ import static org.junit.jupiter.api.Assertions.*;
  * Patient Journey contract tests.
  *
  * Task 1 established the original characterization baseline. Task 3
- * (docs/plan1.md) now pins the normalized DTO contracts: Patient Journey
+ * (docs/plan1.md) pinned the normalized DTO contracts: Patient Journey
  * routes return immutable response DTOs without persistence internals
  * (version/createdAt/updatedAt), malformed UUID paths are client errors,
  * blank/invalid request values return 400, appointment scheduledAt is a
  * typed ISO LocalDateTime, and appointment status is bound to the explicit
- * lowercase contract scheduled|confirmed|completed|cancelled. Runs against
- * an isolated in-memory H2 database (never the production file store) with
- * disposable synthetic test-only secrets and fabricated record values; no
- * real personal or clinical data is ever used.
+ * lowercase contract scheduled|confirmed|completed|cancelled. Task 4
+ * replaces the raw appointment reference contract with verified
+ * relationships: patientId/professionalId are typed UUIDs, unknown
+ * references return 404, malformed references return 400, only verified
+ * references persist an appointment, and only the successful mutation
+ * records an Appointment CREATE audit event. Runs against an isolated
+ * in-memory H2 database (never the production file store) with disposable
+ * synthetic test-only secrets and fabricated record values; no real
+ * personal or clinical data is ever used.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
         "spring.datasource.url=jdbc:h2:mem:patient-journey-test;MODE=PostgreSQL;DB_CLOSE_DELAY=-1",
@@ -60,7 +65,7 @@ class PatientJourneyApiTest {
             "id", "medicalRecordNumber", "fullName", "dateOfBirth", "sex",
             "phone", "email", "nationalId", "address", "active");
 
-    /** Stable public Appointment DTO contract; raw references survive until Task 4. */
+    /** Stable public Appointment DTO contract; references are verified UUIDs. */
     private static final Set<String> APPOINTMENT_CONTRACT_FIELDS = Set.of(
             "id", "patientId", "professionalId", "scheduledAt", "type", "status");
 
@@ -202,10 +207,10 @@ class PatientJourneyApiTest {
     @Test
     void blankAppointmentFieldsReturn400() {
         String token = login(RECEPTIONIST);
-        for (String blankedField : List.of("patientId", "professionalId", "scheduledAt", "type", "status")) {
+        for (String blankedField : List.of("scheduledAt", "type", "status")) {
             Map<String, Object> payload = new LinkedHashMap<>(Map.of(
-                    "patientId", "synthetic-patient-" + suffix,
-                    "professionalId", "synthetic-professional-" + suffix,
+                    "patientId", UUID.randomUUID().toString(),
+                    "professionalId", UUID.randomUUID().toString(),
                     "scheduledAt", "2031-01-01T09:00:00",
                     "type", "consultation",
                     "status", "scheduled"));
@@ -219,14 +224,14 @@ class PatientJourneyApiTest {
     void invalidAppointmentScheduledAtReturns400() {
         String token = login(RECEPTIONIST);
         assertEquals(HttpStatus.BAD_REQUEST, post("/api/appointments", token, Map.of(
-                "patientId", "synthetic-patient-" + suffix,
-                "professionalId", "synthetic-professional-" + suffix,
+                "patientId", UUID.randomUUID().toString(),
+                "professionalId", UUID.randomUUID().toString(),
                 "type", "consultation",
                 "status", "scheduled")).getStatusCode(),
                 "missing scheduledAt must return 400");
         assertEquals(HttpStatus.BAD_REQUEST, post("/api/appointments", token, Map.of(
-                "patientId", "synthetic-patient-" + suffix,
-                "professionalId", "synthetic-professional-" + suffix,
+                "patientId", UUID.randomUUID().toString(),
+                "professionalId", UUID.randomUUID().toString(),
                 "scheduledAt", "not-a-date-time",
                 "type", "consultation",
                 "status", "scheduled")).getStatusCode(),
@@ -238,8 +243,8 @@ class PatientJourneyApiTest {
         String token = login(RECEPTIONIST);
         for (String invalidStatus : List.of("postponed", "Scheduled")) {
             assertEquals(HttpStatus.BAD_REQUEST, post("/api/appointments", token, Map.of(
-                    "patientId", "synthetic-patient-" + suffix,
-                    "professionalId", "synthetic-professional-" + suffix,
+                    "patientId", UUID.randomUUID().toString(),
+                    "professionalId", UUID.randomUUID().toString(),
                     "scheduledAt", "2031-03-03T11:00:00",
                     "type", "consultation",
                     "status", invalidStatus)).getStatusCode(),
@@ -248,43 +253,181 @@ class PatientJourneyApiTest {
     }
 
     /**
-     * Why: this pins a KNOWN WEAK contract. Today POST /api/appointments
-     * persists any non-blank strings as patientId/professionalId without
-     * proving the referenced records exist. docs/plan1.md Task 4 intentionally
-     * changes this behavior; this test is characterization only and must be
-     * updated together with that task, never treated as an endorsement.
-     * Task 3 scope ends at the response being a DTO with raw reference
-     * strings retained and typed scheduledAt/status validation enforced.
+     * Task 4 (docs/plan1.md): patientId/professionalId are typed UUIDs, so a
+     * malformed non-UUID reference value can never reach the workflow and an
+     * absent typed reference violates @NotNull — both are client errors (400)
+     * handled by the shared GlobalExceptionHandler malformed-body mapping.
      */
     @Test
-    void appointmentCreationStillAcceptsArbitraryNonblankRawReferencesUntilTask4() {
+    void malformedAppointmentReferencesReturn400() {
         String token = login(RECEPTIONIST);
-        String fakePatientId = "not-a-real-patient-" + suffix;
-        String fakeProfessionalId = "not-a-real-professional-" + suffix;
-        ResponseEntity<Map<String, Object>> res = post("/api/appointments", token, Map.of(
-                "patientId", fakePatientId,
-                "professionalId", fakeProfessionalId,
-                "scheduledAt", "2031-01-01T09:00:00",
+        assertEquals(HttpStatus.BAD_REQUEST, post("/api/appointments", token, Map.of(
+                "patientId", "not-a-uuid-" + suffix,
+                "professionalId", UUID.randomUUID().toString(),
+                "scheduledAt", "2031-04-04T14:00:00",
+                "type", "consultation",
+                "status", "scheduled")).getStatusCode(),
+                "a malformed non-UUID patient reference must return 400");
+        assertEquals(HttpStatus.BAD_REQUEST, post("/api/appointments", token, Map.of(
+                "patientId", UUID.randomUUID().toString(),
+                "professionalId", "not-a-uuid-" + suffix,
+                "scheduledAt", "2031-04-04T14:00:00",
+                "type", "consultation",
+                "status", "scheduled")).getStatusCode(),
+                "a malformed non-UUID professional reference must return 400");
+
+        Map<String, Object> missingPatient = baseAppointmentPayload();
+        missingPatient.remove("patientId");
+        assertEquals(HttpStatus.BAD_REQUEST, post("/api/appointments", token, missingPatient).getStatusCode(),
+                "an absent patient reference must return 400");
+
+        Map<String, Object> missingProfessional = baseAppointmentPayload();
+        missingProfessional.remove("professionalId");
+        assertEquals(HttpStatus.BAD_REQUEST, post("/api/appointments", token, missingProfessional).getStatusCode(),
+                "an absent professional reference must return 400");
+    }
+
+    /** A well-formed random UUID that matches no persisted patient is a 404. */
+    @Test
+    void missingPatientReferenceReturns404() {
+        String token = login(RECEPTIONIST);
+        assertEquals(HttpStatus.NOT_FOUND, post("/api/appointments", token, Map.of(
+                "patientId", UUID.randomUUID().toString(),
+                "professionalId", UUID.randomUUID().toString(),
+                "scheduledAt", "2031-04-04T14:00:00",
+                "type", "consultation",
+                "status", "scheduled")).getStatusCode(),
+                "a valid random UUID for an unknown patient must return 404");
+    }
+
+    /** An existing patient plus an unknown professional UUID is a 404. */
+    @Test
+    void missingProfessionalReferenceReturns404() {
+        String token = login(RECEPTIONIST);
+        String patientId = createVerifiedPatientId(token, "-PRO");
+        assertEquals(HttpStatus.NOT_FOUND, post("/api/appointments", token, Map.of(
+                "patientId", patientId,
+                "professionalId", UUID.randomUUID().toString(),
+                "scheduledAt", "2031-04-04T14:00:00",
+                "type", "consultation",
+                "status", "scheduled")).getStatusCode(),
+                "a valid random UUID for an unknown professional must return 404");
+    }
+
+    /**
+     * Task 4 verified relationships: an existing patient plus an existing
+     * StaffMember is the only combination that persists an appointment, and
+     * the response keeps the stable six-field contract with the verified
+     * references and the canonical typed scheduledAt value.
+     */
+    @Test
+    void verifiedReferencesCreateAppointmentWithStableContract() {
+        String token = login(RECEPTIONIST);
+        String patientId = createVerifiedPatientId(token, "-VER");
+        String professionalId = createVerifiedStaffId("-VER");
+        ResponseEntity<Map<String, Object>> created = post("/api/appointments", token, Map.of(
+                "patientId", patientId,
+                "professionalId", professionalId,
+                "scheduledAt", "2031-04-04T14:00:00",
                 "type", "consultation",
                 "status", "scheduled"));
-        assertEquals(HttpStatus.OK, res.getStatusCode(), "current contract accepts unresolved string references");
-        Map<String, Object> body = res.getBody();
+        assertEquals(HttpStatus.OK, created.getStatusCode(),
+                "existing patient and professional must allow appointment creation");
+        Map<String, Object> body = created.getBody();
         assertNotNull(body);
-        assertEquals(APPOINTMENT_CONTRACT_FIELDS, body.keySet(), "appointment response must match the stable DTO contract exactly");
-        assertEquals(fakePatientId, body.get("patientId"));
-        assertEquals(fakeProfessionalId, body.get("professionalId"));
-        assertEquals("2031-01-01T09:00", body.get("scheduledAt"),
+        assertEquals(APPOINTMENT_CONTRACT_FIELDS, body.keySet(),
+                "appointment response must match the stable DTO contract exactly");
+        assertEquals(patientId, body.get("patientId"), "response must carry the verified patient reference");
+        assertEquals(professionalId, body.get("professionalId"), "response must carry the verified professional reference");
+        assertEquals("2031-04-04T14:00", body.get("scheduledAt"),
                 "scheduledAt must persist as the validated typed value, not the raw request string");
         assertEquals("consultation", body.get("type"));
         assertEquals("scheduled", body.get("status"), "the valid lowercase scheduled status stays accepted");
+
+        String appointmentId = String.valueOf(body.get("id"));
+        ResponseEntity<Map<String, Object>> detail = getMap("/api/appointments/" + appointmentId, token);
+        assertEquals(HttpStatus.OK, detail.getStatusCode());
+        Map<String, Object> detailBody = detail.getBody();
+        assertNotNull(detailBody);
+        assertEquals(APPOINTMENT_CONTRACT_FIELDS, detailBody.keySet(),
+                "appointment detail must match the stable DTO contract exactly");
+        assertEquals(patientId, detailBody.get("patientId"));
+        assertEquals(professionalId, detailBody.get("professionalId"));
+    }
+
+    /**
+     * Task 4 audit ownership: failed reference validation creates neither an
+     * appointment nor an Appointment CREATE audit event, and only the
+     * successful mutation records exactly one CREATE event tied to the
+     * created appointment.
+     */
+    @Test
+    void failedAppointmentValidationCreatesNeitherAppointmentNorAudit() {
+        String adminToken = login(ADMIN_USER);
+        long createEventsBefore = countAppointmentCreateEvents(adminToken);
+
+        String token = login(RECEPTIONIST);
+        String missingPatientId = UUID.randomUUID().toString();
+        assertEquals(HttpStatus.NOT_FOUND, post("/api/appointments", token, Map.of(
+                "patientId", missingPatientId,
+                "professionalId", UUID.randomUUID().toString(),
+                "scheduledAt", "2031-05-05T09:00:00",
+                "type", "consultation",
+                "status", "scheduled")).getStatusCode(),
+                "an unknown patient reference must return 404");
+        assertEquals(HttpStatus.BAD_REQUEST, post("/api/appointments", token, Map.of(
+                "patientId", "not-a-uuid-" + suffix,
+                "professionalId", UUID.randomUUID().toString(),
+                "scheduledAt", "2031-05-05T09:00:00",
+                "type", "consultation",
+                "status", "scheduled")).getStatusCode(),
+                "a malformed patient reference must return 400");
+
+        assertEquals(createEventsBefore, countAppointmentCreateEvents(adminToken),
+                "failed validation must not create any Appointment CREATE audit event");
+        ResponseEntity<List<Map<String, Object>>> list = getList("/api/appointments", token);
+        assertEquals(HttpStatus.OK, list.getStatusCode());
+        List<Map<String, Object>> listBody = list.getBody();
+        assertNotNull(listBody, "appointment list must carry a body");
+        assertTrue(listBody.stream().noneMatch(a -> missingPatientId.equals(a.get("patientId"))),
+                "failed validation must not persist an appointment for the attempted reference");
+
+        String patientId = createVerifiedPatientId(token, "-AUD2");
+        String professionalId = createVerifiedStaffId("-AUD2");
+        ResponseEntity<Map<String, Object>> created = post("/api/appointments", token, Map.of(
+                "patientId", patientId,
+                "professionalId", professionalId,
+                "scheduledAt", "2031-06-06T08:15:00",
+                "type", "consultation",
+                "status", "scheduled"));
+        assertEquals(HttpStatus.OK, created.getStatusCode());
+        Map<String, Object> createdBody = created.getBody();
+        assertNotNull(createdBody);
+        String appointmentId = String.valueOf(createdBody.get("id"));
+
+        assertEquals(createEventsBefore + 1, countAppointmentCreateEvents(adminToken),
+                "exactly one new Appointment CREATE audit event must follow the successful mutation");
+        ResponseEntity<List<Map<String, Object>>> audit = getList("/api/audit", adminToken);
+        assertEquals(HttpStatus.OK, audit.getStatusCode());
+        List<Map<String, Object>> auditBody = audit.getBody();
+        assertNotNull(auditBody, "audit response must carry a body");
+        List<Map<String, Object>> events = auditBody.stream()
+                .filter(e -> "Appointment".equals(e.get("resourceType")) && appointmentId.equals(e.get("resourceId")))
+                .collect(Collectors.toList());
+        assertEquals(1, events.size(), "exactly one audit event must exist for the created appointment");
+        assertEquals("CREATE", events.get(0).get("action"));
+        assertEquals(RECEPTIONIST, events.get(0).get("actor"));
+        assertNotNull(events.get(0).get("occurredAt"));
     }
 
     @Test
     void appointmentDetailAndListExposeDtoContract() {
         String token = login(RECEPTIONIST);
+        String patientId = createVerifiedPatientId(token, "-LIST");
+        String professionalId = createVerifiedStaffId("-LIST");
         ResponseEntity<Map<String, Object>> created = post("/api/appointments", token, Map.of(
-                "patientId", "synthetic-patient-" + suffix,
-                "professionalId", "synthetic-professional-" + suffix,
+                "patientId", patientId,
+                "professionalId", professionalId,
                 "scheduledAt", "2031-02-02T10:30:00",
                 "type", "follow-up",
                 "status", "scheduled"));
@@ -375,6 +518,52 @@ class PatientJourneyApiTest {
         assertNotNull(event.get("occurredAt"));
     }
 
+    /** Creates a verified synthetic patient and returns its UUID string. */
+    private String createVerifiedPatientId(String token, String tag) {
+        ResponseEntity<Map<String, Object>> created = post("/api/patients", token, fullPatientPayload(tag));
+        assertEquals(HttpStatus.OK, created.getStatusCode(), "synthetic patient creation must succeed");
+        Map<String, Object> body = created.getBody();
+        assertNotNull(body);
+        return String.valueOf(body.get("id"));
+    }
+
+    /** Creates a verified synthetic StaffMember (ADMIN route) and returns its UUID string. */
+    private String createVerifiedStaffId(String tag) {
+        ResponseEntity<Map<String, Object>> created = post("/api/staff", login(ADMIN_USER), Map.of(
+                "employeeCode", "EMP-" + suffix + tag,
+                "fullName", "Dr. Synthetic " + suffix + tag,
+                "profession", "cardiology",
+                "licenseNumber", "LIC-" + suffix + tag,
+                "department", "internal medicine"));
+        assertEquals(HttpStatus.OK, created.getStatusCode(), "synthetic staff creation must succeed");
+        Map<String, Object> body = created.getBody();
+        assertNotNull(body);
+        return String.valueOf(body.get("id"));
+    }
+
+    /** Well-formed appointment payload whose references are valid-format UUIDs. */
+    private Map<String, Object> baseAppointmentPayload() {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("patientId", UUID.randomUUID().toString());
+        payload.put("professionalId", UUID.randomUUID().toString());
+        payload.put("scheduledAt", "2031-04-04T14:00:00");
+        payload.put("type", "consultation");
+        payload.put("status", "scheduled");
+        return payload;
+    }
+
+    /** Counts Appointment CREATE audit events through the ADMIN audit route. */
+    private long countAppointmentCreateEvents(String adminToken) {
+        ResponseEntity<List<Map<String, Object>>> audit = getList("/api/audit", adminToken);
+        assertEquals(HttpStatus.OK, audit.getStatusCode());
+        List<Map<String, Object>> auditBody = audit.getBody();
+        assertNotNull(auditBody, "audit response must carry a body");
+        return auditBody.stream()
+                .filter(e -> "Appointment".equals(e.get("resourceType")))
+                .filter(e -> "CREATE".equals(e.get("action")))
+                .count();
+    }
+
     /** Full synthetic patient payload with a test-local unique MRN/email. */
     private Map<String, Object> fullPatientPayload(String tag) {
         return Map.ofEntries(
@@ -383,7 +572,7 @@ class PatientJourneyApiTest {
                 Map.entry("dateOfBirth", "2011-02-03"),
                 Map.entry("sex", "unspecified"),
                 Map.entry("phone", "+10000000002"),
-                Map.entry("email", "dto-" + suffix + "@synthetic.test"),
+                Map.entry("email", "dto-" + suffix + tag + "@synthetic.test"),
                 Map.entry("nationalId", "NID-" + suffix + tag),
                 Map.entry("address", "2 Synthetic Street"));
     }

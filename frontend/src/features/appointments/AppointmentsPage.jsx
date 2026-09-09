@@ -1,18 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { ApiError } from '../../api.js';
+import { can } from '../../authorization.js';
 import { fetchPatients } from '../patients/patientApi.js';
 import { fetchStaff, staffDisplayName } from '../staff/staffApi.js';
 import { fetchAppointments } from './appointmentApi.js';
 import AppointmentForm from './AppointmentForm.jsx';
-
-// Scheduling-permitted roles for the "Schedule appointment" action (UI
-// convenience only; backend authorization stays authoritative for every
-// request — the server refuses with 403 and the page shows that state).
-const SCHEDULE_ROLES = ['RECEPTIONIST', 'ADMIN'];
-
-function hasAnyRole(roles, wanted) {
-  return Array.isArray(roles) && wanted.some((role) => roles.includes(role));
-}
 
 // Appointments screen (plan1.md Task 8): the existing appointment list over
 // GET /api/appointments plus the scheduling flow over POST /api/appointments.
@@ -89,7 +81,10 @@ export default function AppointmentsPage({ session, onSessionExpired }) {
     setListRefresh((n) => n + 1);
   }
 
-  const canSchedule = hasAnyRole(session?.roles, SCHEDULE_ROLES);
+  // UI convenience hint from the shared permission map; backend stays
+  // authoritative for every request (the server refuses with 403 and the
+  // page shows that state).
+  const canSchedule = can(session, 'create', 'appointment');
   const patientNameById = new Map(patients.map((patient) => [patient.id, patient.fullName]));
   const professionalNameById = new Map(staff.map((member) => [member.id, staffDisplayName(member)]));
 

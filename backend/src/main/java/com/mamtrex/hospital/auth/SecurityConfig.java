@@ -1,6 +1,7 @@
 package com.mamtrex.hospital.auth;
 
 import org.springframework.context.annotation.*;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
@@ -16,6 +17,11 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
  * Stateless JWT security. Only {@code /api/auth/**} and actuator health are public.
  * Endpoint families carry explicit role rules ordered before the {@code /api/**}
  * catch-all, which is ADMIN-only (default deny for non-admin accounts).
+ * Method-level rules ordered before the family rules enforce the Task 9 write
+ * policy: patient create/update and appointment create are ADMIN/RECEPTIONIST
+ * only, and the staff directory read additionally allows RECEPTIONIST while
+ * staff writes stay ADMIN/HR — so no implemented write action depends solely
+ * on frontend hiding.
  * Unauthenticated requests receive 401 so clients can distinguish an expired
  * session (401) from an authenticated but unauthorized role (403).
  */
@@ -40,6 +46,8 @@ public class SecurityConfig {
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers("/api/auth/**", "/actuator/health").permitAll()
                         .requestMatchers("/api/audit/**").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.GET, "/api/staff/**")
+                            .hasAnyRole("ADMIN", "HR", "RECEPTIONIST")
                         .requestMatchers("/api/staff/**", "/api/departments/**", "/api/shifts/**")
                             .hasAnyRole("ADMIN", "HR")
                         .requestMatchers("/api/invoices/**", "/api/insurance-claims/**")
@@ -52,6 +60,12 @@ public class SecurityConfig {
                             .hasAnyRole("ADMIN", "PHARMACIST", "DOCTOR")
                         .requestMatchers("/api/inventory-items/**")
                             .hasAnyRole("ADMIN", "PHARMACIST", "STAFF")
+                        .requestMatchers(HttpMethod.POST, "/api/patients")
+                            .hasAnyRole("ADMIN", "RECEPTIONIST")
+                        .requestMatchers(HttpMethod.PUT, "/api/patients/*")
+                            .hasAnyRole("ADMIN", "RECEPTIONIST")
+                        .requestMatchers(HttpMethod.POST, "/api/appointments")
+                            .hasAnyRole("ADMIN", "RECEPTIONIST")
                         .requestMatchers("/api/patients/**", "/api/appointments/**", "/api/admissions/**",
                                 "/api/beds/**", "/api/emergency-visits/**")
                             .hasAnyRole("ADMIN", "DOCTOR", "NURSE", "RECEPTIONIST")

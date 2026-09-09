@@ -1,19 +1,6 @@
 import React, { useState } from 'react';
+import { can } from '../../authorization.js';
 import AppointmentForm from '../appointments/AppointmentForm.jsx';
-
-// Role contract for record actions (UI convenience only; backend
-// authorization stays authoritative for every request):
-//   - RECEPTIONIST / ADMIN may edit a record (editable form) and schedule
-//     appointments for the selected patient.
-//   - DOCTOR may inspect the record form, read-only.
-//   - Other roles (e.g. NURSE) get the detail view without form actions.
-const EDIT_ROLES = ['RECEPTIONIST', 'ADMIN'];
-const FORM_VIEW_ROLES = [...EDIT_ROLES, 'DOCTOR'];
-const SCHEDULE_ROLES = ['RECEPTIONIST', 'ADMIN'];
-
-function hasAnyRole(roles, wanted) {
-  return Array.isArray(roles) && wanted.some((role) => roles.includes(role));
-}
 
 // Read-only detail view of the selected patient (plan1.md Tasks 7-8). It
 // reuses the Task 6 data-minimized summary fields: National ID stays in the
@@ -30,10 +17,11 @@ export default function PatientDetailPage({
   onClose,
   onSessionExpired,
 }) {
-  const roles = session?.roles;
-  const canEdit = hasAnyRole(roles, EDIT_ROLES);
-  const canViewForm = hasAnyRole(roles, FORM_VIEW_ROLES);
-  const canSchedule = hasAnyRole(roles, SCHEDULE_ROLES);
+  // UI convenience hints from the shared permission map; backend stays
+  // authoritative for every request.
+  const canEdit = can(session, 'update', 'patient');
+  const canViewForm = can(session, 'formView', 'patient');
+  const canSchedule = can(session, 'create', 'appointment');
   const [scheduling, setScheduling] = useState(false);
   const [scheduleConfirmation, setScheduleConfirmation] = useState('');
 

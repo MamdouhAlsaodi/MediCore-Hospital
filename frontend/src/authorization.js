@@ -7,7 +7,7 @@
 // deny-by-default and authoritative for every request (401 on an expired
 // or absent session, 403 on a role the path rules refuse).
 //
-// Implemented UI actions only (plan1.md Tasks 6-8):
+// Implemented UI actions only (plan1.md Tasks 6-10):
 //   patient read       GET  /api/patients, GET /api/patients/{id}
 //                      (list/search screen and detail view)
 //   patient create     POST /api/patients       (the "New patient" action)
@@ -16,6 +16,7 @@
 //                      (the "View record form" action)
 //   appointment read   GET  /api/appointments   (the appointments list)
 //   appointment create POST /api/appointments   (the "Schedule appointment" action)
+//   audit read         GET  /api/audit          (the ADMIN audit evidence screen)
 //
 // Documented policy gaps — asserted honestly in authorization.test.js and
 // SecurityAuthorizationTest.java; backend alignment needs its own packet:
@@ -42,6 +43,11 @@ export const PERMISSIONS = {
   appointment: {
     read: ['ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST'],
     create: ['ADMIN', 'RECEPTIONIST'],
+  },
+  // Audit evidence stays ADMIN-only, mirroring the SecurityConfig rule
+  // ("hasRole(\"ADMIN\")" on /api/audit/**) — no role may widen it.
+  audit: {
+    read: ['ADMIN'],
   },
 };
 

@@ -39,11 +39,16 @@ function jsonResponse(payload, status = 200) {
   });
 }
 
-function renderPatients() {
+function renderPatients(sessionOverrides = {}) {
   const onSessionExpired = vi.fn();
   const view = render(
     <PatientsPage
-      session={{ token: 'synthetic-token', username: 'testuser', roles: ['DOCTOR'] }}
+      session={{
+        token: 'synthetic-token',
+        username: 'testuser',
+        roles: ['DOCTOR'],
+        ...sessionOverrides,
+      }}
       onSessionExpired={onSessionExpired}
     />
   );
@@ -188,7 +193,7 @@ describe('PatientsPage', () => {
     expect(container.querySelector('script')).toBeNull();
   });
 
-  it('selects a patient via native button keyboard activation and shows a bounded read-only summary', async () => {
+  it('selects a patient via native button keyboard activation and opens a bounded read-only detail view', async () => {
     const user = userEvent.setup();
     fetchMock.mockImplementation(() => Promise.resolve(jsonResponse(PATIENTS)));
     renderPatients();
@@ -198,20 +203,35 @@ describe('PatientsPage', () => {
     rows[0].focus();
     await user.keyboard('{Enter}');
 
-    const summary = screen.getByRole('region', { name: 'Selected patient' });
-    expect(summary).toHaveTextContent('Amal Hassan');
-    expect(summary).toHaveTextContent('MRN-1001');
-    expect(summary).toHaveTextContent('1990-05-14');
-    expect(within(summary).queryByText('National ID')).not.toBeInTheDocument();
-    expect(summary).not.toHaveTextContent(PATIENTS[0].nationalId);
-    expect(within(summary).getByText('Active')).toBeInTheDocument();
-    expect(summary).toHaveTextContent(/read-only/i);
-    expect(within(summary).queryByRole('button')).not.toBeInTheDocument();
+    const detail = screen.getByRole('region', { name: 'Selected patient' });
+    expect(detail).toHaveTextContent('Amal Hassan');
+    expect(detail).toHaveTextContent('MRN-1001');
+    expect(detail).toHaveTextContent('1990-05-14');
+    expect(within(detail).queryByText('National ID')).not.toBeInTheDocument();
+    expect(detail).not.toHaveTextContent(PATIENTS[0].nationalId);
+    expect(within(detail).getByText('Active')).toBeInTheDocument();
+    expect(detail).toHaveTextContent(/read-only/i);
 
-    await user.click(rows[1]);
-    expect(summary).toHaveTextContent('Omar Diab');
-    expect(within(summary).getByText('Inactive')).toBeInTheDocument();
-    expect(summary).toHaveTextContent('—');
+    await user.click(within(detail).getByRole('button', { name: 'View record form' }));
+    const form = screen.getByRole('region', { name: 'Patient form' });
+    expect(within(form).getByLabelText('Medical record number')).toBeDisabled();
+    expect(within(form).getByLabelText('Full name')).toBeDisabled();
+    expect(within(form).queryByRole('button', { name: /save/i })).not.toBeInTheDocument();
+    expect(within(form).getByRole('button', { name: 'Back to detail' })).toBeInTheDocument();
+
+    await user.click(within(form).getByRole('button', { name: 'Back to detail' }));
+    expect(screen.getByRole('region', { name: 'Selected patient' })).toHaveTextContent('Amal Hassan');
+
+    const reopenedDetail = screen.getByRole('region', { name: 'Selected patient' });
+    await user.click(within(reopenedDetail).getByRole('button', { name: 'Back to patient list' }));
+    expect(screen.queryByRole('region', { name: 'Selected patient' })).not.toBeInTheDocument();
+
+    const refreshed = await screen.findByRole('list', { name: 'Patient results' });
+    await user.click(within(refreshed).getAllByRole('button')[1]);
+    const secondDetail = screen.getByRole('region', { name: 'Selected patient' });
+    expect(secondDetail).toHaveTextContent('Omar Diab');
+    expect(within(secondDetail).getByText('Inactive')).toBeInTheDocument();
+    expect(secondDetail).toHaveTextContent('—');
   });
 
   it('clears the selected-patient summary as soon as a new search begins loading', async () => {
@@ -230,5 +250,88 @@ describe('PatientsPage', () => {
 
     expect(screen.queryByRole('region', { name: 'Selected patient' })).not.toBeInTheDocument();
     expect(screen.queryByRole('list', { name: 'Patient results' })).not.toBeInTheDocument();
+  });
+
+  it('offers the New patient action only to roles permitted to register patients', async () => {
+    fetchMock.mockImplementation(() => Promise.resolve(jsonResponse(PATIENTS)));
+
+    const receptionist = renderPatients({ roles: ['RECEPTIONIST'] });
+    await waitForPatientList();
+    expect(screen.getByRole('button', { name: 'New patient' })).toBeInTheDocument();
+    receptionist.unmount();
+
+    renderPatients({ roles: ['NURSE'] });
+    await waitForPatientList();
+    expect(screen.queryByRole('button', { name: 'New patient' })).not.toBeInTheDocument();
+  });
+
+  it('registers a new patient and returns to the detail view with a visible confirmation', async () => {
+    const user = userEvent.setup();
+    const CREATED = {
+      id: '99999999-9999-4999-8999-999999999999',
+      medicalRecordNumber: 'MRN-2001',
+      fullName: 'New Synthetic Patient',
+      dateOfBirth: '',
+      sex: '',
+      phone: '',
+      email: '',
+      nationalId: '',
+      address: '',
+      active: true,
+    };
+    fetchMock.mockImplementation((path, options = {}) => {
+      if (path === '/api/patients' && options.method === 'POST') {
+        return Promise.resolve(jsonResponse(CREATED, 201));
+      }
+      return Promise.resolve(jsonResponse(PATIENTS));
+    });
+    renderPatients({ roles: ['RECEPTIONIST'] });
+    await waitForPatientList();
+
+    await user.click(screen.getByRole('button', { name: 'New patient' }));
+    const form = screen.getByRole('region', { name: 'Patient form' });
+    await user.type(within(form).getByLabelText('Medical record number'), 'MRN-2001');
+    await user.type(within(form).getByLabelText('Full name'), 'New Synthetic Patient');
+    await user.click(within(form).getByRole('button', { name: 'Save patient' }));
+
+    const post = fetchMock.mock.calls.find(([, options]) => options.method === 'POST');
+    expect(post[0]).toBe('/api/patients');
+    expect(JSON.parse(post[1].body).medicalRecordNumber).toBe('MRN-2001');
+
+    const detail = screen.getByRole('region', { name: 'Selected patient' });
+    expect(detail).toHaveTextContent('New Synthetic Patient');
+    expect(detail).toHaveTextContent('MRN-2001');
+    expect(screen.getByRole('status')).toHaveTextContent(/registered/i);
+  });
+
+  it('saves an edit from the detail view and shows a visible confirmation', async () => {
+    const user = userEvent.setup();
+    const UPDATED = { ...PATIENTS[0], phone: '+20 100 000 0099' };
+    fetchMock.mockImplementation((path, options = {}) => {
+      if (options.method === 'PUT') return Promise.resolve(jsonResponse(UPDATED));
+      return Promise.resolve(jsonResponse(PATIENTS));
+    });
+    renderPatients({ roles: ['RECEPTIONIST'] });
+    const list = await waitForPatientList();
+    await user.click(within(list).getAllByRole('button')[0]);
+
+    await user.click(screen.getByRole('button', { name: 'Edit record' }));
+    const form = screen.getByRole('region', { name: 'Patient form' });
+    await user.clear(within(form).getByLabelText('Phone'));
+    await user.type(within(form).getByLabelText('Phone'), '+20 100 000 0099');
+    await user.click(within(form).getByRole('button', { name: 'Save changes' }));
+
+    const put = fetchMock.mock.calls.find(([, options]) => options.method === 'PUT');
+    expect(put[0]).toBe('/api/patients/11111111-1111-4111-8111-111111111111');
+    expect(JSON.parse(put[1].body)).toEqual({
+      fullName: 'Amal Hassan',
+      phone: '+20 100 000 0099',
+      email: 'amal.hassan@example.com',
+      address: '1 Example Street, Test City',
+    });
+
+    const detail = screen.getByRole('region', { name: 'Selected patient' });
+    expect(detail).toHaveTextContent('+20 100 000 0099');
+    expect(screen.getByRole('status')).toHaveTextContent(/saved/i);
   });
 });

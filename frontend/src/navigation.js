@@ -9,6 +9,7 @@
 //   - /api/dashboard/**     -> authenticated() (any logged-in role)
 //   - /api/patients/**      -> ADMIN, DOCTOR, NURSE, RECEPTIONIST
 //   - /api/appointments/**  -> ADMIN, DOCTOR, NURSE, RECEPTIONIST
+//   - /api/audit/**         -> ADMIN
 import { PERMISSIONS } from './authorization.js';
 
 const DESTINATIONS = [
@@ -31,6 +32,13 @@ const DESTINATIONS = [
     label: 'Appointments',
     heading: 'Appointments',
     roles: PERMISSIONS.appointment.read,
+    implemented: true,
+  },
+  {
+    id: 'audit',
+    label: 'Audit',
+    heading: 'Audit Evidence',
+    roles: PERMISSIONS.audit.read,
     implemented: true,
   },
 ];

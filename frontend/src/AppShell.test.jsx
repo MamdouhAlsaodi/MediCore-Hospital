@@ -42,6 +42,23 @@ const APPOINTMENTS_PAGE = [
   },
 ];
 
+// AuditEvent contract over GET /api/audit (ADMIN-only): evidence fields plus
+// internal metadata the screen must never render.
+const AUDIT_EVENTS = [
+  {
+    id: '88888888-8888-4888-8888-888888888888',
+    createdAt: '2026-03-02T10:00:00Z',
+    updatedAt: '2026-03-02T10:00:00Z',
+    version: 0,
+    actor: 'admin',
+    action: 'CREATE',
+    resourceType: 'Appointment',
+    resourceId: '77777777-7777-4777-8777-777777777777',
+    details: 'created',
+    occurredAt: '2026-03-02T10:00:00Z',
+  },
+];
+
 function jsonResponse(payload, status = 200) {
   return new Response(JSON.stringify(payload), {
     status,
@@ -55,6 +72,7 @@ function stubBackendApi() {
     if (path === '/api/patients') return Promise.resolve(jsonResponse(PATIENTS_PAGE));
     if (path === '/api/appointments') return Promise.resolve(jsonResponse(APPOINTMENTS_PAGE));
     if (path === '/api/staff') return Promise.resolve(jsonResponse(STAFF_DIRECTORY));
+    if (path === '/api/audit') return Promise.resolve(jsonResponse(AUDIT_EVENTS));
     return Promise.resolve(jsonResponse({ error: 'not found' }, 404));
   });
 }
@@ -91,9 +109,12 @@ describe('AppShell', () => {
     renderShell(['DOCTOR']);
 
     expect(navigationItems()).toEqual(['Dashboard', 'Patients', 'Appointments']);
-    for (const unimplemented of ['Billing', 'Laboratory', 'Pharmacy', 'Audit']) {
+    for (const unimplemented of ['Billing', 'Laboratory', 'Pharmacy']) {
       expect(screen.queryByRole('button', { name: unimplemented })).not.toBeInTheDocument();
     }
+    // The audit evidence screen is implemented but ADMIN-only (plan1.md
+    // Task 10): DOCTOR never sees the destination.
+    expect(screen.queryByRole('button', { name: 'Audit' })).not.toBeInTheDocument();
     await waitForDashboardStats();
   });
 
@@ -174,6 +195,32 @@ describe('AppShell', () => {
 
     expect(screen.getByRole('button', { name: 'Appointments' })).toHaveAttribute('aria-current', 'page');
     expect(screen.getByRole('heading', { name: 'Appointments' })).toBeInTheDocument();
+  });
+
+  it('offers the audit evidence screen to ADMIN only and loads real events from /api/audit', async () => {
+    const user = userEvent.setup();
+    renderShell(['ADMIN']);
+
+    expect(navigationItems()).toEqual(['Dashboard', 'Patients', 'Appointments', 'Audit']);
+    await waitForDashboardStats();
+
+    await user.click(screen.getByRole('button', { name: 'Audit' }));
+
+    expect(screen.getByRole('button', { name: 'Audit' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('heading', { name: 'Audit Evidence' })).toBeInTheDocument();
+    const auditScreen = screen.getByRole('region', { name: 'Audit screen' });
+    await within(auditScreen).findByText('CREATE');
+    expect(
+      within(auditScreen).getByRole('table', { name: 'Audit events' })
+    ).toBeInTheDocument();
+
+    // The read uses the session bearer token and never renders it or any
+    // other credential on screen.
+    const auditCalls = fetchMock.mock.calls.filter(([path]) => path === '/api/audit');
+    expect(auditCalls).toHaveLength(1);
+    expect(auditCalls[0][1].method).toBe('GET');
+    expect(auditCalls[0][1].headers.Authorization).toBe('Bearer synthetic-token');
+    expect(auditScreen).not.toHaveTextContent('synthetic-token');
   });
 
   it('reaches logout from the shell', async () => {

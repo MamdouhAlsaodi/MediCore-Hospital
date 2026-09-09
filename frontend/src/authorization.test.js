@@ -78,13 +78,18 @@ describe('authorization permission map (plan1.md Task 9)', () => {
     }
   });
 
-  it('denies by default for missing sessions, empty role lists, and unknown questions', () => {
+  it('denies by default for missing sessions, empty role lists, unknown questions, and audit read outside ADMIN', () => {
     for (const session of [undefined, null, {}, { token: 't', username: 'u' }, sessionFor()]) {
       expect(can(session, 'read', 'patient')).toBe(false);
       expect(can(session, 'create', 'appointment')).toBe(false);
     }
     expect(can(sessionFor('ADMIN'), 'delete', 'patient')).toBe(false);
-    expect(can(sessionFor('ADMIN'), 'read', 'audit')).toBe(false);
+    // Task 10: audit read is now a known, ADMIN-only resource — ADMIN is
+    // granted, every other role denies; a genuinely unknown resource
+    // still denies by default.
+    expect(can(sessionFor('ADMIN'), 'read', 'audit')).toBe(true);
+    expect(can(sessionFor('DOCTOR'), 'read', 'audit')).toBe(false);
+    expect(can(sessionFor('ADMIN'), 'read', 'nonexistent-resource')).toBe(false);
     expect(can(sessionFor('ADMIN'), 'nonexistent-action', 'patient')).toBe(false);
   });
 

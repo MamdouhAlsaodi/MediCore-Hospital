@@ -18,20 +18,16 @@
 //   appointment create POST /api/appointments   (the "Schedule appointment" action)
 //   audit read         GET  /api/audit          (the ADMIN audit evidence screen)
 //
-// Documented policy gaps — asserted honestly in authorization.test.js and
-// SecurityAuthorizationTest.java; backend alignment needs its own packet:
-//   - Patient create/update: the product convention is RECEPTIONIST/ADMIN
-//     (DOCTOR gets a read-only form view), but SecurityConfig enforces only
-//     the four-role path rule for /api/patients/** with no method-level
-//     distinction — a direct DOCTOR/NURSE API write would succeed. The UI
-//     hiding the action is convenience only.
-//   - Appointment create: SecurityConfig admits DOCTOR/NURSE at the path
-//     level while the UI hides the action from them; their direct API
-//     scheduling calls would succeed.
-//   - Staff directory: /api/staff/** is ADMIN/HR only, so RECEPTIONIST — the
-//     primary scheduling role — receives 403 for the professional directory
-//     the scheduling form depends on (the form renders an honest disabled
-//     state; see the Task 8 report).
+// The map mirrors the server-enforced matrix as of the Task 9 alignment
+// (commit b49e549, PR #4): method-level rules in SecurityConfig restrict
+// patient create/update and appointment create to ADMIN and RECEPTIONIST —
+// exactly the roles granted here — so a direct API write from DOCTOR or
+// NURSE is refused server-side with 403 and no implemented write action
+// depends solely on frontend hiding. The staff-directory read behind the
+// scheduling form admits RECEPTIONIST server-side (GET /api/staff ->
+// ADMIN/HR/RECEPTIONIST). The audit entry mirrors the Task 10 ADMIN-only
+// rule on /api/audit**. Both layers are pinned: authorization.test.js on
+// this map and SecurityAuthorizationTest.java on the server side.
 
 export const PERMISSIONS = {
   patient: {

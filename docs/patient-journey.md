@@ -90,7 +90,7 @@ Failure states:
 | Case | Response | UI behavior |
 |---|---|---|
 | Missing required fields / bad email format | `400` `ApiError` "Validation Error" with a field summary | Inline `role="alert"` notice, zero field loss |
-| Duplicate medical record number | **Known gap:** enforced only by the DB unique constraint, so it may surface as `500` rather than a clean `400`/`409` (see `docs/implementation-status.md`) | Inline error notice with the generic failure message |
+| Duplicate medical record number | `409` `ApiError` `{"status":409,"error":"Conflict","message":"Medical record number already exists","path":"/api/patients"}` — service pre-check, closed in PR #9 (`d3526ab`); a race-lost unique-constraint violation is also mapped to `409` with a fixed generic conflict message | Inline `role="alert"` notice with the shared generic failure message ("The request failed (409). Please try again."), zero field loss, no success callback; the original record is left unchanged |
 | Role without write permission (`DOCTOR`/`NURSE`) | `403` | Shared permission-denial message |
 
 ## Step 5 — Edit the patient
@@ -166,7 +166,7 @@ Successful patient create/update and appointment create/delete produce events (`
 
 ```bash
 # automated suites
-cd backend && mvn test                       # 32 tests
+cd backend && mvn test                       # 33 tests
 cd ../frontend && npm test && npm run build  # 61 tests + production build
 
 # repeatable API smoke of the same journey (backend must be running;

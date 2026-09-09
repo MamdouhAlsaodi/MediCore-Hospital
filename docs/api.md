@@ -56,7 +56,7 @@ Every response is a `PatientResponse`:
   "sex": "…", "phone": "…", "email": "…", "nationalId": "…", "address": "…", "active": true }
 ```
 
-Known gap: duplicate `medicalRecordNumber` is enforced only by the database unique constraint, so a real duplicate may return `500` rather than `400`/`409` (see `docs/implementation-status.md`).
+Duplicate `medicalRecordNumber` on create is rejected with `409 Conflict` (closed in PR #9, `d3526ab`): a pre-check in `PatientService.create` throws before any save, and a race-lost database unique-constraint violation is also mapped to `409` — see the error contract below.
 
 ### Appointments — `/api/appointments`
 
@@ -99,6 +99,7 @@ Client errors are mapped in one place, `shared/GlobalExceptionHandler`, always p
 | Malformed path UUID | `400` | `ApiError`, "Invalid path value: <name>" |
 | Malformed request body (bad JSON, non-UUID reference, unparseable date/time) | `400` | `ApiError`, "Malformed request body" |
 | Unknown record | `404` | `ApiError`, e.g. "Patient not found: <uuid>" |
+| Duplicate natural key (existing `medicalRecordNumber` on `POST /api/patients`) | `409` | `ApiError`, `error: "Conflict"`; message is "Medical record number already exists" for the service pre-check, or the fixed generic message "Resource conflict: the record already exists or violates a data integrity constraint" when Spring translates a race-lost DB unique-constraint violation (SQL internals never leak) |
 
 ## Synthetic demo data (opt-in)
 

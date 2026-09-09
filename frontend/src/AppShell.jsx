@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import DashboardPage from './DashboardPage.jsx';
+import PatientsPage from './features/patients/PatientsPage.jsx';
 import { defaultDestination, permittedDestinations } from './navigation.js';
 
 function ScreenBoundary({ destination }) {
@@ -14,6 +15,16 @@ function ScreenBoundary({ destination }) {
   );
 }
 
+function Screen({ destination, session, onSessionExpired }) {
+  if (!destination.implemented) {
+    return <ScreenBoundary destination={destination} />;
+  }
+  if (destination.id === 'patients') {
+    return <PatientsPage session={session} onSessionExpired={onSessionExpired} />;
+  }
+  return <DashboardPage session={session} onSessionExpired={onSessionExpired} />;
+}
+
 export default function AppShell({ session, onLogout, onSessionExpired }) {
   // In-memory selection: a fresh mount or refresh always falls back to the
   // dashboard because the selection is intentionally not persisted.
@@ -22,10 +33,6 @@ export default function AppShell({ session, onLogout, onSessionExpired }) {
   const destinations = permittedDestinations(session.roles);
   const selected =
     destinations.find((destination) => destination.id === selectedId) ?? defaultDestination();
-
-  const screen = selected.implemented
-    ? <DashboardPage session={session} onSessionExpired={onSessionExpired} />
-    : <ScreenBoundary destination={selected} />;
 
   return (
     <div className="app">
@@ -59,7 +66,7 @@ export default function AppShell({ session, onLogout, onSessionExpired }) {
             <span>Training build</span>
           </div>
         </header>
-        {screen}
+        <Screen destination={selected} session={session} onSessionExpired={onSessionExpired} />
       </main>
     </div>
   );

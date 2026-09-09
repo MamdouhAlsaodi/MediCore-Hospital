@@ -188,3 +188,81 @@ header span { color: var(--muted); }
 
   main { padding: 20px; }
 }
+
+/* Patients screen (Task 6) */
+.patients-screen { margin-top: 4px; }
+
+.patient-search {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  margin: 18px 0 4px;
+}
+.patient-search-field { flex: 1 1 240px; max-width: 420px; }
+.patient-search-field label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+.patient-search-field input {
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-size: 15px;
+  background: #fff;
+}
+.patient-search-field input:focus-visible { outline: 2px solid var(--navy-2); outline-offset: 1px; }
+.patient-search button[type='submit'] {
+  border: 0;
+  border-radius: 10px;
+  background: var(--navy);
+  color: #fff;
+  padding: 11px 18px;
+  font-size: 15px;
+  cursor: pointer;
+}
+.patient-search button[type='submit']:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+
+.patient-list {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 12px;
+}
+.patient-row {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+  font: inherit;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px 14px;
+  cursor: pointer;
+}
+.patient-row:hover { border-color: var(--navy-2); }
+.patient-row:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+.patient-row[aria-pressed='true'] { border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold); }
+.patient-name { font-weight: 600; color: var(--navy); overflow-wrap: anywhere; }
+.patient-meta { font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+
+.patients-empty { margin-top: 16px; }
+
+.patient-summary { margin-top: 20px; }
+.patient-summary h3 { margin: 0; }
+.patient-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 18px;
+  margin: 14px 0 0;
+}
+.patient-facts dt { color: var(--muted); font-size: 13px; }
+.patient-facts dd { margin: 0; overflow-wrap: anywhere; }
+.patient-summary .panel-hint { margin-top: 14px; }
+
+@media (max-width: 560px) {
+  .patient-facts { grid-template-columns: 1fr; gap: 0; }
+  .patient-facts dd { margin: 0 0 10px; }
+}

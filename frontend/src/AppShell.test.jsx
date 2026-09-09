@@ -5,6 +5,21 @@ import AppShell from './AppShell.jsx';
 
 const DASHBOARD_STATS = { patients: 12, appointmentsToday: 4 };
 
+const PATIENTS_PAGE = [
+  {
+    id: '55555555-5555-4555-8555-555555555555',
+    medicalRecordNumber: 'MRN-2001',
+    fullName: 'Synthetic Patient',
+    dateOfBirth: '1980-01-01',
+    sex: 'female',
+    phone: '',
+    email: '',
+    nationalId: '',
+    address: '',
+    active: true,
+  },
+];
+
 function jsonResponse(payload, status = 200) {
   return new Response(JSON.stringify(payload), {
     status,
@@ -15,6 +30,7 @@ function jsonResponse(payload, status = 200) {
 function stubBackendApi() {
   return vi.fn((path) => {
     if (path === '/api/dashboard') return Promise.resolve(jsonResponse(DASHBOARD_STATS));
+    if (path === '/api/patients') return Promise.resolve(jsonResponse(PATIENTS_PAGE));
     return Promise.resolve(jsonResponse({ error: 'not found' }, 404));
   });
 }
@@ -95,10 +111,13 @@ describe('AppShell', () => {
 
     expect(screen.getByRole('button', { name: 'Patients' })).toHaveAttribute('aria-current', 'page');
     expect(screen.getByRole('heading', { name: 'Patients' })).toBeInTheDocument();
-    const patientsBoundary = screen.getByRole('region', { name: 'Patients screen' });
-    expect(patientsBoundary).toHaveTextContent(/not implemented/i);
-    expect(patientsBoundary).toHaveTextContent('Task 6');
-    expect(fetchMock).toHaveBeenCalledTimes(dashboardCalls);
+    const patientsScreen = screen.getByRole('region', { name: 'Patients screen' });
+    expect(
+      within(patientsScreen).getByRole('searchbox', { name: 'Search patients' })
+    ).toBeInTheDocument();
+    await within(patientsScreen).findByText('Synthetic Patient');
+    expect(fetchMock.mock.calls.filter(([path]) => path === '/api/patients')).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(dashboardCalls + 1);
 
     await user.click(screen.getByRole('button', { name: 'Dashboard' }));
 

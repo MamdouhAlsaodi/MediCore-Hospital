@@ -157,7 +157,9 @@ function renderShell(roles) {
 }
 
 async function waitForDashboardStats() {
-  await screen.findByText('patients');
+  // Task 5 renders the human label 'Patients', which also names a nav
+  // button; the selector isolates the dashboard stat-card label.
+  await screen.findByText('Patients', { selector: 'small' });
   await waitFor(() => expect(screen.getByText('12')).toBeInTheDocument());
 }
 
@@ -268,7 +270,7 @@ describe('AppShell', () => {
     expect(
       within(appointmentsScreen).queryByRole('button', { name: 'Schedule appointment' })
     ).not.toBeInTheDocument();
-    expect(screen.queryByText('patients')).not.toBeInTheDocument();
+    expect(screen.queryByText('Patients', { selector: 'small' })).not.toBeInTheDocument();
     // The real screen fetches its own data: appointments list, professionals,
     // and patients for name resolution.
     expect(fetchMock.mock.calls.filter(([path]) => path === '/api/appointments')).toHaveLength(1);

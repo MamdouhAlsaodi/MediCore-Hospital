@@ -11,6 +11,7 @@
 //   - /api/appointments/**  -> ADMIN, DOCTOR, NURSE, RECEPTIONIST
 //   - /api/admissions/**    -> ADMIN, DOCTOR, NURSE, RECEPTIONIST (plan2.md Task 2)
 //   - /api/emergency-visits/** -> ADMIN, DOCTOR, NURSE, RECEPTIONIST (plan2.md Task 3)
+//   - /api/invoices/**      -> ADMIN, BILLING (plan2.md Task 4; financial simulation)
 //   - /api/audit/**         -> ADMIN
 import { PERMISSIONS } from './authorization.js';
 
@@ -48,6 +49,13 @@ const DESTINATIONS = [
     label: 'Emergency Visits',
     heading: 'Emergency Visits',
     roles: PERMISSIONS.emergencyVisit.read,
+    implemented: true,
+  },
+  {
+    id: 'invoices',
+    label: 'Invoices',
+    heading: 'Invoices',
+    roles: PERMISSIONS.invoice.read,
     implemented: true,
   },
   {

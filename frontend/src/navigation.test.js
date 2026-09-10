@@ -1,14 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { canViewDestination, defaultDestination, permittedDestinations } from './navigation.js';
 
-// docs/plan2.md Tasks 2-3: the shell gains the Admissions and Emergency
+// docs/plan2.md Tasks 2-4: the shell gains the Admissions and Emergency
 // Visits destinations for the four clinical-administrative roles that the
 // server family rule admits on /api/admissions/** and
-// /api/emergency-visits/** (ADMIN, DOCTOR, NURSE, RECEPTIONIST). The role
-// sets come from the shared permission map in authorization.js; they mirror
-// SecurityConfig and never authorize anything. These tests pin the pure
-// navigation registry so a destination cannot silently widen or shrink its
-// role surface.
+// /api/emergency-visits/** (ADMIN, DOCTOR, NURSE, RECEPTIONIST), and Task 4
+// adds the Invoices destination for exactly ADMIN and BILLING, mirroring
+// the server family rule on /api/invoices/** (a financial simulation — no
+// real payments). The role sets come from the shared permission map in
+// authorization.js; they mirror SecurityConfig and never authorize
+// anything. These tests pin the pure navigation registry so a destination
+// cannot silently widen or shrink its role surface.
 const sessionFor = (...roles) => ({ token: 'synthetic-token', username: 'testuser', roles });
 
 function destinationIds(roles) {
@@ -17,14 +19,14 @@ function destinationIds(roles) {
   return permittedDestinations(sessionFor(...roles).roles).map((destination) => destination.id);
 }
 
-describe('navigation registry (plan1.md Task 9 + plan2.md Tasks 2-3)', () => {
+describe('navigation registry (plan1.md Task 9 + plan2.md Tasks 2-4)', () => {
   it('defaults to the dashboard destination', () => {
     expect(defaultDestination().id).toBe('dashboard');
   });
 
-  it('offers ADMIN every destination including the audit evidence screen', () => {
+  it('offers ADMIN every destination including invoices and the audit evidence screen', () => {
     expect(destinationIds(['ADMIN'])).toEqual(
-      ['dashboard', 'patients', 'appointments', 'admissions', 'emergency-visits', 'audit'],
+      ['dashboard', 'patients', 'appointments', 'admissions', 'emergency-visits', 'invoices', 'audit'],
     );
   });
 
@@ -36,8 +38,15 @@ describe('navigation registry (plan1.md Task 9 + plan2.md Tasks 2-3)', () => {
     }
   });
 
-  it('offers a role outside the clinical-front-desk set only the dashboard', () => {
-    for (const role of ['BILLING', 'LAB_TECH', 'PHARMACIST', 'HR', 'STAFF']) {
+  it('offers BILLING exactly the dashboard plus the invoices family destination', () => {
+    // plan2.md Task 4: BILLING is the second invoice role server-side on
+    // /api/invoices/**, so the shell offers it Invoices — and nothing else
+    // beyond the dashboard.
+    expect(destinationIds(['BILLING'])).toEqual(['dashboard', 'invoices']);
+  });
+
+  it('offers a role outside the admitted sets only the dashboard', () => {
+    for (const role of ['LAB_TECH', 'PHARMACIST', 'HR', 'STAFF']) {
       expect(destinationIds([role])).toEqual(['dashboard']);
     }
   });
@@ -58,6 +67,15 @@ describe('navigation registry (plan1.md Task 9 + plan2.md Tasks 2-3)', () => {
     expect(emergency.implemented).toBe(true);
     expect(emergency.label).toBe('Emergency Visits');
     expect(emergency.heading).toBe('Emergency Visits');
+  });
+
+  it('invoices is an implemented destination with its own label and heading', () => {
+    const invoices = permittedDestinations(sessionFor('ADMIN').roles)
+      .find((destination) => destination.id === 'invoices');
+    expect(invoices).toBeDefined();
+    expect(invoices.implemented).toBe(true);
+    expect(invoices.label).toBe('Invoices');
+    expect(invoices.heading).toBe('Invoices');
   });
 
   it('never offers any destination without roles; an unknown role still sees only the ANY dashboard', () => {
@@ -83,5 +101,13 @@ describe('navigation registry (plan1.md Task 9 + plan2.md Tasks 2-3)', () => {
     expect(canViewDestination(emergency, ['BILLING'])).toBe(false);
     expect(canViewDestination(emergency, [])).toBe(false);
     expect(canViewDestination(emergency, undefined)).toBe(false);
+    const invoices = permittedDestinations(sessionFor('ADMIN').roles)
+      .find((destination) => destination.id === 'invoices');
+    expect(canViewDestination(invoices, ['ADMIN'])).toBe(true);
+    expect(canViewDestination(invoices, ['BILLING'])).toBe(true);
+    expect(canViewDestination(invoices, ['DOCTOR'])).toBe(false);
+    expect(canViewDestination(invoices, ['RECEPTIONIST'])).toBe(false);
+    expect(canViewDestination(invoices, [])).toBe(false);
+    expect(canViewDestination(invoices, undefined)).toBe(false);
   });
 });

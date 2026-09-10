@@ -808,3 +808,140 @@ button.appointment-cancel:focus-visible {
   .emergency-actions { flex-direction: column; align-items: stretch; }
   .emergency-actions .emergency-new { width: 100%; }
 }
+
+/* Invoices screen (docs/plan2.md Task 4): list with server-owned status
+   badges, the create workflow, and guarded two-step transitions — reusing
+   the existing navy/gold identity, no new palette. The screen is a
+   financial simulation; no payment styling exists on purpose. */
+.invoice-boundary { margin-bottom: 12px; }
+.invoice-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 14px;
+}
+.invoice-new {
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: 0;
+  background: var(--gold, #b8860b);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+.invoice-new:disabled { opacity: 0.6; cursor: not-allowed; }
+.invoice-empty {
+  padding: 18px;
+}
+.invoice-table-wrap {
+  margin-top: 14px;
+  overflow-x: auto;
+}
+.invoice-table {
+  width: 100%;
+  border-collapse: collapse;
+  border-radius: 12px;
+  font-size: 14px;
+}
+.invoice-table th,
+.invoice-table td {
+  text-align: left;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+.invoice-table thead th {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.invoice-table tbody tr:last-child td { border-bottom: 0; }
+/* DRAFT stays on the neutral base badge; only lifecycle highlights differ. */
+.status-badge.status-issued {
+  border-color: var(--gold, #b8860b);
+  color: var(--gold, #b8860b);
+}
+.status-badge.status-paid {
+  border-color: var(--navy-2);
+  color: var(--navy-2);
+}
+.status-badge.status-void { opacity: 0.85; }
+.invoice-row-actions {
+  white-space: nowrap;
+}
+.invoice-row-actions button {
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px;
+  margin-left: 6px;
+}
+.invoice-row-actions button:first-child { margin-left: 0; }
+.invoice-row-actions button:disabled { opacity: 0.6; cursor: not-allowed; }
+.invoice-transition { color: inherit; }
+.invoice-transition-confirm {
+  border-color: var(--gold, #b8860b);
+  color: var(--gold, #b8860b);
+  font-weight: 600;
+}
+.invoice-transition-cancel { color: var(--muted); }
+.invoice-form { padding: 18px; }
+.invoice-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+.invoice-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.invoice-field label { font-size: 13px; color: var(--muted); }
+.invoice-field input,
+.invoice-field select {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-size: 15px;
+  background: #fff;
+  color: inherit;
+}
+.invoice-field input:focus-visible,
+.invoice-field select:focus-visible {
+  outline: 2px solid var(--navy-2);
+  outline-offset: 1px;
+}
+.invoice-field-hint { font-size: 12px; color: var(--muted); }
+.invoice-form-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+}
+.invoice-save,
+.invoice-cancel {
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: 0;
+  cursor: pointer;
+  font-weight: 600;
+}
+.invoice-save { background: var(--gold, #b8860b); color: #fff; }
+.invoice-save:disabled,
+.invoice-cancel:disabled { opacity: 0.6; cursor: not-allowed; }
+.invoice-cancel { background: transparent; border: 1px solid var(--line); color: inherit; }
+
+@media (max-width: 560px) {
+  /* The invoices list keeps its columns readable on narrow screens: values
+     wrap (overflow-wrap) and the wrap scrolls horizontally if needed. */
+  .invoice-table th,
+  .invoice-table td { padding: 8px; font-size: 13px; }
+  .invoice-form-grid { grid-template-columns: 1fr; gap: 0; }
+  .invoice-form-actions,
+  .invoice-actions { flex-direction: column; align-items: stretch; }
+  .invoice-actions .invoice-new { width: 100%; }
+}

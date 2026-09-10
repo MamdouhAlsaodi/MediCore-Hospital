@@ -86,6 +86,28 @@ const EMERGENCY_VISITS_PAGE = [
   },
 ];
 
+// Invoices list over GET /api/invoices (docs/plan2.md Task 4 DTO contract):
+// id/patientId/invoiceNumber/amount/currency/status — no persistence
+// metadata. The whole family is a FINANCIAL SIMULATION: no real payments.
+const INVOICES_PAGE = [
+  {
+    id: '88888888-8888-4888-8888-888888888701',
+    patientId: '55555555-5555-4555-8555-555555555555',
+    invoiceNumber: 'INV-2026-0001',
+    amount: '150.00',
+    currency: 'USD',
+    status: 'DRAFT',
+  },
+  {
+    id: '88888888-8888-4888-8888-888888888702',
+    patientId: 'raw unresolved reference',
+    invoiceNumber: 'INV-2026-0002',
+    amount: '42.50',
+    currency: 'EUR',
+    status: 'PAID',
+  },
+];
+
 // AuditEvent contract over GET /api/audit (ADMIN-only): evidence fields plus
 // internal metadata the screen must never render.
 const AUDIT_EVENTS = [
@@ -117,6 +139,7 @@ function stubBackendApi() {
     if (path === '/api/appointments') return Promise.resolve(jsonResponse(APPOINTMENTS_PAGE));
     if (path === '/api/admissions') return Promise.resolve(jsonResponse(ADMISSIONS_PAGE));
     if (path === '/api/emergency-visits') return Promise.resolve(jsonResponse(EMERGENCY_VISITS_PAGE));
+    if (path === '/api/invoices') return Promise.resolve(jsonResponse(INVOICES_PAGE));
     if (path === '/api/staff') return Promise.resolve(jsonResponse(STAFF_DIRECTORY));
     if (path === '/api/audit') return Promise.resolve(jsonResponse(AUDIT_EVENTS));
     return Promise.resolve(jsonResponse({ error: 'not found' }, 404));
@@ -160,7 +183,7 @@ describe('AppShell', () => {
     expect(navigationItems()).toEqual(
       ['Dashboard', 'Patients', 'Appointments', 'Admissions', 'Emergency Visits'],
     );
-    for (const unimplemented of ['Billing', 'Laboratory', 'Pharmacy', 'Beds']) {
+    for (const unimplemented of ['Laboratory', 'Pharmacy', 'Beds']) {
       expect(screen.queryByRole('button', { name: unimplemented })).not.toBeInTheDocument();
     }
     // The audit evidence screen is implemented but ADMIN-only (plan1.md
@@ -169,14 +192,48 @@ describe('AppShell', () => {
     await waitForDashboardStats();
   });
 
-  it('hides clinical destinations from a role the server would reject', async () => {
+  it('hides clinical destinations from BILLING and offers it the invoices family only', async () => {
     renderShell(['BILLING']);
 
-    expect(navigationItems()).toEqual(['Dashboard']);
+    // plan2.md Task 4: BILLING is the second invoice role server-side, so
+    // the shell offers exactly Dashboard + Invoices to it — nothing else.
+    expect(navigationItems()).toEqual(['Dashboard', 'Invoices']);
     for (const denied of ['Patients', 'Appointments', 'Admissions', 'Emergency Visits', 'Audit']) {
       expect(screen.queryByRole('button', { name: denied })).not.toBeInTheDocument();
     }
     await waitForDashboardStats();
+  });
+
+  it('opens the invoices screen for a billing role and loads its list once', async () => {
+    const user = userEvent.setup();
+    renderShell(['BILLING']);
+    await waitForDashboardStats();
+
+    await user.click(screen.getByRole('button', { name: 'Invoices' }));
+
+    expect(screen.getByRole('button', { name: 'Invoices' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('heading', { name: 'Invoices' })).toBeInTheDocument();
+    const invoicesScreen = screen.getByRole('region', { name: 'Invoices screen' });
+    const table = await within(invoicesScreen).findByRole('table', { name: 'Registered invoices' });
+    expect(within(table).getAllByRole('row')).toHaveLength(3); // header + two records
+    // Resolved patient name, status badges, and honest placeholders.
+    expect(within(table).getByText('Synthetic Patient')).toBeInTheDocument();
+    expect(within(table).getByText('DRAFT')).toBeInTheDocument();
+    expect(within(table).getByText('PAID')).toBeInTheDocument();
+    expect(invoicesScreen).toHaveTextContent('Unknown record');
+    expect(invoicesScreen).not.toHaveTextContent('raw unresolved reference');
+    // The financial-simulation boundary is demonstrably labeled in the UI.
+    expect(invoicesScreen).toHaveTextContent(/financial simulation/i);
+    expect(invoicesScreen).toHaveTextContent(/no real payments/i);
+    // A billing role may create invoices.
+    expect(
+      within(invoicesScreen).getByRole('button', { name: 'Create invoice' })
+    ).toBeInTheDocument();
+
+    const invoiceCalls = fetchMock.mock.calls.filter(([path]) => path === '/api/invoices');
+    expect(invoiceCalls).toHaveLength(1);
+    expect(invoiceCalls[0][1].method).toBe('GET');
+    expect(invoiceCalls[0][1].headers.Authorization).toBe('Bearer synthetic-token');
   });
 
   it('defaults to the dashboard on a fresh mount, so a refresh falls back to it', async () => {
@@ -317,7 +374,7 @@ describe('AppShell', () => {
     renderShell(['ADMIN']);
 
     expect(navigationItems()).toEqual(
-      ['Dashboard', 'Patients', 'Appointments', 'Admissions', 'Emergency Visits', 'Audit'],
+      ['Dashboard', 'Patients', 'Appointments', 'Admissions', 'Emergency Visits', 'Invoices', 'Audit'],
     );
     await waitForDashboardStats();
 

@@ -19,6 +19,9 @@
 //   emergencyVisit read       GET  /api/emergency-visits          (the emergency-visits list)
 //   emergencyVisit create     POST /api/emergency-visits          (the "Register visit" action)
 //   emergencyVisit transition PUT  /api/emergency-visits/{id}/status (the guarded status actions)
+//   invoice read       GET  /api/invoices       (the invoices list; plan2.md Task 4)
+//   invoice create     POST /api/invoices       (the "Create invoice" action)
+//   invoice transition PUT  /api/invoices/{id}/status (the guarded status actions)
 //   audit read         GET  /api/audit          (the ADMIN audit evidence screen)
 //
 // The map mirrors the server-enforced matrix as of the Task 9 alignment
@@ -64,6 +67,17 @@ export const PERMISSIONS = {
     read: ['ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST'],
     create: ['ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST'],
     transition: ['ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST'],
+  },
+  // Invoices (plan2.md Task 4): the server family rule on /api/invoices/**
+  // admits only ADMIN and BILLING on every method and Task 4 changed no
+  // role policy, so read, create, and transition hints mirror exactly those
+  // two roles. The whole family is a FINANCIAL SIMULATION — demo amounts
+  // and labels only, no real payments, conversion, FX, or tax. UI
+  // mirroring only; SecurityConfig stays authoritative.
+  invoice: {
+    read: ['ADMIN', 'BILLING'],
+    create: ['ADMIN', 'BILLING'],
+    transition: ['ADMIN', 'BILLING'],
   },
   // Audit evidence stays ADMIN-only, mirroring the SecurityConfig rule
   // ("hasRole(\"ADMIN\")" on /api/audit/**) — no role may widen it.

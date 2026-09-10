@@ -103,7 +103,7 @@ public class AdmissionService {
         entityManager.clear();
         Admission discharged = admissions.findById(id)
                 .orElseThrow(() -> new NotFoundException("Admission not found: " + id));
-        audit.record("UPDATE", "Admission", id.toString(), "discharged");
+        audit.record("UPDATE", "Admission", id.toString(), "status: " + STATUS_DISCHARGED);
         return AdmissionDtos.AdmissionResponse.from(discharged);
     }
 

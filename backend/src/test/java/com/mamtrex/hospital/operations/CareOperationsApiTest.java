@@ -13,6 +13,7 @@ import org.springframework.http.*;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -108,6 +109,13 @@ class CareOperationsApiTest {
             "patients", "appointments", "admissions", "emergencyVisits", "invoices",
             "openAdmissions", "activeEmergencyVisits",
             "invoicesDraft", "invoicesIssued", "invoicesPaid", "invoicesVoid");
+
+    /** Task 7 audit contract: exactly these six public event fields. */
+    private static final Set<String> AUDIT_CONTRACT_KEYS = Set.of(
+            "actor", "action", "resourceType", "resourceId", "details", "occurredAt");
+
+    /** Task 7 tolerated persistence metadata already on the entity JSON; the contract never grows beyond this. */
+    private static final Set<String> AUDIT_METADATA_KEYS = Set.of("id", "createdAt", "updatedAt", "version");
 
     @Autowired
     TestRestTemplate rest;
@@ -376,7 +384,7 @@ class CareOperationsApiTest {
         assertEquals("2031-01-01T08:15:30", body.get("admittedAt"), "discharge must not change admittedAt");
 
         List<Map<String, Object>> afterDischarge = auditEvents(login(ADMIN_USER));
-        assertSingleEvent(afterDischarge, "Admission", admissionId, "UPDATE", RECEPTIONIST_USER, "discharged");
+        assertSingleEvent(afterDischarge, "Admission", admissionId, "UPDATE", RECEPTIONIST_USER, "status: DISCHARGED");
 
         ResponseEntity<Map<String, Object>> repeat =
                 put("/api/admissions/" + admissionId + "/status", token, Map.of("status", "DISCHARGED"));
@@ -403,7 +411,7 @@ class CareOperationsApiTest {
 
         List<Map<String, Object>> afterFailures = auditEvents(login(ADMIN_USER));
         assertSingleEvent(afterFailures, "Admission", admissionId, "CREATE", RECEPTIONIST_USER, "created");
-        assertSingleEvent(afterFailures, "Admission", admissionId, "UPDATE", RECEPTIONIST_USER, "discharged");
+        assertSingleEvent(afterFailures, "Admission", admissionId, "UPDATE", RECEPTIONIST_USER, "status: DISCHARGED");
     }
 
     /**
@@ -592,7 +600,7 @@ class CareOperationsApiTest {
         assertEquals("2031-01-01T09:15", treated.get("arrivalAt"), "transitions must not change arrivalAt");
         assertEquals("3", treated.get("triageLevel"), "transitions must not change the triage label");
 
-        assertSingleEvent(auditEvents(login(ADMIN_USER)), "EmergencyVisit", visitId, "UPDATE", RECEPTIONIST_USER, "in treatment");
+        assertSingleEvent(auditEvents(login(ADMIN_USER)), "EmergencyVisit", visitId, "UPDATE", RECEPTIONIST_USER, "status: IN_TREATMENT");
 
         ResponseEntity<Map<String, Object>> closed =
                 put("/api/emergency-visits/" + visitId + "/status", token, Map.of("status", "CLOSED"));
@@ -600,7 +608,7 @@ class CareOperationsApiTest {
         assertNotNull(closed.getBody());
         assertEquals("CLOSED", closed.getBody().get("status"));
 
-        assertSingleEvent(auditEvents(login(ADMIN_USER)), "EmergencyVisit", visitId, "UPDATE", RECEPTIONIST_USER, "closed");
+        assertSingleEvent(auditEvents(login(ADMIN_USER)), "EmergencyVisit", visitId, "UPDATE", RECEPTIONIST_USER, "status: CLOSED");
 
         ResponseEntity<Map<String, Object>> repeat =
                 put("/api/emergency-visits/" + visitId + "/status", token, Map.of("status", "CLOSED"));
@@ -644,10 +652,10 @@ class CareOperationsApiTest {
 
         List<Map<String, Object>> afterFailures = auditEvents(login(ADMIN_USER));
         assertSingleEvent(afterFailures, "EmergencyVisit", visitId, "CREATE", RECEPTIONIST_USER, "created");
-        assertSingleEvent(afterFailures, "EmergencyVisit", visitId, "UPDATE", RECEPTIONIST_USER, "in treatment");
-        assertSingleEvent(afterFailures, "EmergencyVisit", visitId, "UPDATE", RECEPTIONIST_USER, "closed");
+        assertSingleEvent(afterFailures, "EmergencyVisit", visitId, "UPDATE", RECEPTIONIST_USER, "status: IN_TREATMENT");
+        assertSingleEvent(afterFailures, "EmergencyVisit", visitId, "UPDATE", RECEPTIONIST_USER, "status: CLOSED");
         assertSingleEvent(afterFailures, "EmergencyVisit", directCloseId, "CREATE", RECEPTIONIST_USER, "created");
-        assertSingleEvent(afterFailures, "EmergencyVisit", directCloseId, "UPDATE", RECEPTIONIST_USER, "closed");
+        assertSingleEvent(afterFailures, "EmergencyVisit", directCloseId, "UPDATE", RECEPTIONIST_USER, "status: CLOSED");
     }
 
     /**
@@ -920,7 +928,7 @@ class CareOperationsApiTest {
         assertEquals("10.00", issuedBody.get("amount"), "transitions must not change the stored amount");
         assertEquals("USD", issuedBody.get("currency"), "transitions must not change the currency label");
 
-        assertSingleEvent(auditEvents(login(ADMIN_USER)), "Invoice", invoiceId, "UPDATE", BILLING_USER, "issued");
+        assertSingleEvent(auditEvents(login(ADMIN_USER)), "Invoice", invoiceId, "UPDATE", BILLING_USER, "status: ISSUED");
 
         ResponseEntity<Map<String, Object>> paid =
                 put("/api/invoices/" + invoiceId + "/status", token, Map.of("status", "PAID"));
@@ -928,7 +936,7 @@ class CareOperationsApiTest {
         assertNotNull(paid.getBody());
         assertEquals("PAID", paid.getBody().get("status"));
 
-        assertSingleEvent(auditEvents(login(ADMIN_USER)), "Invoice", invoiceId, "UPDATE", BILLING_USER, "paid");
+        assertSingleEvent(auditEvents(login(ADMIN_USER)), "Invoice", invoiceId, "UPDATE", BILLING_USER, "status: PAID");
 
         ResponseEntity<Map<String, Object>> repeat =
                 put("/api/invoices/" + invoiceId + "/status", token, Map.of("status", "PAID"));
@@ -952,7 +960,7 @@ class CareOperationsApiTest {
         assertEquals(HttpStatus.OK,
                 put("/api/invoices/" + voidedId + "/status", token, Map.of("status", "VOID")).getStatusCode(),
                 "DRAFT -> VOID must be a legal transition");
-        assertSingleEvent(auditEvents(login(ADMIN_USER)), "Invoice", voidedId, "UPDATE", BILLING_USER, "voided");
+        assertSingleEvent(auditEvents(login(ADMIN_USER)), "Invoice", voidedId, "UPDATE", BILLING_USER, "status: VOID");
         assertEquals(HttpStatus.CONFLICT,
                 put("/api/invoices/" + voidedId + "/status", token, Map.of("status", "ISSUED")).getStatusCode(),
                 "a VOID invoice is terminal: every further transition must 409");
@@ -986,12 +994,12 @@ class CareOperationsApiTest {
         // rejected write above.
         List<Map<String, Object>> after = auditEvents(login(ADMIN_USER));
         assertSingleEvent(after, "Invoice", invoiceId, "CREATE", BILLING_USER, "created");
-        assertSingleEvent(after, "Invoice", invoiceId, "UPDATE", BILLING_USER, "issued");
-        assertSingleEvent(after, "Invoice", invoiceId, "UPDATE", BILLING_USER, "paid");
+        assertSingleEvent(after, "Invoice", invoiceId, "UPDATE", BILLING_USER, "status: ISSUED");
+        assertSingleEvent(after, "Invoice", invoiceId, "UPDATE", BILLING_USER, "status: PAID");
         assertSingleEvent(after, "Invoice", voidedId, "CREATE", BILLING_USER, "created");
-        assertSingleEvent(after, "Invoice", voidedId, "UPDATE", BILLING_USER, "voided");
+        assertSingleEvent(after, "Invoice", voidedId, "UPDATE", BILLING_USER, "status: VOID");
         assertSingleEvent(after, "Invoice", draftedId, "CREATE", BILLING_USER, "created");
-        assertSingleEvent(after, "Invoice", draftedId, "UPDATE", BILLING_USER, "issued");
+        assertSingleEvent(after, "Invoice", draftedId, "UPDATE", BILLING_USER, "status: ISSUED");
         long updatesForTerminalProbe = after.stream()
                 .filter(e -> "Invoice".equals(e.get("resourceType")) && voidedId.equals(e.get("resourceId"))
                         && "UPDATE".equals(e.get("action")))
@@ -1140,8 +1148,9 @@ class CareOperationsApiTest {
      * Audit baseline: successful CREATE and DELETE are recorded, one event
      * per mutation, with the session actor and the literal details strings.
      * Task 2 holds admissions to the same bar plus one UPDATE event per
-     * discharge (pinned in the discharge lifecycle test); later tasks must
-     * hold emergency visits and invoices to exactly this bar too.
+     * discharge (pinned in the discharge lifecycle test); Task 7 now holds
+     * every care-operations family to this bar with canonical transition
+     * details (the dedicated audit sweep below).
      */
     @Test
     void createAndDeleteCurrentlyProduceOneAuditEventEachWithSessionActor() {
@@ -1171,12 +1180,167 @@ class CareOperationsApiTest {
     }
 
     /**
+     * Task 7 audit sweep (docs/plan2.md Task 7) over one synthetic
+     * care-operations workflow: every successful mutation produces exactly
+     * one audit event whose actor is the authenticated session user (never a
+     * payload value) and whose transition details name the resulting status
+     * canonically ("status: <CANONICAL_STATUS>"; CREATE keeps "created");
+     * every failed operation (404 unknown reference/record, 400
+     * blank/malformed body, 409 duplicate invoice number and
+     * illegal/repeated/terminal transition) adds no event and leaves the
+     * persisted state untouched; every event keeps the stable public shape
+     * and carries only whitelisted fields — no tokens, credentials, request
+     * payloads, patient names, reasons, complaints, or financial values.
+     */
+    @Test
+    void careOperationsAuditSweepPinsExactlyOneEventCanonicalDetailsAndNoSensitiveLeakage() {
+        String adminToken = login(ADMIN_USER);
+        String patientId = createSyntheticPatient(adminToken, "audit-sweep");
+
+        // Actor provenance: the create runs under the nurse session while the
+        // payload carries a forged actor value, and the discharge runs under
+        // a different session — the audit actor must track the login only.
+        String nurseToken = login(NURSE_USER);
+        Map<String, Object> admissionPayload = admissionCreatePayload("sweep", patientId);
+        admissionPayload.put("actor", "payload-forged-actor");
+        String admissionId = requireId(post("/api/admissions", nurseToken, admissionPayload));
+        String doctorToken = login(DOCTOR_USER);
+        assertEquals(HttpStatus.OK, put("/api/admissions/" + admissionId + "/status", doctorToken,
+                Map.of("status", "DISCHARGED")).getStatusCode(), "the legal discharge must succeed");
+
+        // Emergency visit: WAITING -> IN_TREATMENT -> CLOSED.
+        String visitId = requireId(post("/api/emergency-visits", doctorToken,
+                emergencyCreatePayload("sweep", patientId)));
+        assertEquals(HttpStatus.OK, put("/api/emergency-visits/" + visitId + "/status", doctorToken,
+                Map.of("status", "IN_TREATMENT")).getStatusCode());
+        assertEquals(HttpStatus.OK, put("/api/emergency-visits/" + visitId + "/status", doctorToken,
+                Map.of("status", "CLOSED")).getStatusCode());
+
+        // Invoice: create then DRAFT -> ISSUED -> PAID.
+        String billingToken = login(BILLING_USER);
+        Map<String, Object> sweepInvoice = invoicePayload("sweep", patientId);
+        sweepInvoice.put("amount", new BigDecimal("77.77"));
+        ResponseEntity<Map<String, Object>> invoiceCreated = post("/api/invoices", billingToken, sweepInvoice);
+        String invoiceId = requireId(invoiceCreated);
+        String invoiceNumber = String.valueOf(invoiceCreated.getBody().get("invoiceNumber"));
+        assertEquals(HttpStatus.OK, put("/api/invoices/" + invoiceId + "/status", billingToken,
+                Map.of("status", "ISSUED")).getStatusCode());
+        assertEquals(HttpStatus.OK, put("/api/invoices/" + invoiceId + "/status", billingToken,
+                Map.of("status", "PAID")).getStatusCode());
+
+        List<Map<String, Object>> events = auditEvents(adminToken);
+        assertSingleEvent(events, "Admission", admissionId, "CREATE", NURSE_USER, "created");
+        assertSingleEvent(events, "Admission", admissionId, "UPDATE", DOCTOR_USER, "status: DISCHARGED");
+        assertSingleEvent(events, "EmergencyVisit", visitId, "CREATE", DOCTOR_USER, "created");
+        assertSingleEvent(events, "EmergencyVisit", visitId, "UPDATE", DOCTOR_USER, "status: IN_TREATMENT");
+        assertSingleEvent(events, "EmergencyVisit", visitId, "UPDATE", DOCTOR_USER, "status: CLOSED");
+        assertSingleEvent(events, "Invoice", invoiceId, "CREATE", BILLING_USER, "created");
+        assertSingleEvent(events, "Invoice", invoiceId, "UPDATE", BILLING_USER, "status: ISSUED");
+        assertSingleEvent(events, "Invoice", invoiceId, "UPDATE", BILLING_USER, "status: PAID");
+
+        // Failure sweep: every rejection below must add no audit event.
+        long admissionUpdatesBefore = countAuditEvents(events, "Admission", admissionId, "UPDATE");
+        long visitUpdatesBefore = countAuditEvents(events, "EmergencyVisit", visitId, "UPDATE");
+        long invoiceUpdatesBefore = countAuditEvents(events, "Invoice", invoiceId, "UPDATE");
+
+        assertEquals(HttpStatus.CONFLICT, put("/api/admissions/" + admissionId + "/status", doctorToken,
+                Map.of("status", "DISCHARGED")).getStatusCode(), "a repeated discharge must 409");
+        assertEquals(HttpStatus.BAD_REQUEST, put("/api/admissions/" + admissionId + "/status", doctorToken,
+                Map.of("status", "   ")).getStatusCode(), "a blank status must fail validation with 400");
+        assertEquals(HttpStatus.NOT_FOUND, put("/api/admissions/" + UUID.randomUUID() + "/status", doctorToken,
+                Map.of("status", "DISCHARGED")).getStatusCode(), "an unknown admission must 404");
+        assertEquals(HttpStatus.NOT_FOUND, post("/api/admissions", doctorToken,
+                admissionCreatePayload("sweep-404", UUID.randomUUID().toString())).getStatusCode(),
+                "an unknown patient reference must 404");
+
+        assertEquals(HttpStatus.CONFLICT, put("/api/emergency-visits/" + visitId + "/status", doctorToken,
+                Map.of("status", "CLOSED")).getStatusCode(), "a transition on a CLOSED visit must 409");
+        assertEquals(HttpStatus.CONFLICT, put("/api/emergency-visits/" + visitId + "/status", doctorToken,
+                Map.of("status", "DERANGED")).getStatusCode(), "an unknown target must 409");
+        assertEquals(HttpStatus.BAD_REQUEST, put("/api/emergency-visits/" + visitId + "/status", doctorToken,
+                Map.of("status", "   ")).getStatusCode(), "a blank emergency status must fail validation with 400");
+        assertEquals(HttpStatus.NOT_FOUND, put("/api/emergency-visits/" + UUID.randomUUID() + "/status", doctorToken,
+                Map.of("status", "CLOSED")).getStatusCode(), "an unknown visit must 404");
+
+        Map<String, Object> duplicate = invoicePayload("sweep-duplicate", patientId);
+        duplicate.put("invoiceNumber", invoiceNumber);
+        assertEquals(HttpStatus.CONFLICT, post("/api/invoices", billingToken, duplicate).getStatusCode(),
+                "a duplicate invoice number must 409");
+        assertEquals(HttpStatus.CONFLICT, put("/api/invoices/" + invoiceId + "/status", billingToken,
+                Map.of("status", "PAID")).getStatusCode(), "a transition on a PAID invoice must 409");
+        assertEquals(HttpStatus.BAD_REQUEST, put("/api/invoices/" + invoiceId + "/status", billingToken,
+                Map.of("status", "   ")).getStatusCode(), "a blank invoice status must fail validation with 400");
+        assertEquals(HttpStatus.NOT_FOUND, put("/api/invoices/" + UUID.randomUUID() + "/status", billingToken,
+                Map.of("status", "ISSUED")).getStatusCode(), "an unknown invoice must 404");
+
+        List<Map<String, Object>> afterFailures = auditEvents(adminToken);
+        assertEquals(admissionUpdatesBefore, countAuditEvents(afterFailures, "Admission", admissionId, "UPDATE"),
+                "failed admission operations must not add audit events");
+        assertEquals(visitUpdatesBefore, countAuditEvents(afterFailures, "EmergencyVisit", visitId, "UPDATE"),
+                "failed emergency operations must not add audit events");
+        assertEquals(invoiceUpdatesBefore, countAuditEvents(afterFailures, "Invoice", invoiceId, "UPDATE"),
+                "failed invoice operations must not add audit events");
+
+        // Persisted state is untouched by every failed operation above.
+        assertEquals("DISCHARGED", getMap("/api/admissions/" + admissionId, adminToken).getBody().get("status"),
+                "the repeated/blank/unknown discharge attempts must not change the admission");
+        assertEquals("CLOSED", getMap("/api/emergency-visits/" + visitId, adminToken).getBody().get("status"),
+                "the repeated/blank/unknown transition attempts must not change the visit");
+        Map<String, Object> untouchedInvoice = getMap("/api/invoices/" + invoiceId, adminToken).getBody();
+        assertNotNull(untouchedInvoice);
+        assertEquals("PAID", untouchedInvoice.get("status"),
+                "the duplicate and failed transitions must not change the invoice status");
+        assertEquals("77.77", untouchedInvoice.get("amount"),
+                "the duplicate attempt must not overwrite the original amount");
+
+        // Data minimization over every event the sweep owns: canonical
+        // details whitelist, session-actor whitelist, stable shape, and a
+        // sensitive-content scan of the serialized events.
+        List<Map<String, Object>> swept = afterFailures.stream()
+                .filter(e -> List.of(admissionId, visitId, invoiceId).contains(String.valueOf(e.get("resourceId"))))
+                .collect(Collectors.toList());
+        assertEquals(8, swept.size(), "the swept workflow must own exactly eight audit events");
+        Map<String, Set<String>> allowedDetails = Map.of(
+                admissionId, Set.of("created", "status: DISCHARGED"),
+                visitId, Set.of("created", "status: IN_TREATMENT", "status: CLOSED"),
+                invoiceId, Set.of("created", "status: ISSUED", "status: PAID"));
+        Set<String> allowedActors = Set.of(ADMIN_USER, NURSE_USER, DOCTOR_USER, BILLING_USER);
+        for (Map<String, Object> event : swept) {
+            String resourceId = String.valueOf(event.get("resourceId"));
+            assertTrue(allowedDetails.get(resourceId).contains(event.get("details")),
+                    "audit details must stay the canonical mutation label, never a payload: " + event.get("details"));
+            assertTrue(allowedActors.contains(event.get("actor")),
+                    "the audit actor must be an authenticated session user: " + event.get("actor"));
+            assertDoesNotThrow(() -> Instant.parse(String.valueOf(event.get("occurredAt"))),
+                    "occurredAt must be a real instant");
+        }
+
+        String dumped;
+        try {
+            dumped = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(swept);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new AssertionError("audit events must serialize for the sensitive-content scan", e);
+        }
+        for (String forbidden : List.of(
+                "Synthetic Patient " + suffix + " audit-sweep",
+                "synthetic admission " + suffix + " sweep",
+                "synthetic complaint " + suffix + " sweep",
+                invoiceNumber, "77.77", "USD",
+                TEST_ACCOUNT_PASSWORD,
+                "Bearer ", "Authorization", "Exception", " at ", "SELECT ")) {
+            assertFalse(dumped.contains(forbidden),
+                    "audit events must never carry sensitive content: " + forbidden);
+        }
+    }
+
+    /**
      * Pins exactly one audit event per (resourceType, resourceId, action,
      * details): the details filter matters for resources that legitimately
      * accumulate several UPDATE events — an emergency visit carries one
-     * UPDATE per transition ("in treatment", "closed") — while still
-     * proving no duplicate or unexpected event exists for the named
-     * mutation.
+     * UPDATE per transition ("status: IN_TREATMENT", "status: CLOSED") —
+     * while still proving no duplicate or unexpected event exists for the
+     * named mutation. Every pinned event must also keep the stable Task 7
+     * public shape (six contract fields and no expansion).
      */
     private void assertSingleEvent(List<Map<String, Object>> events, String resourceType, String resourceId,
                                    String action, String actor, String details) {
@@ -1188,10 +1352,35 @@ class CareOperationsApiTest {
                 "exactly one " + action + " ('" + details + "') audit event must exist for "
                         + resourceType + " " + resourceId);
         Map<String, Object> event = matches.get(0);
+        assertEventShape(event);
         assertEquals(action, event.get("action"));
         assertEquals(actor, event.get("actor"), "the audit actor must be the authenticated session user");
         assertEquals(details, event.get("details"), "the audit details must name the performed mutation");
         assertNotNull(event.get("occurredAt"), "audit events must carry occurredAt");
+    }
+
+    /**
+     * Task 7 shape pin: the public event shape stays exactly the six
+     * contract fields; persistence metadata may exist on the entity JSON
+     * (BaseEntity), but nothing beyond it may appear — the public contract
+     * must not expand.
+     */
+    private void assertEventShape(Map<String, Object> event) {
+        Set<String> keys = event.keySet();
+        assertTrue(keys.containsAll(AUDIT_CONTRACT_KEYS),
+                "every audit event must expose the six contract fields, saw: " + keys);
+        assertTrue(union(AUDIT_CONTRACT_KEYS, AUDIT_METADATA_KEYS).containsAll(keys),
+                "the audit payload contract must not expand beyond the six contract fields "
+                        + "and tolerated persistence metadata, saw: " + keys);
+    }
+
+    /** Counts one resource's events for an (resourceType, resourceId, action) triple, ignoring details. */
+    private long countAuditEvents(List<Map<String, Object>> events, String resourceType, String resourceId,
+                                  String action) {
+        return events.stream()
+                .filter(e -> resourceType.equals(e.get("resourceType")) && resourceId.equals(e.get("resourceId"))
+                        && action.equals(e.get("action")))
+                .count();
     }
 
     private List<Map<String, Object>> auditEvents(String adminToken) {

@@ -195,4 +195,71 @@ describe('AuditPage', () => {
     expect(screen.queryByText('should-never-leak')).not.toBeInTheDocument();
     expect(document.body).not.toHaveTextContent('synthetic-token');
   });
+
+  it('renders Admission and Invoice evidence rows through the HTTP boundary with only the five evidence fields', async () => {
+    // Real care-operations events (Task 7) including the persistence
+    // metadata the API actually returns and canonical transition details.
+    stubAudit(fetchMock, [
+      {
+        id: 'c1111111-1111-4111-8111-111111111111',
+        createdAt: '2026-03-03T09:14:59Z',
+        updatedAt: '2026-03-03T09:14:59Z',
+        version: 3,
+        actor: 'nurse-salma',
+        action: 'CREATE',
+        resourceType: 'Admission',
+        resourceId: 'aaaa1111-1111-4111-8111-111111111111',
+        details: 'created',
+        occurredAt: '2026-03-03T09:15:00Z',
+      },
+      {
+        id: 'c2222222-2222-4222-8222-222222222222',
+        createdAt: '2026-03-03T11:44:59Z',
+        updatedAt: '2026-03-03T11:44:59Z',
+        version: 2,
+        actor: 'billing-lina',
+        action: 'UPDATE',
+        resourceType: 'Invoice',
+        resourceId: 'bbbb2222-2222-4222-8222-222222222222',
+        details: 'status: ISSUED',
+        occurredAt: '2026-03-03T11:45:00Z',
+      },
+    ]);
+    const { container } = renderAudit(['ADMIN']);
+
+    const table = await screen.findByRole('table', { name: 'Audit events' });
+    for (const header of ['Time', 'Actor', 'Action', 'Entity type', 'Identifier']) {
+      expect(within(table).getByRole('columnheader', { name: header })).toBeInTheDocument();
+    }
+
+    const admissionRow = within(table).getByRole('row', { name: /2026-03-03T09:15:00Z/ });
+    expect(within(admissionRow).getByText('nurse-salma')).toBeInTheDocument();
+    expect(within(admissionRow).getByText('CREATE')).toBeInTheDocument();
+    expect(within(admissionRow).getByText('Admission')).toBeInTheDocument();
+    expect(within(admissionRow).getByText('aaaa1111-1111-4111-8111-111111111111')).toBeInTheDocument();
+
+    const invoiceRow = within(table).getByRole('row', { name: /2026-03-03T11:45:00Z/ });
+    expect(within(invoiceRow).getByText('billing-lina')).toBeInTheDocument();
+    expect(within(invoiceRow).getByText('UPDATE')).toBeInTheDocument();
+    expect(within(invoiceRow).getByText('Invoice')).toBeInTheDocument();
+    expect(within(invoiceRow).getByText('bbbb2222-2222-4222-8222-222222222222')).toBeInTheDocument();
+
+    // Data minimization: the raw details payload (even canonical transition
+    // text) and the persistence metadata stay internal, the session token
+    // never leaks, and every evidence cell is literal text, never markup.
+    expect(document.body).not.toHaveTextContent('status: ISSUED');
+    expect(document.body).not.toHaveTextContent('2026-03-03T09:14:59Z');
+    expect(document.body).not.toHaveTextContent('c1111111-1111-4111-8111-111111111111');
+    expect(document.body).not.toHaveTextContent('synthetic-token');
+    expect(container.querySelector('script, img, svg, iframe')).toBeNull();
+
+    // Through the real adapter boundary: exactly one ADMIN read-only GET
+    // carrying the session bearer token.
+    expect(fetchMock.mock.calls).toHaveLength(1);
+    const [path, options] = fetchMock.mock.calls[0];
+    expect(path).toBe('/api/audit');
+    expect(options.method).toBe('GET');
+    expect(options.headers.Authorization).toBe('Bearer synthetic-token');
+    expect(options.body).toBeUndefined();
+  });
 });

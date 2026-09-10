@@ -23,27 +23,32 @@ import java.util.stream.Collectors;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Care-operations characterization baseline (docs/plan2.md Task 1, packet
- * MEDICORE-PLAN2-TASK1-030). This test deliberately freezes TODAY'S raw
- * behavior of /api/admissions, /api/emergency-visits, /api/invoices,
- * /api/beds, and /api/dashboard so later Plan 2 vertical slices change it
- * visibly. It is not a statement of desired behavior: the weaknesses it
- * records are intentional later change targets —
+ * Care-operations contract suite. Characterized the raw baseline in docs/plan2.md
+ * Task 1 (packet MEDICORE-PLAN2-TASK1-030) and updated by Task 2 (packet
+ * MEDICORE-PLAN2-TASK2-031): the admissions tests now pin the normalized
+ * Task 2 workflow (verified patient references, DTO responses without
+ * persistence metadata, server-owned ADMITTED -> DISCHARGED lifecycle with a
+ * server-stamped discharge time, 409 on repeat/invalid transitions, exactly
+ * one audit event per successful mutation and none on failures), while the
+ * other families still deliberately freeze TODAY'S raw behavior as later
+ * change targets —
  *
- * - controllers return JPA entities directly, so responses expose the
- *   persistence metadata id/createdAt/updatedAt/version (later: DTOs);
- * - every request field is a raw @NotBlank String stored verbatim — raw
- *   statuses, non-ISO dates, arbitrary amounts, and non-UUID or nonexistent
- *   patientId values are all accepted (later: verified references, typed
- *   values, per-domain status sets);
+ * - emergency/invoice/bed controllers still return JPA entities directly, so
+ *   responses expose the persistence metadata id/createdAt/updatedAt/version
+ *   (later: DTOs; admissions already return the normalized DTO);
+ * - emergency/invoice/bed request fields are still raw @NotBlank Strings
+ *   stored verbatim — raw statuses, non-ISO dates, arbitrary amounts, and
+ *   nonexistent patientId values are all accepted there (later: verified
+ *   references, typed values, per-domain status sets);
  * - invoiceNumber has no uniqueness and there is no invoice lifecycle;
- * - admissions/emergency visits have no update or transition endpoint
- *   (PUT returns 405 today); create/get/list/delete only;
+ * - emergency visits have no update or transition endpoint (unsupported PUT
+ *   surfaces as the 401 error-dispatch artifact); admissions now own
+ *   PUT /api/admissions/{id}/status;
  * - the dashboard exposes exactly five raw count keys with row-count
  *   semantics and no status awareness (beds are not counted);
- * - the RBAC family rules allow DOCTOR and NURSE to WRITE admissions and
- *   emergency visits today (plan2 §7.1 write-role narrowing decision), and
- *   BILLING is isolated to invoices with 403 elsewhere.
+ * - the RBAC family rules are unchanged by Task 2: DOCTOR and NURSE keep
+ *   live admissions/emergency writes (plan2 §7.1 write-role narrowing is an
+ *   owner decision), and BILLING is isolated to invoices with 403 elsewhere.
  *
  * Runs against an isolated in-memory H2 database (never the production file
  * store) with disposable synthetic test-only secrets and fabricated record
@@ -70,11 +75,12 @@ class CareOperationsApiTest {
     private static final String NURSE_USER = "careops-nurse";
     private static final String RECEPTIONIST_USER = "careops-receptionist";
 
-    /** Current entity-shaped response contract: persistence metadata leaks. */
+    /** Legacy entity-shaped response contract: persistence metadata leaks. */
     private static final Set<String> METADATA_KEYS = Set.of("id", "createdAt", "updatedAt", "version");
 
-    private static final Set<String> ADMISSION_ENTITY_FIELDS = Set.of(
-            "patientId", "admittedAt", "dischargedAt", "reason", "status");
+    /** Task 2 DTO contract: exactly these six fields, no persistence metadata. */
+    private static final Set<String> ADMISSION_DTO_FIELDS = Set.of(
+            "id", "patientId", "admittedAt", "dischargedAt", "reason", "status");
 
     private static final Set<String> EMERGENCY_ENTITY_FIELDS = Set.of(
             "patientId", "arrivalAt", "triageLevel", "chiefComplaint", "status");
@@ -163,8 +169,9 @@ class CareOperationsApiTest {
      * Family-rule baseline: admissions, emergency visits, and beds admit the
      * four clinical-administrative roles on reads while BILLING is refused,
      * and the dashboard stays open to every authenticated role (BILLING
-     * included). The family rules currently carry NO method distinction, so
-     * NURSE holds a live admission write today (plan2 §7.1 decision pending).
+     * included). Task 2 changed no server role policy, so the family rules
+     * still carry NO method distinction — NURSE holds a live admission write
+     * (plan2 §7.1 decision pending).
      */
     @Test
     void admissionEmergencyAndBedFamiliesAllowFourRolesWhileBillingIsIsolated() {
@@ -185,14 +192,20 @@ class CareOperationsApiTest {
 
     /**
      * Current permissive write policy: the admissions family rule has no
-     * method-level narrowing, so NURSE can create (and delete) admissions
-     * directly. Pinned because plan2 §7.1 leaves narrowing to an owner
-     * decision; if that decision lands, this test is the visible tripwire.
+     * method-level narrowing, so NURSE can create and delete admissions —
+     * now through the normalized Task 2 create contract, which requires a
+     * verified patient reference. Pinned because plan2 §7.1 leaves narrowing
+     * to an owner decision; if that decision lands, this test is the visible
+     * tripwire.
      */
     @Test
     void nurseCurrentlyHoldsAdmissionAndEmergencyWritesUnderFamilyRule() {
+        String adminToken = login(ADMIN_USER);
+        String patientId = createSyntheticPatient(adminToken, "nurse-write");
         String nurseToken = login(NURSE_USER);
-        ResponseEntity<Map<String, Object>> admitted = post("/api/admissions", nurseToken, admissionPayload("nurse"));
+
+        ResponseEntity<Map<String, Object>> admitted = post("/api/admissions", nurseToken,
+                admissionCreatePayload("nurse", patientId));
         assertEquals(HttpStatus.OK, admitted.getStatusCode(),
                 "NURSE must currently be able to write admissions (no method narrowing exists)");
         String admissionId = requireId(admitted);
@@ -207,70 +220,187 @@ class CareOperationsApiTest {
     }
 
     // ------------------------------------------------------------------
-    // Admission CRUD contract (raw entity responses today)
+    // Admission workflow contract (docs/plan2.md Task 2 — normalized)
     // ------------------------------------------------------------------
 
     /**
-     * Admissions today: create/get/list/delete only, raw entity responses
-     * carrying persistence metadata, verbatim raw-string storage, malformed
-     * UUID paths as client errors, no update endpoint (405), delete as the
-     * only mutation, and 404 with the shared ApiError body afterwards.
+     * Task 2 create contract: a verified patient reference (unknown patient
+     * is the shared safe 404), typed ISO admittedAt stored as its canonical
+     * string, a non-blank reason, and server-owned lifecycle state — the
+     * response is exactly the six-field DTO with status ADMITTED and
+     * dischargedAt unset, and client-sent status/dischargedAt values never
+     * reach storage. Detail and list share the same DTO contract with no
+     * persistence metadata anywhere.
      */
     @Test
-    void admissionCrudExposesRawEntityContractWithPersistenceMetadata() {
+    void admissionCreatePinsNormalizedDtoContractWithVerifiedPatientReference() {
         String token = login(ADMIN_USER);
-        String unknownPatientId = UUID.randomUUID().toString();
-        Map<String, Object> payload = Map.of(
-                "patientId", unknownPatientId,
-                "admittedAt", "not-a-timestamp-" + suffix,
-                "dischargedAt", "also-not-a-timestamp",
-                "reason", "raw unvalidated admission reason " + suffix,
-                "status", "WHENEVER-RAW");
-        Set<String> entityContract = union(METADATA_KEYS, ADMISSION_ENTITY_FIELDS);
+        String patientId = createSyntheticPatient(token, "contract");
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("patientId", patientId);
+        payload.put("admittedAt", "2031-01-01T08:15:30");
+        payload.put("reason", "synthetic normalized admission " + suffix);
+        // Not part of the create contract: the server owns both lifecycle
+        // fields, so these client values must be ignored, never stored.
+        payload.put("dischargedAt", "2031-02-01T10:00:00");
+        payload.put("status", "WHENEVER-RAW");
 
         ResponseEntity<Map<String, Object>> created = post("/api/admissions", token, payload);
-        assertEquals(HttpStatus.OK, created.getStatusCode(),
-                "arbitrary raw string values and an unknown patientId must currently be accepted");
+        assertEquals(HttpStatus.OK, created.getStatusCode(), "a verified patient must admit successfully");
         Map<String, Object> body = created.getBody();
         assertNotNull(body);
-        assertEquals(entityContract, body.keySet(),
-                "the admission response must currently be the raw entity incl. persistence metadata");
-        assertEquals(unknownPatientId, body.get("patientId"),
-                "patientId must currently be stored verbatim without any reference verification");
-        assertEquals("not-a-timestamp-" + suffix, body.get("admittedAt"), "raw strings must be stored verbatim");
-        assertEquals("WHENEVER-RAW", body.get("status"), "status must currently be an unconstrained raw string");
-        assertNotNull(body.get("createdAt"), "the entity response must currently expose createdAt");
-        assertNotNull(body.get("updatedAt"), "the entity response must currently expose updatedAt");
-        assertInstanceOf(Number.class, body.get("version"), "the entity response must currently expose version");
+        assertEquals(ADMISSION_DTO_FIELDS, body.keySet(),
+                "the admission response must be exactly the DTO contract with no persistence metadata");
+        assertEquals(patientId, body.get("patientId"),
+                "patientId must be the canonical UUID string of the verified patient");
+        assertEquals("2031-01-01T08:15:30", body.get("admittedAt"), "admittedAt must be the canonical ISO string");
+        assertEquals("synthetic normalized admission " + suffix, body.get("reason"));
+        assertEquals("ADMITTED", body.get("status"), "the server must set status=ADMITTED, never a client value");
+        assertNull(body.get("dischargedAt"), "dischargedAt must stay unset at creation");
         String admissionId = requireId(created);
 
         ResponseEntity<Map<String, Object>> detail = getMap("/api/admissions/" + admissionId, token);
         assertEquals(HttpStatus.OK, detail.getStatusCode());
         assertNotNull(detail.getBody());
-        assertEquals(entityContract, detail.getBody().keySet(), "detail must match the same raw entity contract");
-        assertEquals(unknownPatientId, detail.getBody().get("patientId"));
+        assertEquals(ADMISSION_DTO_FIELDS, detail.getBody().keySet(), "detail must match the same DTO contract");
+        assertEquals(patientId, detail.getBody().get("patientId"));
+        assertEquals("ADMITTED", detail.getBody().get("status"));
+        assertNull(detail.getBody().get("dischargedAt"));
 
         ResponseEntity<List<Map<String, Object>>> list = getList("/api/admissions", token);
         assertEquals(HttpStatus.OK, list.getStatusCode());
         List<Map<String, Object>> listBody = list.getBody();
         assertNotNull(listBody, "admission list must carry a body");
-        assertTrue(listBody.stream().anyMatch(a -> admissionId.equals(String.valueOf(a.get("id")))),
-                "the created admission must appear in the raw list");
-        for (Map<String, Object> item : listBody) {
-            assertEquals(entityContract, item.keySet(), "every list item must match the raw entity contract");
-        }
+        List<Map<String, Object>> mine = listBody.stream()
+                .filter(a -> admissionId.equals(String.valueOf(a.get("id"))))
+                .collect(Collectors.toList());
+        assertEquals(1, mine.size(), "the created admission must appear exactly once in the list");
+        assertEquals(ADMISSION_DTO_FIELDS, mine.get(0).keySet(), "every list item must match the DTO contract");
 
         assertEquals(HttpStatus.BAD_REQUEST, getStatus("/api/admissions/not-a-uuid", token).getStatusCode(),
                 "a malformed admission UUID path must be a client error, never a 500");
+    }
 
-        // No admission update or discharge transition exists today. MVC resolves the
-        // unsupported PUT as HttpRequestMethodNotSupportedException, but Boot's error
-        // dispatch to /error re-enters the stateless JWT chain without the skipped
-        // JwtFilter, so /error (anyRequest().authenticated()) answers the anonymous
-        // re-dispatch with the 401 entry point — the observed client-visible outcome.
-        assertEquals(HttpStatus.UNAUTHORIZED, put("/api/admissions/" + admissionId, token, payload).getStatusCode(),
-                "an unsupported PUT must currently surface as the 401 error-dispatch outcome, "
-                        + "proving no update handler exists — intentional later change target");
+    /**
+     * Task 2 failure contracts: an unknown patient is the shared safe 404, a
+     * non-UUID patientId or an unparseable admittedAt is a malformed body
+     * 400, and missing/blank required fields are validation 400s — none of
+     * them may persist an admission.
+     */
+    @Test
+    void admissionCreateRejectsUnknownPatientAndMalformedBodiesWithoutPersisting() {
+        String token = login(ADMIN_USER);
+        long admissionsBefore = dashboardCount("admissions", token);
+
+        Map<String, Object> unknownPatient = admissionCreatePayload("unknown", UUID.randomUUID().toString());
+        ResponseEntity<Map<String, Object>> notFound = post("/api/admissions", token, unknownPatient);
+        assertEquals(HttpStatus.NOT_FOUND, notFound.getStatusCode(),
+                "an unknown patient reference must return the shared 404, never persist");
+        Map<String, Object> notFoundBody = notFound.getBody();
+        assertNotNull(notFoundBody, "the 404 must carry the shared ApiError body");
+        assertEquals(404, ((Number) notFoundBody.get("status")).intValue(), "ApiError.status must echo 404");
+        assertEquals("Not Found", notFoundBody.get("error"));
+
+        Map<String, Object> nonUuidPatient = admissionCreatePayload("nonuuid", "not-a-uuid");
+        assertEquals(HttpStatus.BAD_REQUEST, post("/api/admissions", token, nonUuidPatient).getStatusCode(),
+                "a non-UUID patientId fails typed deserialization as a malformed body");
+
+        Map<String, Object> badTimestamp = admissionCreatePayload("badtime", null);
+        badTimestamp.put("admittedAt", "not-a-timestamp-" + suffix);
+        assertEquals(HttpStatus.BAD_REQUEST, post("/api/admissions", token, badTimestamp).getStatusCode(),
+                "an unparseable admittedAt fails typed deserialization as a malformed body");
+
+        Map<String, Object> blankReason = admissionCreatePayload("blank-reason", null);
+        blankReason.put("reason", "   ");
+        assertEquals(HttpStatus.BAD_REQUEST, post("/api/admissions", token, blankReason).getStatusCode(),
+                "a blank reason must be rejected by validation");
+
+        Map<String, Object> missingPatient = new LinkedHashMap<>();
+        missingPatient.put("admittedAt", "2031-01-01T08:15:30");
+        missingPatient.put("reason", "synthetic missing reference " + suffix);
+        assertEquals(HttpStatus.BAD_REQUEST, post("/api/admissions", token, missingPatient).getStatusCode(),
+                "a missing patientId must be rejected by validation");
+
+        Map<String, Object> missingAdmittedAt = new LinkedHashMap<>();
+        missingAdmittedAt.put("patientId", UUID.randomUUID().toString());
+        missingAdmittedAt.put("reason", "synthetic missing timestamp " + suffix);
+        assertEquals(HttpStatus.BAD_REQUEST, post("/api/admissions", token, missingAdmittedAt).getStatusCode(),
+                "a missing admittedAt must be rejected by validation");
+
+        assertEquals(admissionsBefore, dashboardCount("admissions", token),
+                "no rejected create may persist an admission");
+    }
+
+    /**
+     * Task 2 discharge lifecycle: PUT /api/admissions/{id}/status with
+     * {"status":"DISCHARGED"} is legal only from ADMITTED, the server stamps
+     * dischargedAt itself, and the response is the same six-field DTO.
+     * Repeating the discharge or requesting any other transition is the safe
+     * shared 409 with a controlled message; failed operations produce no
+     * audit events, and the successful create and discharge produce exactly
+     * one audit event each with the session actor.
+     */
+    @Test
+    void admissionDischargePinsServerStampedTransitionConflictAndAudit() {
+        String token = login(RECEPTIONIST_USER);
+        String patientId = createSyntheticPatient(login(ADMIN_USER), "discharge");
+        String admissionId = requireId(post("/api/admissions", token, admissionCreatePayload("discharge", patientId)));
+
+        List<Map<String, Object>> beforeDischarge = auditEvents(login(ADMIN_USER));
+        assertSingleEvent(beforeDischarge, "Admission", admissionId, "CREATE", RECEPTIONIST_USER, "created");
+
+        ResponseEntity<Map<String, Object>> discharged =
+                put("/api/admissions/" + admissionId + "/status", token, Map.of("status", "DISCHARGED"));
+        assertEquals(HttpStatus.OK, discharged.getStatusCode(), "discharging an ADMITTED admission must succeed");
+        Map<String, Object> body = discharged.getBody();
+        assertNotNull(body);
+        assertEquals(ADMISSION_DTO_FIELDS, body.keySet(), "the discharge response must stay on the DTO contract");
+        assertEquals("DISCHARGED", body.get("status"), "the server must set status=DISCHARGED");
+        assertNotNull(body.get("dischargedAt"), "the server must stamp the discharge time itself");
+        assertEquals(patientId, body.get("patientId"), "discharge must not change the verified reference");
+        assertEquals("2031-01-01T08:15:30", body.get("admittedAt"), "discharge must not change admittedAt");
+
+        List<Map<String, Object>> afterDischarge = auditEvents(login(ADMIN_USER));
+        assertSingleEvent(afterDischarge, "Admission", admissionId, "UPDATE", RECEPTIONIST_USER, "discharged");
+
+        ResponseEntity<Map<String, Object>> repeat =
+                put("/api/admissions/" + admissionId + "/status", token, Map.of("status", "DISCHARGED"));
+        assertEquals(HttpStatus.CONFLICT, repeat.getStatusCode(),
+                "repeating the discharge of an already-discharged admission must return the shared 409");
+        Map<String, Object> conflict = repeat.getBody();
+        assertNotNull(conflict, "the 409 must carry the shared ApiError body");
+        assertEquals(409, ((Number) conflict.get("status")).intValue(), "ApiError.status must echo 409");
+        assertEquals("Conflict", conflict.get("error"));
+        String conflictMessage = String.valueOf(conflict.get("message"));
+        assertTrue(conflictMessage.contains("cannot be discharged"),
+                "the 409 message must be controlled and client-safe, never an entity or stack dump");
+        assertFalse(conflictMessage.contains("Exception"), "the 409 message must not leak exception internals");
+
+        assertEquals(HttpStatus.CONFLICT,
+                put("/api/admissions/" + admissionId + "/status", token, Map.of("status", "READMITTED")).getStatusCode(),
+                "any transition other than DISCHARGED is not in the admission transition map and must 409");
+
+        String unknownId = UUID.randomUUID().toString();
+        ResponseEntity<Map<String, Object>> unknown =
+                put("/api/admissions/" + unknownId + "/status", token, Map.of("status", "DISCHARGED"));
+        assertEquals(HttpStatus.NOT_FOUND, unknown.getStatusCode(),
+                "discharging an unknown admission must be the shared 404");
+
+        List<Map<String, Object>> afterFailures = auditEvents(login(ADMIN_USER));
+        assertSingleEvent(afterFailures, "Admission", admissionId, "CREATE", RECEPTIONIST_USER, "created");
+        assertSingleEvent(afterFailures, "Admission", admissionId, "UPDATE", RECEPTIONIST_USER, "discharged");
+    }
+
+    /**
+     * Delete stays service-owned and audited under the normalized contract:
+     * 404-safe on repeat, the shared ApiError body afterwards, and exactly
+     * one DELETE audit event with the session actor.
+     */
+    @Test
+    void admissionDeleteRemainsServiceOwnedSafeAndAudited() {
+        String token = login(NURSE_USER);
+        String patientId = createSyntheticPatient(login(ADMIN_USER), "delete");
+        String admissionId = requireId(post("/api/admissions", token, admissionCreatePayload("delete", patientId)));
 
         assertEquals(HttpStatus.OK, delete("/api/admissions/" + admissionId, token).getStatusCode());
         ResponseEntity<String> gone = getStatus("/api/admissions/" + admissionId, token);
@@ -283,32 +413,8 @@ class CareOperationsApiTest {
         assertEquals("/api/admissions/" + admissionId, error.get("path"));
         assertEquals(HttpStatus.NOT_FOUND, delete("/api/admissions/" + admissionId, token).getStatusCode(),
                 "deleting an unknown admission must be 404, not a silent success");
-    }
 
-    /**
-     * Today's create validation is only @NotBlank on every raw field —
-     * including dischargedAt and status, which a caller must invent. Blank
-     * values are rejected 400 through the shared ApiError body and persist
-     * nothing.
-     */
-    @Test
-    void admissionCreateCurrentlyDemandsEveryRawFieldIncludingDischargeAndStatus() {
-        String token = login(ADMIN_USER);
-        long admissionsBefore = dashboardCount("admissions", token);
-
-        for (String blankedField : List.of("patientId", "admittedAt", "dischargedAt", "reason", "status")) {
-            Map<String, Object> payload = new LinkedHashMap<>(admissionPayload("blanked"));
-            payload.put(blankedField, "  ");
-            ResponseEntity<Map<String, Object>> rejected = post("/api/admissions", token, payload);
-            assertEquals(HttpStatus.BAD_REQUEST, rejected.getStatusCode(),
-                    "a blank " + blankedField + " must return 400 under the current @NotBlank contract");
-            Map<String, Object> error = rejected.getBody();
-            assertNotNull(error, "validation failures must carry the shared ApiError body");
-            assertEquals(400, ((Number) error.get("status")).intValue());
-        }
-
-        assertEquals(admissionsBefore, dashboardCount("admissions", token),
-                "rejected creates must not persist any admission");
+        assertSingleEvent(auditEvents(login(ADMIN_USER)), "Admission", admissionId, "DELETE", NURSE_USER, "deleted");
     }
 
     // ------------------------------------------------------------------
@@ -354,8 +460,9 @@ class CareOperationsApiTest {
         for (Map<String, Object> item : listBody) {
             assertEquals(entityContract, item.keySet(), "every list item must match the raw entity contract");
         }
-        // Same error-dispatch artifact as the admission PUT: no transition handler
-        // exists today, and the unsupported method surfaces as the 401 outcome.
+        // Same error-dispatch artifact as before the Task 2 admission change: no
+        // emergency transition handler exists yet, and the unsupported method
+        // surfaces as the 401 outcome — a deliberate Task 3 change target.
         assertEquals(HttpStatus.UNAUTHORIZED,
                 put("/api/emergency-visits/" + visitId, token, payload).getStatusCode(),
                 "an unsupported PUT must currently surface as the 401 error-dispatch outcome, "
@@ -467,11 +574,14 @@ class CareOperationsApiTest {
      * Dashboard today: exactly five raw count keys with whole-table row-count
      * semantics — beds add no key, deletes feed straight back into the counts,
      * and there is no status awareness anywhere. Asserted with deltas over
-     * test-created synthetic records only.
+     * test-created synthetic records only. The Task 2 admission contract
+     * needs one verified patient, created before the baseline snapshot.
      */
     @Test
     void dashboardSummaryPinsExactKeySetAndRowCountSemantics() {
         String adminToken = login(ADMIN_USER);
+        String patientId = createSyntheticPatient(adminToken, "dash");
+
         ResponseEntity<Map<String, Object>> before = getMap("/api/dashboard", adminToken);
         assertEquals(HttpStatus.OK, before.getStatusCode());
         Map<String, Object> beforeBody = before.getBody();
@@ -486,7 +596,7 @@ class CareOperationsApiTest {
         long emergencyBefore = count(beforeBody, "emergencyVisits");
         long invoicesBefore = count(beforeBody, "invoices");
 
-        String admissionId = requireId(post("/api/admissions", adminToken, admissionPayload("dash")));
+        String admissionId = requireId(post("/api/admissions", adminToken, admissionCreatePayload("dash", patientId)));
         String visitId = requireId(post("/api/emergency-visits", adminToken, emergencyPayload("dash")));
         String invoiceId = requireId(post("/api/invoices", adminToken, invoicePayload("dash")));
         String bedId = requireId(post("/api/beds", adminToken, bedPayload()));
@@ -500,7 +610,7 @@ class CareOperationsApiTest {
         assertEquals(admissionsBefore + 1, count(afterBody, "admissions"), "each created admission must count once");
         assertEquals(emergencyBefore + 1, count(afterBody, "emergencyVisits"), "each created visit must count once");
         assertEquals(invoicesBefore + 1, count(afterBody, "invoices"), "each created invoice must count once");
-        assertEquals(patientsBefore, count(afterBody, "patients"), "no patient was created");
+        assertEquals(patientsBefore, count(afterBody, "patients"), "no patient was created after the baseline snapshot");
         assertEquals(appointmentsBefore, count(afterBody, "appointments"), "no appointment was created");
 
         assertEquals(HttpStatus.OK, delete("/api/admissions/" + admissionId, adminToken).getStatusCode());
@@ -523,37 +633,41 @@ class CareOperationsApiTest {
     // ------------------------------------------------------------------
 
     /**
-     * Audit today: only successful CREATE and DELETE are recorded, one event
+     * Audit baseline: successful CREATE and DELETE are recorded, one event
      * per mutation, with the session actor and the literal details strings.
-     * Later tasks must hold every new mutation to exactly this bar.
+     * Task 2 holds admissions to the same bar plus one UPDATE event per
+     * discharge (pinned in the discharge lifecycle test); later tasks must
+     * hold emergency visits and invoices to exactly this bar too.
      */
     @Test
     void createAndDeleteCurrentlyProduceOneAuditEventEachWithSessionActor() {
-        String admissionId = requireId(post("/api/admissions", login(NURSE_USER), admissionPayload("audit")));
+        String adminToken = login(ADMIN_USER);
+        String patientId = createSyntheticPatient(adminToken, "audit");
+        String admissionId = requireId(post("/api/admissions", login(NURSE_USER), admissionCreatePayload("audit", patientId)));
         String visitId = requireId(post("/api/emergency-visits", login(DOCTOR_USER), emergencyPayload("audit")));
         String invoiceId = requireId(post("/api/invoices", login(BILLING_USER), invoicePayload("audit")));
         String bedId = requireId(post("/api/beds", login(ADMIN_USER), bedPayload()));
 
-        List<Map<String, Object>> events = auditEvents(login(ADMIN_USER));
-        assertSingleEvent(events, "Admission", admissionId, "CREATE", NURSE_USER);
-        assertSingleEvent(events, "EmergencyVisit", visitId, "CREATE", DOCTOR_USER);
-        assertSingleEvent(events, "Invoice", invoiceId, "CREATE", BILLING_USER);
-        assertSingleEvent(events, "Bed", bedId, "CREATE", ADMIN_USER);
+        List<Map<String, Object>> events = auditEvents(adminToken);
+        assertSingleEvent(events, "Admission", admissionId, "CREATE", NURSE_USER, "created");
+        assertSingleEvent(events, "EmergencyVisit", visitId, "CREATE", DOCTOR_USER, "created");
+        assertSingleEvent(events, "Invoice", invoiceId, "CREATE", BILLING_USER, "created");
+        assertSingleEvent(events, "Bed", bedId, "CREATE", ADMIN_USER, "created");
 
         assertEquals(HttpStatus.OK, delete("/api/admissions/" + admissionId, login(NURSE_USER)).getStatusCode());
         assertEquals(HttpStatus.OK, delete("/api/emergency-visits/" + visitId, login(DOCTOR_USER)).getStatusCode());
         assertEquals(HttpStatus.OK, delete("/api/invoices/" + invoiceId, login(BILLING_USER)).getStatusCode());
         assertEquals(HttpStatus.OK, delete("/api/beds/" + bedId, login(ADMIN_USER)).getStatusCode());
 
-        List<Map<String, Object>> afterDeletion = auditEvents(login(ADMIN_USER));
-        assertSingleEvent(afterDeletion, "Admission", admissionId, "DELETE", NURSE_USER);
-        assertSingleEvent(afterDeletion, "EmergencyVisit", visitId, "DELETE", DOCTOR_USER);
-        assertSingleEvent(afterDeletion, "Invoice", invoiceId, "DELETE", BILLING_USER);
-        assertSingleEvent(afterDeletion, "Bed", bedId, "DELETE", ADMIN_USER);
+        List<Map<String, Object>> afterDeletion = auditEvents(adminToken);
+        assertSingleEvent(afterDeletion, "Admission", admissionId, "DELETE", NURSE_USER, "deleted");
+        assertSingleEvent(afterDeletion, "EmergencyVisit", visitId, "DELETE", DOCTOR_USER, "deleted");
+        assertSingleEvent(afterDeletion, "Invoice", invoiceId, "DELETE", BILLING_USER, "deleted");
+        assertSingleEvent(afterDeletion, "Bed", bedId, "DELETE", ADMIN_USER, "deleted");
     }
 
     private void assertSingleEvent(List<Map<String, Object>> events, String resourceType, String resourceId,
-                                   String action, String actor) {
+                                   String action, String actor, String details) {
         List<Map<String, Object>> matches = events.stream()
                 .filter(e -> resourceType.equals(e.get("resourceType")) && resourceId.equals(e.get("resourceId"))
                         && action.equals(e.get("action")))
@@ -563,8 +677,7 @@ class CareOperationsApiTest {
         Map<String, Object> event = matches.get(0);
         assertEquals(action, event.get("action"));
         assertEquals(actor, event.get("actor"), "the audit actor must be the authenticated session user");
-        assertEquals("CREATE".equals(action) ? "created" : "deleted", event.get("details"),
-                "the current audit details are the literal create/delete strings");
+        assertEquals(details, event.get("details"), "the audit details must name the performed mutation");
         assertNotNull(event.get("occurredAt"), "audit events must carry occurredAt");
     }
 
@@ -580,13 +693,27 @@ class CareOperationsApiTest {
     // Synthetic payload builders (fabricated values only)
     // ------------------------------------------------------------------
 
-    private Map<String, Object> admissionPayload(String tag) {
-        return Map.of(
-                "patientId", UUID.randomUUID().toString(),
-                "admittedAt", "2031-01-01T08:00:00-" + tag,
-                "dischargedAt", "2031-02-01T10:00:00-" + tag,
-                "reason", "synthetic admission " + suffix + " " + tag,
-                "status", "ADMITTED-RAW");
+    /**
+     * Task 2 create contract body: verified patientId, typed ISO admittedAt,
+     * non-blank reason — nothing else. The optional patientId override lets
+     * failure tests substitute unknown or malformed references.
+     */
+    private Map<String, Object> admissionCreatePayload(String tag, String patientIdOverride) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("patientId", patientIdOverride != null ? patientIdOverride : UUID.randomUUID().toString());
+        payload.put("admittedAt", "2031-01-01T08:15:30");
+        payload.put("reason", "synthetic admission " + suffix + " " + tag);
+        return payload;
+    }
+
+    /** Registers one synthetic patient through the Task 3 Phase 1 contract and returns its id. */
+    private String createSyntheticPatient(String token, String tag) {
+        Map<String, Object> patient = Map.of(
+                "medicalRecordNumber", "MRN-CAREOPS-" + suffix + "-" + tag,
+                "fullName", "Synthetic Patient " + suffix + " " + tag);
+        ResponseEntity<Map<String, Object>> created = post("/api/patients", token, patient);
+        assertEquals(HttpStatus.OK, created.getStatusCode(), "the synthetic patient fixture must register cleanly");
+        return requireId(created);
     }
 
     private Map<String, Object> emergencyPayload(String tag) {

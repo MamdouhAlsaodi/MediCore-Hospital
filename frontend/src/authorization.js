@@ -40,6 +40,16 @@ export const PERMISSIONS = {
     read: ['ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST'],
     create: ['ADMIN', 'RECEPTIONIST'],
   },
+  // Admissions (plan2.md Task 2): the server family rule on
+  // /api/admissions/** admits all four clinical-administrative roles on
+  // every method and Task 2 changed no role policy (plan2 §7.1 narrowing
+  // stays an owner decision), so register and discharge hint exactly as
+  // widely as read. UI mirroring only; SecurityConfig stays authoritative.
+  admission: {
+    read: ['ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST'],
+    create: ['ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST'],
+    transition: ['ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST'],
+  },
   // Audit evidence stays ADMIN-only, mirroring the SecurityConfig rule
   // ("hasRole(\"ADMIN\")" on /api/audit/**) — no role may widen it.
   audit: {

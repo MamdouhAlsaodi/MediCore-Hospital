@@ -562,3 +562,123 @@ button.appointment-cancel:focus-visible {
   .audit-table th,
   .audit-table td { padding: 8px; font-size: 13px; }
 }
+
+/* Admissions screen (docs/plan2.md Task 2): list with status badges, the
+   register workflow, and the deliberate discharge confirmation — reusing
+   the existing navy/gold identity, no new palette. */
+.admissions-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 14px;
+}
+.admission-new {
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: 0;
+  background: var(--gold, #b8860b);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+.admission-new:disabled { opacity: 0.6; cursor: not-allowed; }
+.admissions-empty {
+  padding: 18px;
+}
+.admissions-table-wrap {
+  margin-top: 14px;
+  overflow-x: auto;
+}
+.admissions-table {
+  width: 100%;
+  border-collapse: collapse;
+  border-radius: 12px;
+  font-size: 14px;
+}
+.admissions-table th,
+.admissions-table td {
+  text-align: left;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+.admissions-table thead th {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.admissions-table tbody tr:last-child td { border-bottom: 0; }
+.status-badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+.status-badge.status-admitted {
+  border-color: var(--gold, #b8860b);
+  color: var(--gold, #b8860b);
+}
+.status-badge.status-discharged { opacity: 0.85; }
+.admission-row-actions {
+  white-space: nowrap;
+}
+.admission-row-actions button {
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px;
+}
+.admission-row-actions button:disabled { opacity: 0.6; cursor: not-allowed; }
+.admission-discharge { color: inherit; }
+.admission-discharge-confirm {
+  border-color: var(--gold, #b8860b);
+  color: var(--gold, #b8860b);
+  font-weight: 600;
+}
+.admission-discharge-cancel { color: var(--muted); }
+.admission-form { padding: 18px; }
+.admission-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+.admission-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.admission-field label { font-size: 13px; color: var(--muted); }
+.admission-form-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+}
+.admission-save,
+.admission-cancel {
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: 0;
+  cursor: pointer;
+  font-weight: 600;
+}
+.admission-save { background: var(--gold, #b8860b); color: #fff; }
+.admission-save:disabled { opacity: 0.6; cursor: not-allowed; }
+.admission-cancel { background: transparent; border: 1px solid var(--line); color: inherit; }
+
+@media (max-width: 560px) {
+  /* The admissions list keeps its columns readable on narrow screens: values
+     wrap (overflow-wrap) and the wrap scrolls horizontally if needed. */
+  .admissions-table th,
+  .admissions-table td { padding: 8px; font-size: 13px; }
+  .admission-form-grid { grid-template-columns: 1fr; gap: 0; }
+  .admission-form-actions,
+  .admissions-actions { flex-direction: column; align-items: stretch; }
+  .admissions-actions .admission-new { width: 100%; }
+}

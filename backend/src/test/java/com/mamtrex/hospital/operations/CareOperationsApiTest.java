@@ -12,6 +12,7 @@ import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.*;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
+import java.math.BigDecimal;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -26,28 +27,36 @@ import static org.junit.jupiter.api.Assertions.*;
  * Care-operations contract suite. Characterized the raw baseline in docs/plan2.md
  * Task 1 (packet MEDICORE-PLAN2-TASK1-030), updated by Task 2 (packet
  * MEDICORE-PLAN2-TASK2-031) for admissions, and updated by Task 3 (packet
- * MEDICORE-PLAN2-TASK3-032) for emergency visits: the admissions and
- * emergency-visit tests now pin the normalized workflows (verified patient
+ * MEDICORE-PLAN2-TASK3-032) for emergency visits, and updated by Task 4
+ * (packet MEDICORE-PLAN2-TASK4-033) for invoices: the admissions,
+ * emergency-visit, and invoice tests now pin the normalized workflows
+ * (verified patient
  * references, DTO responses without persistence metadata, server-owned
  * lifecycles with 409 on repeat/invalid transitions, exactly one audit event
  * per successful mutation and none on failures), while the remaining families
  * still deliberately freeze TODAY'S raw behavior as later change targets —
  *
- * - invoice/bed controllers still return JPA entities directly, so responses
+ * - the bed controller still returns JPA entities directly, so responses
  *   expose the persistence metadata id/createdAt/updatedAt/version (later:
- *   DTOs; admissions and emergency visits already return the normalized DTO);
- * - invoice/bed request fields are still raw @NotBlank Strings stored
- *   verbatim — raw statuses, arbitrary amounts, and nonexistent patientId
- *   values are all accepted there (later: verified references, typed values,
- *   per-domain status sets);
- * - invoiceNumber has no uniqueness and there is no invoice lifecycle;
+ *   DTOs; invoices, admissions, and emergency visits already return the
+ *   normalized DTO);
+ * - bed request fields are still raw @NotBlank Strings stored verbatim —
+ *   raw statuses and nonexistent patientId values are all accepted there
+ *   (later: verified references, typed values, per-domain status sets);
+ * - invoices now own the Task 4 normalized contract: a verified patient
+ *   reference, six-field DTO responses, unique invoice numbers with the
+ *   safe shared 409 on duplicates, validated non-negative demo amounts
+ *   (canonical plain-string storage) and [A-Z]{3} demo currency labels,
+ *   and PUT /api/invoices/{id}/status with the server-owned lifecycle
+ *   DRAFT -> ISSUED | VOID and ISSUED -> PAID | VOID (PAID/VOID terminal);
+ *   the whole family stays a FINANCIAL SIMULATION — no real payments;
  * - emergency visits now own PUT /api/emergency-visits/{id}/status with the
  *   Task 3 lifecycle WAITING -> IN_TREATMENT | CLOSED, IN_TREATMENT ->
  *   CLOSED, CLOSED terminal (the triage label stays a neutral 1-5 demo value
  *   with no clinical meaning); admissions own PUT /api/admissions/{id}/status;
  * - the dashboard exposes exactly five raw count keys with row-count
  *   semantics and no status awareness (beds are not counted);
- * - the RBAC family rules are unchanged by Tasks 2 and 3: DOCTOR and NURSE
+ * - the RBAC family rules are unchanged by Tasks 2, 3, and 4: DOCTOR and NURSE
  *   keep live admissions/emergency writes (plan2 §7.1 write-role narrowing is
  *   an owner decision), and BILLING is isolated to invoices with 403 elsewhere.
  *
@@ -87,8 +96,9 @@ class CareOperationsApiTest {
     private static final Set<String> EMERGENCY_VISIT_DTO_FIELDS = Set.of(
             "id", "patientId", "arrivalAt", "triageLevel", "chiefComplaint", "status");
 
-    private static final Set<String> INVOICE_ENTITY_FIELDS = Set.of(
-            "patientId", "invoiceNumber", "amount", "currency", "status");
+    /** Task 4 DTO contract: exactly these six fields, no persistence metadata. */
+    private static final Set<String> INVOICE_DTO_FIELDS = Set.of(
+            "id", "patientId", "invoiceNumber", "amount", "currency", "status");
 
     private static final Set<String> BED_ENTITY_FIELDS = Set.of(
             "ward", "room", "bedNumber", "occupancyStatus", "patientId");
@@ -665,61 +675,359 @@ class CareOperationsApiTest {
     }
 
     // ------------------------------------------------------------------
-    // Invoice CRUD contract
+    // Invoice workflow contract (docs/plan2.md Task 4 — normalized)
     // ------------------------------------------------------------------
 
     /**
-     * Invoices today: raw entity contract with no uniqueness on invoiceNumber
-     * — two invoices may share a number — and no amount/currency/reference
-     * validation of any kind. Both gaps are deliberate plan2 Task 4 change
-     * targets.
+     * Task 4 create contract: a verified patient reference, a non-blank
+     * invoice number, a validated demo amount stored and echoed in canonical
+     * plain-string form (no exponent anywhere), and an [A-Z]{3} demo
+     * currency label with NO conversion, FX, or tax meaning. The response is
+     * exactly the six-field DTO with the server-owned status DRAFT, and a
+     * client-sent status value never reaches storage. Detail and list share
+     * the same DTO contract with no persistence metadata anywhere.
      */
     @Test
-    void invoiceCrudExposesRawEntityContractWithoutUniquenessOrValidation() {
+    void invoiceCreatePinsNormalizedDtoContractWithVerifiedPatientReference() {
         String token = login(BILLING_USER);
-        String unknownPatientId = UUID.randomUUID().toString();
-        String sharedNumber = "INV-RAW-" + suffix;
-        Set<String> entityContract = union(METADATA_KEYS, INVOICE_ENTITY_FIELDS);
+        String patientId = createSyntheticPatient(login(ADMIN_USER), "inv-contract");
 
-        ResponseEntity<Map<String, Object>> first = post("/api/invoices", token, Map.of(
-                "patientId", unknownPatientId,
-                "invoiceNumber", sharedNumber,
-                "amount", "12.345,67-not-a-number",
-                "currency", "XX",
-                "status", "IMAGINED"));
-        assertEquals(HttpStatus.OK, first.getStatusCode(),
-                "arbitrary amount/currency/status strings and an unknown patientId must currently be accepted");
-        Map<String, Object> firstBody = first.getBody();
-        assertNotNull(firstBody);
-        assertEquals(entityContract, firstBody.keySet(),
-                "the invoice response must currently be the raw entity incl. persistence metadata");
-        assertEquals("12.345,67-not-a-number", firstBody.get("amount"), "amount must be stored verbatim");
-        assertEquals("XX", firstBody.get("currency"), "currency must currently be unconstrained");
-        String firstId = requireId(first);
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("patientId", patientId);
+        payload.put("invoiceNumber", "INV-NORM-" + suffix);
+        payload.put("amount", new BigDecimal("1234.5"));
+        payload.put("currency", "USD");
+        // Not part of the create contract: the server owns the lifecycle, so
+        // this client value must be ignored, never stored.
+        payload.put("status", "IMAGINED-RAW");
 
-        ResponseEntity<Map<String, Object>> duplicate = post("/api/invoices", token, Map.of(
-                "patientId", unknownPatientId,
-                "invoiceNumber", sharedNumber,
-                "amount", "0",
-                "currency", "XX",
-                "status", "IMAGINED"));
-        assertEquals(HttpStatus.OK, duplicate.getStatusCode(),
-                "a duplicate invoiceNumber must currently be accepted — no uniqueness exists yet");
+        ResponseEntity<Map<String, Object>> created = post("/api/invoices", token, payload);
+        assertEquals(HttpStatus.OK, created.getStatusCode(), "a verified patient must allow the invoice create");
+        Map<String, Object> body = created.getBody();
+        assertNotNull(body);
+        assertEquals(INVOICE_DTO_FIELDS, body.keySet(),
+                "the invoice response must be exactly the DTO contract with no persistence metadata");
+        assertEquals(patientId, body.get("patientId"),
+                "patientId must be the canonical UUID string of the verified patient");
+        assertEquals("INV-NORM-" + suffix, body.get("invoiceNumber"));
+        assertInstanceOf(String.class, body.get("amount"), "the canonical amount must travel as a plain string");
+        assertEquals("1234.5", body.get("amount"), "amount must be the canonical plain string, never exponent form");
+        assertEquals("USD", body.get("currency"), "currency is a demo label stored verbatim");
+        assertEquals("DRAFT", body.get("status"), "the server must set status=DRAFT, never a client value");
+        String invoiceId = requireId(created);
 
-        ResponseEntity<List<Map<String, Object>>> list = getList("/api/invoices", login(ADMIN_USER));
+        ResponseEntity<Map<String, Object>> detail = getMap("/api/invoices/" + invoiceId, token);
+        assertEquals(HttpStatus.OK, detail.getStatusCode());
+        assertNotNull(detail.getBody());
+        assertEquals(INVOICE_DTO_FIELDS, detail.getBody().keySet(), "detail must match the same DTO contract");
+        assertEquals("DRAFT", detail.getBody().get("status"));
+
+        ResponseEntity<List<Map<String, Object>>> list = getList("/api/invoices", token);
         assertEquals(HttpStatus.OK, list.getStatusCode());
         List<Map<String, Object>> listBody = list.getBody();
         assertNotNull(listBody, "invoice list must carry a body");
-        List<Map<String, Object>> twins = listBody.stream()
-                .filter(i -> sharedNumber.equals(i.get("invoiceNumber")))
+        List<Map<String, Object>> mine = listBody.stream()
+                .filter(i -> invoiceId.equals(String.valueOf(i.get("id"))))
                 .collect(Collectors.toList());
-        assertEquals(2, twins.size(), "both invoices sharing a number must currently coexist");
-        for (Map<String, Object> item : twins) {
-            assertEquals(entityContract, item.keySet(), "every list item must match the raw entity contract");
+        assertEquals(1, mine.size(), "the created invoice must appear exactly once in the list");
+        assertEquals(INVOICE_DTO_FIELDS, mine.get(0).keySet(), "every list item must match the DTO contract");
+
+        // An exponent-shaped demo amount must be canonicalized on storage:
+        // 1E+3 arrives as a number and must be echoed as the plain "1000".
+        Map<String, Object> exponent = new LinkedHashMap<>();
+        exponent.put("patientId", patientId);
+        exponent.put("invoiceNumber", "INV-EXP-" + suffix);
+        exponent.put("amount", new BigDecimal("1E+3"));
+        exponent.put("currency", "USD");
+        ResponseEntity<Map<String, Object>> exponentResponse = post("/api/invoices", token, exponent);
+        assertEquals(HttpStatus.OK, exponentResponse.getStatusCode());
+        assertNotNull(exponentResponse.getBody());
+        assertEquals("1000", exponentResponse.getBody().get("amount"),
+                "the stored amount must use toPlainString() canonical form with no exponent");
+
+        assertEquals(HttpStatus.BAD_REQUEST, getStatus("/api/invoices/not-a-uuid", token).getStatusCode(),
+                "a malformed invoice UUID path must be a client error, never a 500");
+    }
+
+    /**
+     * Task 4 failure contracts: an unknown patient is the shared safe 404, a
+     * non-UUID patientId or a non-numeric amount is a malformed body 400, a
+     * negative amount, an amount beyond 12 integer digits or 2 fraction
+     * digits, a blank/missing invoice number, and a currency outside
+     * [A-Z]{3} are validation 400s — and a duplicate invoice number is the
+     * safe shared 409 that overwrites nothing. No rejected write may persist
+     * an invoice.
+     */
+    @Test
+    void invoiceCreateRejectsInvalidReferencesAmountsAndDuplicatesWithoutPersisting() {
+        String token = login(BILLING_USER);
+        String patientId = createSyntheticPatient(login(ADMIN_USER), "inv-bad");
+        long invoicesBefore = dashboardCount("invoices", login(ADMIN_USER));
+
+        // Boundary successes first: zero is legal and 12 integer digits with
+        // 2 fraction digits is the exact legal maximum (both pinned here so
+        // the boundary stays deliberate, not accidental).
+        Map<String, Object> zero = invoicePayload("inv-zero", patientId);
+        zero.put("amount", BigDecimal.ZERO);
+        ResponseEntity<Map<String, Object>> zeroResponse = post("/api/invoices", token, zero);
+        assertEquals(HttpStatus.OK, zeroResponse.getStatusCode(), "a zero demo amount is legal");
+        assertNotNull(zeroResponse.getBody());
+        assertEquals("0", zeroResponse.getBody().get("amount"), "zero must be stored canonically");
+
+        Map<String, Object> max = invoicePayload("inv-max", patientId);
+        max.put("amount", new BigDecimal("999999999999.99"));
+        ResponseEntity<Map<String, Object>> maxResponse = post("/api/invoices", token, max);
+        assertEquals(HttpStatus.OK, maxResponse.getStatusCode(),
+                "12 integer digits and 2 fraction digits are legal");
+        assertNotNull(maxResponse.getBody());
+        assertEquals("999999999999.99", maxResponse.getBody().get("amount"));
+
+        long boundaryCreates = 2;
+
+        // Unknown patient -> shared 404 with the shared ApiError body.
+        Map<String, Object> unknownPatient = invoicePayload("inv-unknown", UUID.randomUUID().toString());
+        ResponseEntity<Map<String, Object>> notFound = post("/api/invoices", token, unknownPatient);
+        assertEquals(HttpStatus.NOT_FOUND, notFound.getStatusCode(),
+                "an unknown patient reference must return the shared 404, never persist");
+        Map<String, Object> notFoundBody = notFound.getBody();
+        assertNotNull(notFoundBody, "the 404 must carry the shared ApiError body");
+        assertEquals(404, ((Number) notFoundBody.get("status")).intValue(), "ApiError.status must echo 404");
+        assertEquals("Not Found", notFoundBody.get("error"));
+
+        // Non-UUID patientId -> typed deserialization failure -> 400.
+        Map<String, Object> nonUuid = invoicePayload("inv-nonuuid", "not-a-uuid");
+        assertEquals(HttpStatus.BAD_REQUEST, post("/api/invoices", token, nonUuid).getStatusCode(),
+                "a non-UUID patientId fails typed deserialization as a malformed body");
+
+        // Amount validation failures -> validation 400s.
+        Map<String, Object> negative = invoicePayload("inv-negative", patientId);
+        negative.put("amount", new BigDecimal("-0.01"));
+        assertEquals(HttpStatus.BAD_REQUEST, post("/api/invoices", token, negative).getStatusCode(),
+                "a negative amount must be rejected");
+
+        Map<String, Object> tooManyIntegers = invoicePayload("inv-wide", patientId);
+        tooManyIntegers.put("amount", new BigDecimal("9999999999999.99"));
+        assertEquals(HttpStatus.BAD_REQUEST, post("/api/invoices", token, tooManyIntegers).getStatusCode(),
+                "an amount with 13 integer digits must be rejected");
+
+        Map<String, Object> tooManyFractions = invoicePayload("inv-precise", patientId);
+        tooManyFractions.put("amount", new BigDecimal("1.999"));
+        assertEquals(HttpStatus.BAD_REQUEST, post("/api/invoices", token, tooManyFractions).getStatusCode(),
+                "an amount with 3 fraction digits must be rejected");
+
+        Map<String, Object> nonNumeric = invoicePayload("inv-nan", patientId);
+        nonNumeric.put("amount", "12.345,67-not-a-number");
+        assertEquals(HttpStatus.BAD_REQUEST, post("/api/invoices", token, nonNumeric).getStatusCode(),
+                "a non-numeric amount fails typed deserialization as a malformed body");
+
+        // Invoice number and currency validation failures -> validation 400s.
+        Map<String, Object> blankNumber = invoicePayload("inv-blank", patientId);
+        blankNumber.put("invoiceNumber", "   ");
+        assertEquals(HttpStatus.BAD_REQUEST, post("/api/invoices", token, blankNumber).getStatusCode(),
+                "a blank invoice number must be rejected");
+
+        Map<String, Object> missingNumber = new LinkedHashMap<>();
+        missingNumber.put("patientId", patientId);
+        missingNumber.put("amount", new BigDecimal("10.00"));
+        missingNumber.put("currency", "USD");
+        assertEquals(HttpStatus.BAD_REQUEST, post("/api/invoices", token, missingNumber).getStatusCode(),
+                "a missing invoice number must be rejected");
+
+        for (String rejected : List.of("usd", "US", "EURO", "US1", " US")) {
+            Map<String, Object> badCurrency = invoicePayload("inv-cur-" + rejected.hashCode(), patientId);
+            badCurrency.put("currency", rejected);
+            assertEquals(HttpStatus.BAD_REQUEST,
+                    post("/api/invoices", token, badCurrency).getStatusCode(),
+                    "a currency outside [A-Z]{3} must be rejected: '" + rejected + "'");
         }
 
-        assertEquals(HttpStatus.OK, delete("/api/invoices/" + firstId, token).getStatusCode());
-        assertEquals(HttpStatus.NOT_FOUND, getStatus("/api/invoices/" + firstId, login(ADMIN_USER)).getStatusCode());
+        // Duplicate invoice number -> shared 409 with a controlled message,
+        // and the original record is untouched (no overwrite).
+        String sharedNumber = "INV-DUP-" + suffix;
+        Map<String, Object> original = invoicePayload("inv-dup-original", patientId);
+        original.put("invoiceNumber", sharedNumber);
+        ResponseEntity<Map<String, Object>> first = post("/api/invoices", token, original);
+        assertEquals(HttpStatus.OK, first.getStatusCode(), "the first use of the number must succeed");
+        String firstId = requireId(first);
+
+        Map<String, Object> duplicate = invoicePayload("inv-dup-second", patientId);
+        duplicate.put("invoiceNumber", sharedNumber);
+        duplicate.put("amount", new BigDecimal("77.77"));
+        ResponseEntity<Map<String, Object>> conflict = post("/api/invoices", token, duplicate);
+        assertEquals(HttpStatus.CONFLICT, conflict.getStatusCode(),
+                "a duplicate invoice number must return the shared 409");
+        Map<String, Object> conflictBody = conflict.getBody();
+        assertNotNull(conflictBody, "the 409 must carry the shared ApiError body");
+        assertEquals(409, ((Number) conflictBody.get("status")).intValue(), "ApiError.status must echo 409");
+        assertEquals("Conflict", conflictBody.get("error"));
+        String conflictMessage = String.valueOf(conflictBody.get("message"));
+        assertTrue(conflictMessage.toLowerCase().contains("already exists"),
+                "the 409 message must say the invoice number already exists");
+        assertFalse(conflictMessage.contains("Exception"), "the 409 message must not leak exception internals");
+        assertFalse(conflictMessage.toUpperCase().contains("SQL"), "the 409 message must not leak SQL internals");
+
+        ResponseEntity<Map<String, Object>> untouched = getMap("/api/invoices/" + firstId, token);
+        assertEquals(HttpStatus.OK, untouched.getStatusCode());
+        assertNotNull(untouched.getBody());
+        assertEquals("10.00", untouched.getBody().get("amount"),
+                "the duplicate attempt must not overwrite the original amount");
+        assertEquals("DRAFT", untouched.getBody().get("status"),
+                "the duplicate attempt must not change the original status");
+
+        ResponseEntity<List<Map<String, Object>>> list = getList("/api/invoices", token);
+        assertNotNull(list.getBody());
+        long twins = list.getBody().stream()
+                .filter(i -> sharedNumber.equals(i.get("invoiceNumber")))
+                .count();
+        assertEquals(1, twins, "both attempts must not leave two invoices sharing the number");
+
+        long invoicesAfter = dashboardCount("invoices", login(ADMIN_USER));
+        assertEquals(invoicesBefore + boundaryCreates + 1, invoicesAfter,
+                "only the three legal creates may persist; every rejected write persists nothing");
+    }
+
+    /**
+     * Task 4 transition lifecycle: PUT /api/invoices/{id}/status permits
+     * exactly DRAFT -> ISSUED | VOID and ISSUED -> PAID | VOID; PAID and
+     * VOID are terminal. The response is the same six-field DTO with the
+     * server-applied status and unchanged financial/reference fields.
+     * Repeats, backward moves, and unknown targets are the safe shared 409
+     * with a controlled message; failed operations produce no audit events,
+     * and the successful create and each legal transition produce exactly
+     * one audit event with the session actor.
+     */
+    @Test
+    void invoiceTransitionsPinLifecycleConflictsAndAudit() {
+        String token = login(BILLING_USER);
+        String patientId = createSyntheticPatient(login(ADMIN_USER), "inv-transition");
+        String invoiceId = requireId(post("/api/invoices", token, invoicePayload("inv-trn-main", patientId)));
+
+        List<Map<String, Object>> beforeTransitions = auditEvents(login(ADMIN_USER));
+        assertSingleEvent(beforeTransitions, "Invoice", invoiceId, "CREATE", BILLING_USER, "created");
+
+        ResponseEntity<Map<String, Object>> issued =
+                put("/api/invoices/" + invoiceId + "/status", token, Map.of("status", "ISSUED"));
+        assertEquals(HttpStatus.OK, issued.getStatusCode(), "DRAFT -> ISSUED must be a legal transition");
+        Map<String, Object> issuedBody = issued.getBody();
+        assertNotNull(issuedBody);
+        assertEquals(INVOICE_DTO_FIELDS, issuedBody.keySet(), "the transition response must stay on the DTO contract");
+        assertEquals("ISSUED", issuedBody.get("status"), "the server must apply the requested legal transition");
+        assertEquals(patientId, issuedBody.get("patientId"), "transitions must not change the verified reference");
+        assertEquals("INV-" + suffix + "-inv-trn-main", issuedBody.get("invoiceNumber"),
+                "transitions must not change the invoice number");
+        assertEquals("10.00", issuedBody.get("amount"), "transitions must not change the stored amount");
+        assertEquals("USD", issuedBody.get("currency"), "transitions must not change the currency label");
+
+        assertSingleEvent(auditEvents(login(ADMIN_USER)), "Invoice", invoiceId, "UPDATE", BILLING_USER, "issued");
+
+        ResponseEntity<Map<String, Object>> paid =
+                put("/api/invoices/" + invoiceId + "/status", token, Map.of("status", "PAID"));
+        assertEquals(HttpStatus.OK, paid.getStatusCode(), "ISSUED -> PAID must be a legal transition");
+        assertNotNull(paid.getBody());
+        assertEquals("PAID", paid.getBody().get("status"));
+
+        assertSingleEvent(auditEvents(login(ADMIN_USER)), "Invoice", invoiceId, "UPDATE", BILLING_USER, "paid");
+
+        ResponseEntity<Map<String, Object>> repeat =
+                put("/api/invoices/" + invoiceId + "/status", token, Map.of("status", "PAID"));
+        assertEquals(HttpStatus.CONFLICT, repeat.getStatusCode(),
+                "repeating a transition on a PAID invoice must return the shared 409");
+        Map<String, Object> conflict = repeat.getBody();
+        assertNotNull(conflict, "the 409 must carry the shared ApiError body");
+        assertEquals(409, ((Number) conflict.get("status")).intValue(), "ApiError.status must echo 409");
+        assertEquals("Conflict", conflict.get("error"));
+        String conflictMessage = String.valueOf(conflict.get("message"));
+        assertTrue(conflictMessage.contains("PAID"),
+                "the 409 message must name the terminal state, never an entity or stack dump");
+        assertFalse(conflictMessage.contains("Exception"), "the 409 message must not leak exception internals");
+
+        assertEquals(HttpStatus.CONFLICT,
+                put("/api/invoices/" + invoiceId + "/status", token, Map.of("status", "VOID")).getStatusCode(),
+                "a PAID invoice is terminal: every further transition must 409");
+
+        // DRAFT -> VOID is legal directly; VOID is terminal afterwards.
+        String voidedId = requireId(post("/api/invoices", token, invoicePayload("inv-trn-void", patientId)));
+        assertEquals(HttpStatus.OK,
+                put("/api/invoices/" + voidedId + "/status", token, Map.of("status", "VOID")).getStatusCode(),
+                "DRAFT -> VOID must be a legal transition");
+        assertSingleEvent(auditEvents(login(ADMIN_USER)), "Invoice", voidedId, "UPDATE", BILLING_USER, "voided");
+        assertEquals(HttpStatus.CONFLICT,
+                put("/api/invoices/" + voidedId + "/status", token, Map.of("status", "ISSUED")).getStatusCode(),
+                "a VOID invoice is terminal: every further transition must 409");
+
+        // Repeated and unknown targets on a live DRAFT are conflicts, never
+        // stored; then the legal issue happens and backward moves conflict.
+        String draftedId = requireId(post("/api/invoices", token, invoicePayload("inv-trn-back", patientId)));
+        assertEquals(HttpStatus.CONFLICT,
+                put("/api/invoices/" + draftedId + "/status", token, Map.of("status", "DRAFT")).getStatusCode(),
+                "DRAFT -> DRAFT is not in the transition map and must 409");
+        ResponseEntity<Map<String, Object>> unknownTarget =
+                put("/api/invoices/" + draftedId + "/status", token, Map.of("status", "RUINED"));
+        assertEquals(HttpStatus.CONFLICT, unknownTarget.getStatusCode(),
+                "a status outside the transition map must 409, never be stored");
+        assertNotNull(unknownTarget.getBody());
+        assertTrue(String.valueOf(unknownTarget.getBody().get("message")).contains("no RUINED transition"),
+                "the unknown-target 409 message must be controlled and client-safe");
+        assertEquals(HttpStatus.OK,
+                put("/api/invoices/" + draftedId + "/status", token, Map.of("status", "ISSUED")).getStatusCode(),
+                "DRAFT -> ISSUED must stay legal for the backward-move probe");
+        assertEquals(HttpStatus.CONFLICT,
+                put("/api/invoices/" + draftedId + "/status", token, Map.of("status", "DRAFT")).getStatusCode(),
+                "ISSUED -> DRAFT is a backward move and must 409");
+
+        String unknownId = UUID.randomUUID().toString();
+        assertEquals(HttpStatus.NOT_FOUND,
+                put("/api/invoices/" + unknownId + "/status", token, Map.of("status", "ISSUED")).getStatusCode(),
+                "transitioning an unknown invoice must be the shared 404");
+
+        // Exactly one audit event per successful mutation and none for any
+        // rejected write above.
+        List<Map<String, Object>> after = auditEvents(login(ADMIN_USER));
+        assertSingleEvent(after, "Invoice", invoiceId, "CREATE", BILLING_USER, "created");
+        assertSingleEvent(after, "Invoice", invoiceId, "UPDATE", BILLING_USER, "issued");
+        assertSingleEvent(after, "Invoice", invoiceId, "UPDATE", BILLING_USER, "paid");
+        assertSingleEvent(after, "Invoice", voidedId, "CREATE", BILLING_USER, "created");
+        assertSingleEvent(after, "Invoice", voidedId, "UPDATE", BILLING_USER, "voided");
+        assertSingleEvent(after, "Invoice", draftedId, "CREATE", BILLING_USER, "created");
+        assertSingleEvent(after, "Invoice", draftedId, "UPDATE", BILLING_USER, "issued");
+        long updatesForTerminalProbe = after.stream()
+                .filter(e -> "Invoice".equals(e.get("resourceType")) && voidedId.equals(e.get("resourceId"))
+                        && "UPDATE".equals(e.get("action")))
+                .count();
+        assertEquals(1, updatesForTerminalProbe,
+                "the terminal and unknown-target rejections must not add audit events");
+        long updatesForBackwardProbe = after.stream()
+                .filter(e -> "Invoice".equals(e.get("resourceType")) && draftedId.equals(e.get("resourceId"))
+                        && "UPDATE".equals(e.get("action")))
+                .count();
+        assertEquals(1, updatesForBackwardProbe,
+                "the repeated and backward-move rejections must not add audit events");
+    }
+
+    /**
+     * Delete stays service-owned and audited under the normalized contract:
+     * 404-safe on repeat, the shared ApiError body afterwards, and exactly
+     * one DELETE audit event with the session actor.
+     */
+    @Test
+    void invoiceDeleteRemainsServiceOwnedSafeAndAudited() {
+        String token = login(BILLING_USER);
+        String patientId = createSyntheticPatient(login(ADMIN_USER), "inv-delete");
+        String invoiceId = requireId(post("/api/invoices", token, invoicePayload("inv-delete", patientId)));
+
+        assertEquals(HttpStatus.OK, delete("/api/invoices/" + invoiceId, token).getStatusCode());
+        ResponseEntity<String> gone = getStatus("/api/invoices/" + invoiceId, token);
+        assertEquals(HttpStatus.NOT_FOUND, gone.getStatusCode(), "get after delete must be 404");
+        Map<String, Object> error = parseError(gone);
+        assertEquals(Set.of("timestamp", "status", "error", "message", "path"), error.keySet(),
+                "404 must use the shared ApiError contract shape exactly");
+        assertEquals(404, ((Number) error.get("status")).intValue(), "ApiError.status must echo 404");
+        assertEquals("Not Found", error.get("error"));
+        assertEquals("/api/invoices/" + invoiceId, error.get("path"));
+        assertEquals(HttpStatus.NOT_FOUND, delete("/api/invoices/" + invoiceId, token).getStatusCode(),
+                "deleting an unknown invoice must be 404, not a silent success");
+
+        assertSingleEvent(auditEvents(login(ADMIN_USER)), "Invoice", invoiceId, "DELETE", BILLING_USER, "deleted");
     }
 
     // ------------------------------------------------------------------
@@ -790,7 +1098,7 @@ class CareOperationsApiTest {
 
         String admissionId = requireId(post("/api/admissions", adminToken, admissionCreatePayload("dash", patientId)));
         String visitId = requireId(post("/api/emergency-visits", adminToken, emergencyCreatePayload("dash", patientId)));
-        String invoiceId = requireId(post("/api/invoices", adminToken, invoicePayload("dash")));
+        String invoiceId = requireId(post("/api/invoices", adminToken, invoicePayload("dash", patientId)));
         String bedId = requireId(post("/api/beds", adminToken, bedPayload()));
 
         ResponseEntity<Map<String, Object>> after = getMap("/api/dashboard", adminToken);
@@ -837,7 +1145,7 @@ class CareOperationsApiTest {
         String patientId = createSyntheticPatient(adminToken, "audit");
         String admissionId = requireId(post("/api/admissions", login(NURSE_USER), admissionCreatePayload("audit", patientId)));
         String visitId = requireId(post("/api/emergency-visits", login(DOCTOR_USER), emergencyCreatePayload("audit", patientId)));
-        String invoiceId = requireId(post("/api/invoices", login(BILLING_USER), invoicePayload("audit")));
+        String invoiceId = requireId(post("/api/invoices", login(BILLING_USER), invoicePayload("audit", patientId)));
         String bedId = requireId(post("/api/beds", login(ADMIN_USER), bedPayload()));
 
         List<Map<String, Object>> events = auditEvents(adminToken);
@@ -932,13 +1240,25 @@ class CareOperationsApiTest {
         return payload;
     }
 
+    /**
+     * Task 4 create contract body: a verified patientId, a non-blank
+     * invoice number, a validated demo amount, and an [A-Z]{3} demo currency
+     * label — plus a client status value the server must ignore. The
+     * optional patientId override lets failure tests substitute unknown or
+     * malformed references.
+     */
+    private Map<String, Object> invoicePayload(String tag, String patientIdOverride) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("patientId", patientIdOverride != null ? patientIdOverride : UUID.randomUUID().toString());
+        payload.put("invoiceNumber", "INV-" + suffix + "-" + tag);
+        payload.put("amount", new BigDecimal("10.00"));
+        payload.put("currency", "USD");
+        payload.put("status", "DRAFT-RAW");
+        return payload;
+    }
+
     private Map<String, Object> invoicePayload(String tag) {
-        return Map.of(
-                "patientId", UUID.randomUUID().toString(),
-                "invoiceNumber", "INV-" + suffix + "-" + tag,
-                "amount", "10.00",
-                "currency", "USD",
-                "status", "DRAFT-RAW");
+        return invoicePayload(tag, null);
     }
 
     private Map<String, Object> bedPayload() {

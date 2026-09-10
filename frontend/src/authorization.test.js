@@ -13,7 +13,10 @@ import { PERMISSIONS, can } from './authorization.js';
 // /api/admissions/** and /api/emergency-visits/**: all four
 // clinical-administrative roles on every method — UI mirroring only. The
 // emergency-visit triage label is a neutral 1-5 demo value with no clinical
-// meaning.
+// meaning. plan2.md Task 4 adds the invoice resource (read/create/
+// transition), mirroring the server family rule on /api/invoices/**:
+// ADMIN and BILLING only, and the whole family is a FINANCIAL SIMULATION
+// with no real payments.
 const sessionFor = (...roles) => ({ token: 'synthetic-token', username: 'testuser', roles });
 
 // Frontend capability matrix (UI hints only — convenience gating).
@@ -64,14 +67,29 @@ const EMERGENCY_VISIT_MATRIX = {
   RECEPTIONIST: { read: true, create: true, transition: true },
 };
 
+const INVOICE_MATRIX = {
+  // The server family rule on /api/invoices/** admits only ADMIN and
+  // BILLING on every method (SecurityConfig, untouched by Task 4), so the
+  // UI hint grants the invoice family to exactly those two roles. A direct
+  // API call from any other role is refused with 403 server-side
+  // (CareOperationsApiTest pins it). The invoice family is a FINANCIAL
+  // SIMULATION — no real payments.
+  ADMIN: { read: true, create: true, transition: true },
+  BILLING: { read: true, create: true, transition: true },
+  DOCTOR: { read: false, create: false, transition: false },
+  NURSE: { read: false, create: false, transition: false },
+  RECEPTIONIST: { read: false, create: false, transition: false },
+};
+
 const ACTIONS_PER_RESOURCE = {
   patient: ['read', 'create', 'update', 'formView'],
   appointment: ['read', 'create'],
   admission: ['read', 'create', 'transition'],
   emergencyVisit: ['read', 'create', 'transition'],
+  invoice: ['read', 'create', 'transition'],
 };
 
-describe('authorization permission map (plan1.md Task 9 + plan2.md Tasks 2-3)', () => {
+describe('authorization permission map (plan1.md Task 9 + plan2.md Tasks 2-4)', () => {
   it('grants patient actions exactly per the documented matrix', () => {
     for (const [role, expected] of Object.entries(PATIENT_MATRIX)) {
       for (const action of ACTIONS_PER_RESOURCE.patient) {
@@ -115,12 +133,29 @@ describe('authorization permission map (plan1.md Task 9 + plan2.md Tasks 2-3)', 
     }
   });
 
-  it('denies every implemented action to a role outside the clinical-front-desk set', () => {
+  it('grants invoice actions exactly per the documented ADMIN/BILLING matrix', () => {
+    for (const [role, expected] of Object.entries(INVOICE_MATRIX)) {
+      for (const action of ACTIONS_PER_RESOURCE.invoice) {
+        expect(
+          can(sessionFor(role), action, 'invoice'),
+          `${role} can ${action} invoice`,
+        ).toBe(expected[action]);
+      }
+    }
+  });
+
+  it('denies every non-invoice action to BILLING, which the server isolates to invoices', () => {
     const session = sessionFor('BILLING');
     for (const [resource, actions] of Object.entries(ACTIONS_PER_RESOURCE)) {
+      if (resource === 'invoice') continue;
       for (const action of actions) {
         expect(can(session, action, resource), `BILLING can ${action} ${resource}`).toBe(false);
       }
+    }
+    // plan2.md Task 4: BILLING is the second invoice role server-side, so
+    // the UI hint grants the full invoice family to it.
+    for (const action of ACTIONS_PER_RESOURCE.invoice) {
+      expect(can(session, action, 'invoice'), `BILLING can ${action} invoice`).toBe(true);
     }
   });
 
@@ -156,5 +191,6 @@ describe('authorization permission map (plan1.md Task 9 + plan2.md Tasks 2-3)', 
     expect(PERMISSIONS.appointment.read).toEqual(['ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST']);
     expect(PERMISSIONS.admission.read).toEqual(['ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST']);
     expect(PERMISSIONS.emergencyVisit.read).toEqual(['ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST']);
+    expect(PERMISSIONS.invoice.read).toEqual(['ADMIN', 'BILLING']);
   });
 });

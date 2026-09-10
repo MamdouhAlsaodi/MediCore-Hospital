@@ -120,8 +120,7 @@ public class EmergencyVisitService {
         entityManager.clear();
         EmergencyVisit updated = visits.findById(id)
                 .orElseThrow(() -> new NotFoundException("EmergencyVisit not found: " + id));
-        audit.record("UPDATE", "EmergencyVisit", id.toString(),
-                STATUS_CLOSED.equals(target) ? "closed" : "in treatment");
+        audit.record("UPDATE", "EmergencyVisit", id.toString(), "status: " + target);
         return EmergencyVisitDtos.EmergencyVisitResponse.from(updated);
     }
 

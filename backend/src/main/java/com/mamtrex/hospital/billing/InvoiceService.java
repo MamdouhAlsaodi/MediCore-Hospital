@@ -116,7 +116,7 @@ public class InvoiceService {
         }
         invoice.changeStatus(target);
         Invoice saved = invoices.save(invoice);
-        audit.record("UPDATE", "Invoice", id.toString(), transitionDetails(target));
+        audit.record("UPDATE", "Invoice", id.toString(), "status: " + target);
         return InvoiceDtos.InvoiceResponse.from(saved);
     }
 
@@ -128,13 +128,4 @@ public class InvoiceService {
         audit.record("DELETE", "Invoice", id.toString(), "deleted");
     }
 
-    /** Stable audit label per lifecycle target (CREATE stays "created"). */
-    private static String transitionDetails(String target) {
-        return switch (target) {
-            case STATUS_ISSUED -> "issued";
-            case STATUS_PAID -> "paid";
-            case STATUS_VOID -> "voided";
-            default -> "transitioned to " + target;
-        };
-    }
 }

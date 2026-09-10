@@ -46,15 +46,20 @@ cd backend
 MEDICORE_DEMO_SEED=true HOSPITAL_ADMIN_PASSWORD="$HOSPITAL_ADMIN_PASSWORD" HOSPITAL_JWT_SECRET="$HOSPITAL_JWT_SECRET" mvn spring-boot:run
 ```
 
-What gets created (all values are obviously synthetic; no real personal or clinical data):
+What gets created (all values are obviously synthetic; no real personal, clinical, or financial data; Training/Portfolio use only):
 
 - 3 patients: `Demo Patient Alpha` (`DEMO-0001`), `Demo Patient Bravo` (`DEMO-0002`), `Demo Patient Charlie` (`DEMO-0003`)
 - 2 professionals: `Demo Physician Alpha` (`DEMO-STAFF-001`, internal medicine), `Demo Nurse Bravo` (`DEMO-STAFF-002`, nursing)
 - 2 appointments linking them: Alpha ↔ Physician (consultation, scheduled) and Bravo ↔ Nurse (follow-up, confirmed)
+- 2 admissions: Alpha `ADMITTED` (open) and Bravo `DISCHARGED`, with generic demo workflow labels as reasons
+- 3 emergency visits: Charlie `WAITING`, Alpha `IN_TREATMENT`, Bravo `CLOSED`, with generic demo complaint labels and the meaningless demo triage labels `2`–`4` (triage here is never a clinical assessment)
+- 4 invoices (`DEMO-INV-0001`–`DEMO-INV-0004`), exactly one in each state `DRAFT`, `ISSUED`, `PAID`, `VOID` — amounts and currency labels are display-only financial simulation data with no payment semantics
 
-Seeding is idempotent and safe to restart: every insert is lookup-before-create (patient MRN, professional employee code, appointment key), so restarting never duplicates rows, and it never deletes or modifies existing records. Every newly created record is recorded as a CREATE audit event attributed to the `system` actor (no user is authenticated at startup), so the ADMIN Audit screen shows the full seeded journey; reused records add no events, which keeps restarts idempotent in the audit trail too. No accounts or credentials are created.
+Expected review evidence after startup: the Dashboard shows `patients=3`, `appointments=2`, `admissions=2`, `emergencyVisits=3`, `invoices=4`, `openAdmissions=1` (the DISCHARGED row is excluded), `activeEmergencyVisits=2` (WAITING + IN_TREATMENT; CLOSED is excluded), and exactly `1` in each `invoicesDraft`/`invoicesIssued`/`invoicesPaid`/`invoicesVoid` bucket.
 
-Verify by logging in as an ADMIN and checking Patients (search `DEMO-`), Appointments, and the Audit screen (CREATE events with actor `system`, one per newly created seeded record). Never enable demo seeding against a shared or production data store.
+Seeding is idempotent and safe to restart: every insert is lookup-before-create (patient MRN, professional employee code, appointment key, admission patient+time+reason key, emergency patient+arrival+complaint key, unique invoice number), so restarting never duplicates rows, and it never deletes or modifies existing records. Every newly created record is recorded as a CREATE audit event attributed to the `system` actor (no user is authenticated at startup), so the ADMIN Audit screen shows the full seeded journey; reused records add no events, which keeps restarts idempotent in the audit trail too. No accounts or credentials are created.
+
+Verify by logging in as an ADMIN and checking Patients (search `DEMO-`), Appointments, Admissions, Emergency visits, Invoices, the Dashboard totals above, and the Audit screen (CREATE events with actor `system`, one per newly created seeded record — sixteen in total for the full cohort: 3 patients + 2 professionals + 2 appointments + 2 admissions + 3 emergency visits + 4 invoices). Never enable demo seeding against a shared or production data store.
 
 ## Review accounts (opt-in, disabled by default)
 

@@ -1,12 +1,19 @@
 package com.mamtrex.hospital.bootstrap;
 
+import com.mamtrex.hospital.admission.Admission;
+import com.mamtrex.hospital.admission.AdmissionRepository;
 import com.mamtrex.hospital.appointment.Appointment;
 import com.mamtrex.hospital.appointment.AppointmentRepository;
 import com.mamtrex.hospital.audit.AuditEvent;
 import com.mamtrex.hospital.audit.AuditEventRepository;
 import com.mamtrex.hospital.audit.AuditService;
+import com.mamtrex.hospital.billing.Invoice;
+import com.mamtrex.hospital.billing.InvoiceRepository;
+import com.mamtrex.hospital.emergency.EmergencyVisit;
+import com.mamtrex.hospital.emergency.EmergencyVisitRepository;
 import com.mamtrex.hospital.patient.Patient;
 import com.mamtrex.hospital.patient.PatientRepository;
+import com.mamtrex.hospital.reporting.DashboardService;
 import com.mamtrex.hospital.staff.StaffMember;
 import com.mamtrex.hospital.staff.StaffMemberRepository;
 import org.junit.jupiter.api.Test;
@@ -15,6 +22,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -24,18 +32,19 @@ import java.util.stream.Collectors;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Demo seeding contract tests (docs/plan1.md Task 11).
+ * Demo seeding contract tests (docs/plan1.md Task 11, docs/plan2.md Task 8).
  *
  * Pins the opt-in bootstrap behavior: the initializer does not exist by
  * default (no flag, no writes), the dedicated {@code medicore.demo.seed}
  * flag produces a coherent, obviously synthetic cohort, every seeded
- * appointment reference resolves to a seeded record, repeated
- * initialization is idempotent without duplicate inflation or destructive
- * resets, every newly created seeded record produces exactly one CREATE audit
- * event attributed to the system actor (reused records add none), and the
- * disabled default touches no store and records no event. Runs against an
- * isolated in-memory H2 database (never the
- * production file store) with disposable synthetic test-only secrets; no
+ * reference resolves to a seeded record, repeated initialization is
+ * idempotent without duplicate inflation or destructive resets, every newly
+ * created seeded record produces exactly one CREATE audit event attributed
+ * to the system actor (reused records add none), the dashboard aggregates
+ * reflect the exact fixture composition through the real
+ * {@link DashboardService}, and the disabled default touches no store and
+ * records no event. Runs against an isolated in-memory H2 database (never
+ * the production file store) with disposable synthetic test-only secrets; no
  * real personal or clinical data and no hardcoded credentials are involved.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
@@ -57,6 +66,15 @@ class DemoDataInitializerTest {
     private static final Set<String> DEMO_MRNS = Set.of("DEMO-0001", "DEMO-0002", "DEMO-0003");
     private static final Set<String> DEMO_STAFF_CODES = Set.of("DEMO-STAFF-001", "DEMO-STAFF-002");
 
+    /** Task 8 contract: exactly one invoice per lifecycle status. */
+    private static final Set<String> INVOICE_STATUSES = Set.of("DRAFT", "ISSUED", "PAID", "VOID");
+
+    /** Meaningless demo triage labels (docs/plan2.md Task 8: never clinical advice). */
+    private static final Set<String> DEMO_TRIAGE_LABELS = Set.of("1", "2", "3", "4", "5");
+
+    /** Total CREATE events of the full fixture: 3 patients + 2 professionals + 2 appointments + 2 admissions + 3 emergency visits + 4 invoices. */
+    private static final long FULL_AUDIT_LEDGER_SIZE = 16;
+
     @Autowired
     DemoDataInitializer initializer;
 
@@ -70,7 +88,19 @@ class DemoDataInitializerTest {
     AppointmentRepository appointments;
 
     @Autowired
+    AdmissionRepository admissions;
+
+    @Autowired
+    EmergencyVisitRepository emergencyVisits;
+
+    @Autowired
+    InvoiceRepository invoices;
+
+    @Autowired
     AuditEventRepository auditEvents;
+
+    @Autowired
+    DashboardService dashboardService;
 
     /**
      * The flag creates exactly the named synthetic cohort at startup; this
@@ -127,24 +157,122 @@ class DemoDataInitializerTest {
             assertTrue(List.of("scheduled", "confirmed", "completed", "cancelled")
                             .contains(appointment.getStatus()),
                     "seeded appointment status must follow the lowercase contract");
-            assertDoesNotThrow(() -> java.time.LocalDateTime.parse(appointment.getScheduledAt()),
+            assertDoesNotThrow(() -> LocalDateTime.parse(appointment.getScheduledAt()),
                     "seeded scheduledAt must stay a parseable typed ISO value");
         }
     }
 
     /**
+     * Task 8 composition: the seeded care-operation fixtures follow the
+     * approved exact status distribution — one open ADMITTED admission, one
+     * DISCHARGED admission for the dashboard-exclusion proof, one WAITING and
+     * one IN_TREATMENT emergency visit (proving the active sum) plus one
+     * CLOSED visit, and exactly one invoice in each lifecycle status. No
+     * volume beyond the named rows.
+     */
+    @Test
+    void careOperationFixturesFollowTheApprovedComposition() {
+        List<Admission> seededAdmissions = admissions.findAll().stream().toList();
+        assertEquals(2, seededAdmissions.size(), "the demo cohort must contain exactly two synthetic admissions");
+        Map<String, List<Admission>> admissionsByStatus = seededAdmissions.stream()
+                .collect(Collectors.groupingBy(Admission::getStatus));
+        assertEquals(Set.of("ADMITTED", "DISCHARGED"), admissionsByStatus.keySet(),
+                "admission fixtures must cover exactly the open and discharged lifecycle states");
+        assertEquals(1, admissionsByStatus.get("ADMITTED").size(), "exactly one admission must be ADMITTED");
+        assertEquals(1, admissionsByStatus.get("DISCHARGED").size(), "exactly one admission must be DISCHARGED");
+        Admission openAdmission = admissionsByStatus.get("ADMITTED").get(0);
+        assertNull(openAdmission.getDischargedAt(), "the ADMITTED admission must be open (dischargedAt null)");
+        assertNotNull(admissionsByStatus.get("DISCHARGED").get(0).getDischargedAt(),
+                "the DISCHARGED admission must carry a discharge timestamp");
+        assertTrue(seededAdmissions.stream().allMatch(a -> a.getReason().startsWith("Demo ")),
+                "admission reasons must be obviously synthetic demo workflow labels");
+
+        List<EmergencyVisit> seededVisits = emergencyVisits.findAll().stream().toList();
+        assertEquals(3, seededVisits.size(), "the demo cohort must contain exactly three synthetic emergency visits");
+        Map<String, List<EmergencyVisit>> visitsByStatus = seededVisits.stream()
+                .collect(Collectors.groupingBy(EmergencyVisit::getStatus));
+        assertEquals(Set.of("WAITING", "IN_TREATMENT", "CLOSED"), visitsByStatus.keySet(),
+                "emergency fixtures must cover both active states and the closed terminal state");
+        assertEquals(1, visitsByStatus.get("WAITING").size(), "exactly one visit must be WAITING");
+        assertEquals(1, visitsByStatus.get("IN_TREATMENT").size(), "exactly one visit must be IN_TREATMENT");
+        assertEquals(1, visitsByStatus.get("CLOSED").size(), "exactly one visit must be CLOSED");
+        assertTrue(seededVisits.stream().allMatch(v -> DEMO_TRIAGE_LABELS.contains(v.getTriageLevel())),
+                "triage must stay the meaningless 1-5 demo label");
+        assertTrue(seededVisits.stream().allMatch(v -> v.getChiefComplaint().startsWith("Demo ")),
+                "emergency complaints must be obviously synthetic demo workflow labels");
+
+        List<Invoice> seededInvoices = invoices.findAll().stream().toList();
+        assertEquals(4, seededInvoices.size(), "the demo cohort must contain exactly four synthetic invoices");
+        Map<String, List<Invoice>> invoicesByStatus = seededInvoices.stream()
+                .collect(Collectors.groupingBy(Invoice::getStatus));
+        assertEquals(INVOICE_STATUSES, invoicesByStatus.keySet(),
+                "invoice fixtures must cover exactly the DRAFT, ISSUED, PAID, and VOID states");
+        for (String status : INVOICE_STATUSES) {
+            assertEquals(1, invoicesByStatus.get(status).size(),
+                    "exactly one invoice must exist in status " + status);
+        }
+        assertTrue(seededInvoices.stream().allMatch(i -> i.getInvoiceNumber().startsWith("DEMO-INV-")),
+                "invoice numbers must carry the obvious DEMO-INV- prefix");
+        assertEquals(4, seededInvoices.stream().map(Invoice::getInvoiceNumber).distinct().count(),
+                "invoice numbers must stay unique stable keys");
+        assertTrue(seededInvoices.stream().allMatch(i -> i.getAmount().matches("\\d+\\.\\d{2}")),
+                "invoice amounts must stay display-only simulation strings");
+        assertTrue(seededInvoices.stream().allMatch(i -> i.getCurrency().equals("USD")),
+                "invoice currencies must stay display-only demo labels");
+    }
+
+    /**
+     * Task 8 referential integrity: every care-operation row references an
+     * existing seeded DEMO patient by canonical UUID string and carries
+     * parseable typed ISO timestamps.
+     */
+    @Test
+    void careOperationReferencesResolveToExistingDemoPatients() {
+        List<Long> countedCareOperationRows = List.of(
+                admissions.count(), emergencyVisits.count(), invoices.count());
+        assertEquals(List.of(2L, 3L, 4L), countedCareOperationRows,
+                "the enabled flag must have seeded the care-operation fixtures");
+
+        for (Admission admission : admissions.findAll()) {
+            Patient patient = resolveDemoPatient(admission.getPatientId(), "admission");
+            assertEquals(patient.getId().toString(), admission.getPatientId(),
+                    "the stored admission reference must be the canonical UUID string of the persisted patient");
+            assertDoesNotThrow(() -> LocalDateTime.parse(admission.getAdmittedAt()),
+                    "seeded admittedAt must stay a parseable typed ISO value");
+            if (admission.getDischargedAt() != null) {
+                assertDoesNotThrow(() -> LocalDateTime.parse(admission.getDischargedAt()),
+                        "seeded dischargedAt must stay a parseable typed ISO value");
+            }
+        }
+        for (EmergencyVisit visit : emergencyVisits.findAll()) {
+            Patient patient = resolveDemoPatient(visit.getPatientId(), "emergency visit");
+            assertEquals(patient.getId().toString(), visit.getPatientId(),
+                    "the stored emergency reference must be the canonical UUID string of the persisted patient");
+            assertDoesNotThrow(() -> LocalDateTime.parse(visit.getArrivalAt()),
+                    "seeded arrivalAt must stay a parseable typed ISO value");
+        }
+        for (Invoice invoice : invoices.findAll()) {
+            Patient patient = resolveDemoPatient(invoice.getPatientId(), "invoice");
+            assertEquals(patient.getId().toString(), invoice.getPatientId(),
+                    "the stored invoice reference must be the canonical UUID string of the persisted patient");
+        }
+    }
+
+    /**
      * Audit evidence: the startup seeding records exactly one CREATE event per
-     * newly created record (3 patients + 2 professionals + 2 appointments)
-     * under the same resource-type conventions the services use. No user is
-     * authenticated during startup, so {@link AuditService} attributes every
-     * event to the system actor — this is what makes the seeded journey
-     * visible on the ADMIN audit screen.
+     * newly created record (3 patients + 2 professionals + 2 appointments
+     * + 2 admissions + 3 emergency visits + 4 invoices) under the same
+     * resource-type conventions the services use. No user is authenticated
+     * during startup, so {@link AuditService} attributes every event to the
+     * system actor — this is what makes the seeded journey visible on the
+     * ADMIN audit screen.
      */
     @Test
     void seededCreatesProduceSystemActorAuditEvents() {
         List<AuditEvent> events = auditEvents.findAll().stream().toList();
-        assertEquals(7, events.size(),
-                "seeding must record exactly one CREATE audit event per newly created record (3 patients + 2 professionals + 2 appointments)");
+        assertEquals(FULL_AUDIT_LEDGER_SIZE, events.size(),
+                "seeding must record exactly one CREATE audit event per newly created record "
+                        + "(3 patients + 2 professionals + 2 appointments + 2 admissions + 3 emergency visits + 4 invoices)");
         for (AuditEvent event : events) {
             assertEquals("CREATE", event.getAction(), "seeded creations must be recorded as CREATE events");
             assertEquals("system", event.getActor(),
@@ -152,13 +280,22 @@ class DemoDataInitializerTest {
         }
         Map<String, List<AuditEvent>> byType = events.stream()
                 .collect(Collectors.groupingBy(AuditEvent::getResourceType));
-        assertEquals(Set.of("Patient", "StaffMember", "Appointment"), byType.keySet(),
-                "event resource types must follow the conventions the services use");
+        assertEquals(Set.of("Patient", "StaffMember", "Appointment", "Admission", "EmergencyVisit", "Invoice"),
+                byType.keySet(), "event resource types must follow the conventions the services use");
         assertEquals(3, byType.get("Patient").size(), "each newly created seeded patient must produce one CREATE event");
         assertEquals(2, byType.get("StaffMember").size(), "each newly created seeded professional must produce one CREATE event");
         assertEquals(2, byType.get("Appointment").size(), "each newly created seeded appointment must produce one CREATE event");
+        assertEquals(2, byType.get("Admission").size(), "each newly created seeded admission must produce one CREATE event");
+        assertEquals(3, byType.get("EmergencyVisit").size(), "each newly created seeded emergency visit must produce one CREATE event");
+        assertEquals(4, byType.get("Invoice").size(), "each newly created seeded invoice must produce one CREATE event");
         assertEquals(DEMO_MRNS, byType.get("Patient").stream().map(AuditEvent::getDetails).collect(Collectors.toSet()),
                 "patient events must carry the MRN as details, matching the PatientService convention");
+        assertTrue(byType.get("StaffMember").stream().allMatch(e -> "created".equals(e.getDetails()))
+                        && byType.get("Appointment").stream().allMatch(e -> "created".equals(e.getDetails()))
+                        && byType.get("Admission").stream().allMatch(e -> "created".equals(e.getDetails()))
+                        && byType.get("EmergencyVisit").stream().allMatch(e -> "created".equals(e.getDetails()))
+                        && byType.get("Invoice").stream().allMatch(e -> "created".equals(e.getDetails())),
+                "non-patient events must carry the non-sensitive 'created' detail");
         assertEquals(demoPatients().stream().map(p -> p.getId().toString()).collect(Collectors.toSet()),
                 byType.get("Patient").stream().map(AuditEvent::getResourceId).collect(Collectors.toSet()),
                 "each patient event must reference the canonical id of the persisted record");
@@ -168,6 +305,43 @@ class DemoDataInitializerTest {
         assertEquals(appointments.findAll().stream().map(a -> a.getId().toString()).collect(Collectors.toSet()),
                 byType.get("Appointment").stream().map(AuditEvent::getResourceId).collect(Collectors.toSet()),
                 "each appointment event must reference the canonical id of the persisted record");
+        assertEquals(admissions.findAll().stream().map(a -> a.getId().toString()).collect(Collectors.toSet()),
+                byType.get("Admission").stream().map(AuditEvent::getResourceId).collect(Collectors.toSet()),
+                "each admission event must reference the canonical id of the persisted record");
+        assertEquals(emergencyVisits.findAll().stream().map(v -> v.getId().toString()).collect(Collectors.toSet()),
+                byType.get("EmergencyVisit").stream().map(AuditEvent::getResourceId).collect(Collectors.toSet()),
+                "each emergency visit event must reference the canonical id of the persisted record");
+        assertEquals(invoices.findAll().stream().map(i -> i.getId().toString()).collect(Collectors.toSet()),
+                byType.get("Invoice").stream().map(AuditEvent::getResourceId).collect(Collectors.toSet()),
+                "each invoice event must reference the canonical id of the persisted record");
+    }
+
+    /**
+     * Task 8 dashboard evidence: the real {@link DashboardService} aggregates
+     * must be non-zero and exact for the fixture composition — totals, the
+     * open-admission bucket excluding the DISCHARGED row, the active-emergency
+     * sum over WAITING + IN_TREATMENT, and the one-per-status invoice buckets.
+     */
+    @Test
+    void dashboardAggregatesReflectExactFixtureComposition() {
+        Map<String, Long> summary = dashboardService.summary();
+        assertEquals(Set.of("patients", "appointments", "admissions", "emergencyVisits", "invoices",
+                        "openAdmissions", "activeEmergencyVisits",
+                        "invoicesDraft", "invoicesIssued", "invoicesPaid", "invoicesVoid"),
+                summary.keySet(), "the dashboard must expose exactly the contract keys");
+        assertEquals(3L, summary.get("patients"), "patients total must count the three demo patients");
+        assertEquals(2L, summary.get("appointments"), "appointments total must count the two demo appointments");
+        assertEquals(2L, summary.get("admissions"), "admissions total must count both admission fixtures");
+        assertEquals(3L, summary.get("emergencyVisits"), "emergencyVisits total must count all three visit fixtures");
+        assertEquals(4L, summary.get("invoices"), "invoices total must count all four invoice fixtures");
+        assertEquals(1L, summary.get("openAdmissions"),
+                "openAdmissions must count only the ADMITTED fixture and exclude the DISCHARGED one");
+        assertEquals(2L, summary.get("activeEmergencyVisits"),
+                "activeEmergencyVisits must sum WAITING and IN_TREATMENT and exclude CLOSED");
+        assertEquals(1L, summary.get("invoicesDraft"), "the DRAFT invoice bucket must hold exactly the one DRAFT fixture");
+        assertEquals(1L, summary.get("invoicesIssued"), "the ISSUED invoice bucket must hold exactly the one ISSUED fixture");
+        assertEquals(1L, summary.get("invoicesPaid"), "the PAID invoice bucket must hold exactly the one PAID fixture");
+        assertEquals(1L, summary.get("invoicesVoid"), "the VOID invoice bucket must hold exactly the one VOID fixture");
     }
 
     /** Idempotency: a second run changes no counts, creates no duplicates, and adds no audit events. */
@@ -176,13 +350,19 @@ class DemoDataInitializerTest {
         long patientsBefore = patients.count();
         long staffBefore = staff.count();
         long appointmentsBefore = appointments.count();
+        long admissionsBefore = admissions.count();
+        long emergencyVisitsBefore = emergencyVisits.count();
+        long invoicesBefore = invoices.count();
         assertEquals(3, demoPatients().size());
         assertEquals(2, demoStaff().size());
         assertEquals(2, appointmentsBefore);
+        assertEquals(2, admissionsBefore);
+        assertEquals(3, emergencyVisitsBefore);
+        assertEquals(4, invoicesBefore);
 
         long auditEventsBefore = auditEvents.count();
-        assertEquals(7, auditEventsBefore,
-                "the startup run must have recorded exactly the seven CREATE events");
+        assertEquals(FULL_AUDIT_LEDGER_SIZE, auditEventsBefore,
+                "the startup run must have recorded exactly the sixteen CREATE events");
         initializer.seedDemoCohort();
         initializer.seedDemoCohort();
 
@@ -194,36 +374,62 @@ class DemoDataInitializerTest {
                 "a repeated seed must not create additional professionals");
         assertEquals(appointmentsBefore, appointments.count(),
                 "a repeated seed must not create additional appointments");
+        assertEquals(admissionsBefore, admissions.count(),
+                "a repeated seed must not create additional admissions");
+        assertEquals(emergencyVisitsBefore, emergencyVisits.count(),
+                "a repeated seed must not create additional emergency visits");
+        assertEquals(invoicesBefore, invoices.count(),
+                "a repeated seed must not create additional invoices");
         assertEquals(DEMO_MRNS, demoPatients().stream()
                 .map(Patient::getMedicalRecordNumber)
                 .collect(Collectors.toSet()), "the stable demo keys must stay unchanged after a repeated seed");
         assertEquals(DEMO_STAFF_CODES, demoStaff().stream()
                 .map(StaffMember::getEmployeeCode)
                 .collect(Collectors.toSet()), "the stable demo keys must stay unchanged after a repeated seed");
+        assertEquals(Set.of("DEMO-INV-0001", "DEMO-INV-0002", "DEMO-INV-0003", "DEMO-INV-0004"),
+                invoices.findAll().stream().map(Invoice::getInvoiceNumber).collect(Collectors.toSet()),
+                "the stable invoice numbers must stay unchanged after a repeated seed");
     }
 
     /**
      * Opt-in gate: without {@code medicore.demo.seed=true} the initializer
-     * bean never exists and no store is touched — zero records are created.
+     * bean never exists and no store is touched — zero records are created,
+     * zero care-operation rows, zero audit events.
      */
     @Test
     void initializerIsDisabledByDefaultAndNeverTouchesStores() {
         PatientRepository patientRepository = Mockito.mock(PatientRepository.class);
         StaffMemberRepository staffMemberRepository = Mockito.mock(StaffMemberRepository.class);
         AppointmentRepository appointmentRepository = Mockito.mock(AppointmentRepository.class);
+        AdmissionRepository admissionRepository = Mockito.mock(AdmissionRepository.class);
+        EmergencyVisitRepository emergencyVisitRepository = Mockito.mock(EmergencyVisitRepository.class);
+        InvoiceRepository invoiceRepository = Mockito.mock(InvoiceRepository.class);
         AuditService auditService = Mockito.mock(AuditService.class);
         new ApplicationContextRunner()
                 .withUserConfiguration(DemoDataInitializer.class)
                 .withBean("patientRepository", PatientRepository.class, () -> patientRepository)
                 .withBean("staffMemberRepository", StaffMemberRepository.class, () -> staffMemberRepository)
                 .withBean("appointmentRepository", AppointmentRepository.class, () -> appointmentRepository)
+                .withBean("admissionRepository", AdmissionRepository.class, () -> admissionRepository)
+                .withBean("emergencyVisitRepository", EmergencyVisitRepository.class, () -> emergencyVisitRepository)
+                .withBean("invoiceRepository", InvoiceRepository.class, () -> invoiceRepository)
                 .withBean("auditService", AuditService.class, () -> auditService)
                 .run(context -> {
                     assertTrue(context.getBeansOfType(DemoDataInitializer.class).isEmpty(),
                             "the initializer bean must not exist when the demo flag is absent (default off)");
                     Mockito.verifyNoInteractions(patientRepository, staffMemberRepository, appointmentRepository,
-                            auditService);
+                            admissionRepository, emergencyVisitRepository, invoiceRepository, auditService);
                 });
+    }
+
+    private Patient resolveDemoPatient(String patientIdValue, String rowKind) {
+        UUID patientId = UUID.fromString(patientIdValue);
+        Patient patient = patients.findById(patientId)
+                .orElseThrow(() -> new AssertionError(
+                        rowKind + " patientId must resolve to a persisted patient: " + patientId));
+        assertTrue(patient.getMedicalRecordNumber().startsWith("DEMO-"),
+                "the resolved " + rowKind + " patient must belong to the synthetic demo cohort");
+        return patient;
     }
 
     private List<Patient> demoPatients() {

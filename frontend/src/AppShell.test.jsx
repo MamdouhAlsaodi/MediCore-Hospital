@@ -42,6 +42,28 @@ const APPOINTMENTS_PAGE = [
   },
 ];
 
+// Admissions list over GET /api/admissions (docs/plan2.md Task 2 DTO
+// contract): id/patientId/admittedAt/dischargedAt/reason/status, no
+// persistence metadata.
+const ADMISSIONS_PAGE = [
+  {
+    id: '88888888-8888-4888-8888-888888888801',
+    patientId: '55555555-5555-4555-8555-555555555555',
+    admittedAt: '2031-01-01T08:15:30',
+    dischargedAt: null,
+    reason: 'Synthetic observation stay',
+    status: 'ADMITTED',
+  },
+  {
+    id: '88888888-8888-4888-8888-888888888802',
+    patientId: 'raw unresolved reference',
+    admittedAt: '2031-02-01T10:00',
+    dischargedAt: '2031-02-05T09:30',
+    reason: 'Synthetic completed stay',
+    status: 'DISCHARGED',
+  },
+];
+
 // AuditEvent contract over GET /api/audit (ADMIN-only): evidence fields plus
 // internal metadata the screen must never render.
 const AUDIT_EVENTS = [
@@ -71,6 +93,7 @@ function stubBackendApi() {
     if (path === '/api/dashboard') return Promise.resolve(jsonResponse(DASHBOARD_STATS));
     if (path === '/api/patients') return Promise.resolve(jsonResponse(PATIENTS_PAGE));
     if (path === '/api/appointments') return Promise.resolve(jsonResponse(APPOINTMENTS_PAGE));
+    if (path === '/api/admissions') return Promise.resolve(jsonResponse(ADMISSIONS_PAGE));
     if (path === '/api/staff') return Promise.resolve(jsonResponse(STAFF_DIRECTORY));
     if (path === '/api/audit') return Promise.resolve(jsonResponse(AUDIT_EVENTS));
     return Promise.resolve(jsonResponse({ error: 'not found' }, 404));
@@ -108,8 +131,10 @@ describe('AppShell', () => {
   it('lists only the destinations the session roles permit and never offers unimplemented modules', async () => {
     renderShell(['DOCTOR']);
 
-    expect(navigationItems()).toEqual(['Dashboard', 'Patients', 'Appointments']);
-    for (const unimplemented of ['Billing', 'Laboratory', 'Pharmacy']) {
+    // plan2.md Task 2: Admissions joins the four clinical-administrative
+    // destinations (server family rule on /api/admissions/**).
+    expect(navigationItems()).toEqual(['Dashboard', 'Patients', 'Appointments', 'Admissions']);
+    for (const unimplemented of ['Billing', 'Laboratory', 'Pharmacy', 'Emergency']) {
       expect(screen.queryByRole('button', { name: unimplemented })).not.toBeInTheDocument();
     }
     // The audit evidence screen is implemented but ADMIN-only (plan1.md
@@ -122,8 +147,9 @@ describe('AppShell', () => {
     renderShell(['BILLING']);
 
     expect(navigationItems()).toEqual(['Dashboard']);
-    expect(screen.queryByRole('button', { name: 'Patients' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Appointments' })).not.toBeInTheDocument();
+    for (const denied of ['Patients', 'Appointments', 'Admissions', 'Audit']) {
+      expect(screen.queryByRole('button', { name: denied })).not.toBeInTheDocument();
+    }
     await waitForDashboardStats();
   });
 
@@ -185,6 +211,35 @@ describe('AppShell', () => {
     expect(screen.getByRole('heading', { name: 'Operations Dashboard' })).toBeInTheDocument();
   });
 
+  it('opens the admissions screen for a clinical-administrative role and loads its list once', async () => {
+    const user = userEvent.setup();
+    renderShell(['RECEPTIONIST']);
+    await waitForDashboardStats();
+
+    expect(navigationItems()).toEqual(['Dashboard', 'Patients', 'Appointments', 'Admissions']);
+    await user.click(screen.getByRole('button', { name: 'Admissions' }));
+
+    expect(screen.getByRole('button', { name: 'Admissions' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('heading', { name: 'Admissions' })).toBeInTheDocument();
+    const admissionsScreen = screen.getByRole('region', { name: 'Admissions screen' });
+    const table = await within(admissionsScreen).findByRole('table', { name: 'Registered admissions' });
+    expect(within(table).getAllByRole('row')).toHaveLength(3); // header + two records
+    expect(within(admissionsScreen).getAllByText('ADMITTED').length).toBeGreaterThan(0);
+    expect(within(admissionsScreen).getAllByText('DISCHARGED').length).toBeGreaterThan(0);
+    // Unresolved references render honestly; raw values never surface.
+    expect(admissionsScreen).toHaveTextContent('Unknown record');
+    expect(admissionsScreen).not.toHaveTextContent('raw unresolved reference');
+    // All four clinical-administrative roles may register and discharge.
+    expect(
+      within(admissionsScreen).getByRole('button', { name: 'Register admission' })
+    ).toBeInTheDocument();
+
+    const admissionCalls = fetchMock.mock.calls.filter(([path]) => path === '/api/admissions');
+    expect(admissionCalls).toHaveLength(1);
+    expect(admissionCalls[0][1].method).toBe('GET');
+    expect(admissionCalls[0][1].headers.Authorization).toBe('Bearer synthetic-token');
+  });
+
   it('activates a destination from the keyboard', async () => {
     const user = userEvent.setup();
     renderShell(['DOCTOR']);
@@ -201,7 +256,7 @@ describe('AppShell', () => {
     const user = userEvent.setup();
     renderShell(['ADMIN']);
 
-    expect(navigationItems()).toEqual(['Dashboard', 'Patients', 'Appointments', 'Audit']);
+    expect(navigationItems()).toEqual(['Dashboard', 'Patients', 'Appointments', 'Admissions', 'Audit']);
     await waitForDashboardStats();
 
     await user.click(screen.getByRole('button', { name: 'Audit' }));

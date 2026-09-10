@@ -21,6 +21,14 @@ public class GlobalExceptionHandler {
  @ExceptionHandler(NotFoundException.class) ResponseEntity<ApiError> notFound(NotFoundException ex,HttpServletRequest r){return ResponseEntity.status(404).body(new ApiError(Instant.now(),404,"Not Found",ex.getMessage(),r.getRequestURI()));}
 
  /**
+  * Conflict mapping for illegal lifecycle transitions (docs/plan2.md Task 2):
+  * services throw InvalidStateTransitionException with a controlled
+  * client-safe message and no cause, so the message passes through while
+  * entity and persistence internals never leak.
+  */
+ @ExceptionHandler(InvalidStateTransitionException.class) ResponseEntity<ApiError> invalidTransition(InvalidStateTransitionException ex,HttpServletRequest r){return ResponseEntity.status(409).body(new ApiError(Instant.now(),409,"Conflict",ex.getMessage(),r.getRequestURI()));}
+
+ /**
   * Conflict mapping for duplicate natural keys (duplicate-MRN gap fix): the
   * PatientService pre-check throws DuplicateKeyException with a controlled
   * client-safe message and no cause, while a race-lost DB unique-constraint

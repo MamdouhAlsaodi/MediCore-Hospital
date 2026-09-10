@@ -1,3 +1,53 @@
 package com.mamtrex.hospital.admission;
-import com.mamtrex.hospital.audit.AuditService; import com.mamtrex.hospital.shared.NotFoundException; import jakarta.validation.Valid; import org.springframework.web.bind.annotation.*; import java.util.*;
-@RestController @RequestMapping("/api/admissions") public class AdmissionController { private final AdmissionRepository repo; private final AuditService audit; public AdmissionController(AdmissionRepository r,AuditService a){repo=r;audit=a;} public record Request(@jakarta.validation.constraints.NotBlank String patientId, @jakarta.validation.constraints.NotBlank String admittedAt, @jakarta.validation.constraints.NotBlank String dischargedAt, @jakarta.validation.constraints.NotBlank String reason, @jakarta.validation.constraints.NotBlank String status){} @PostMapping public Admission create(@Valid @RequestBody Request r){var e=repo.save(new Admission(r.patientId(), r.admittedAt(), r.dischargedAt(), r.reason(), r.status()));audit.record("CREATE","Admission",e.getId().toString(),"created");return e;} @GetMapping public List<Admission> list(){return repo.findAll();} @GetMapping("/{id}") public Admission get(@PathVariable UUID id){return repo.findById(id).orElseThrow(()->new NotFoundException("Admission not found: "+id));} @DeleteMapping("/{id}") public void delete(@PathVariable UUID id){if(!repo.existsById(id))throw new NotFoundException("Admission not found: "+id);repo.deleteById(id);audit.record("DELETE","Admission",id.toString(),"deleted");} }
+
+import jakarta.validation.Valid;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+import java.util.UUID;
+
+/**
+ * Narrow HTTP/DTO mapper over {@link AdmissionService} (docs/plan2.md
+ * Task 2): parses requests, delegates reference resolution, the
+ * server-owned ADMITTED -> DISCHARGED lifecycle, and audit recording to the
+ * service, and returns {@link AdmissionDtos.AdmissionResponse} — never a JPA
+ * entity. It owns no repositories and records no audit events; shared
+ * client-error mapping (404/400/409) lives in
+ * {@link com.mamtrex.hospital.shared.GlobalExceptionHandler}.
+ */
+@RestController
+@RequestMapping("/api/admissions")
+public class AdmissionController {
+
+    private final AdmissionService service;
+
+    public AdmissionController(AdmissionService service) {
+        this.service = service;
+    }
+
+    @PostMapping
+    public AdmissionDtos.AdmissionResponse create(@Valid @RequestBody AdmissionDtos.CreateAdmissionRequest r) {
+        return service.create(r);
+    }
+
+    @GetMapping
+    public List<AdmissionDtos.AdmissionResponse> list() {
+        return service.list();
+    }
+
+    @GetMapping("/{id}")
+    public AdmissionDtos.AdmissionResponse get(@PathVariable UUID id) {
+        return service.get(id);
+    }
+
+    @PutMapping("/{id}/status")
+    public AdmissionDtos.AdmissionResponse discharge(@PathVariable UUID id,
+                                                     @Valid @RequestBody AdmissionDtos.UpdateAdmissionStatusRequest r) {
+        return service.discharge(id, r);
+    }
+
+    @DeleteMapping("/{id}")
+    public void delete(@PathVariable UUID id) {
+        service.delete(id);
+    }
+}

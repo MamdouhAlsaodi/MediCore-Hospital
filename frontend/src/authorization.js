@@ -16,6 +16,9 @@
 //                      (the "View record form" action)
 //   appointment read   GET  /api/appointments   (the appointments list)
 //   appointment create POST /api/appointments   (the "Schedule appointment" action)
+//   emergencyVisit read       GET  /api/emergency-visits          (the emergency-visits list)
+//   emergencyVisit create     POST /api/emergency-visits          (the "Register visit" action)
+//   emergencyVisit transition PUT  /api/emergency-visits/{id}/status (the guarded status actions)
 //   audit read         GET  /api/audit          (the ADMIN audit evidence screen)
 //
 // The map mirrors the server-enforced matrix as of the Task 9 alignment
@@ -46,6 +49,18 @@ export const PERMISSIONS = {
   // stays an owner decision), so register and discharge hint exactly as
   // widely as read. UI mirroring only; SecurityConfig stays authoritative.
   admission: {
+    read: ['ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST'],
+    create: ['ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST'],
+    transition: ['ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST'],
+  },
+  // Emergency visits (plan2.md Task 3): the server family rule on
+  // /api/emergency-visits/** admits all four clinical-administrative roles
+  // on every method and Task 3 changed no role policy (plan2 §7.1 narrowing
+  // stays an owner decision), so register and status-transition hints
+  // exactly mirror read. The triage label everywhere in this feature is a
+  // neutral 1–5 demo value with NO clinical meaning. UI mirroring only;
+  // SecurityConfig stays authoritative.
+  emergencyVisit: {
     read: ['ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST'],
     create: ['ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST'],
     transition: ['ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST'],

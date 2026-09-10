@@ -682,3 +682,129 @@ button.appointment-cancel:focus-visible {
   .admissions-actions { flex-direction: column; align-items: stretch; }
   .admissions-actions .admission-new { width: 100%; }
 }
+
+/* Emergency-visits screen (docs/plan2.md Task 3): list with status and
+   neutral triage demo badges, the register workflow, and the guarded status
+   transitions — reusing the existing navy/gold identity, no new palette.
+   The triage label is a non-clinical demo value; its badge stays visually
+   neutral (muted outline) on purpose. */
+.emergency-boundary { margin-bottom: 12px; }
+.emergency-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 14px;
+}
+.emergency-new {
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: 0;
+  background: var(--gold, #b8860b);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+.emergency-new:disabled { opacity: 0.6; cursor: not-allowed; }
+.emergency-empty {
+  padding: 18px;
+}
+.emergency-table-wrap {
+  margin-top: 14px;
+  overflow-x: auto;
+}
+.emergency-table {
+  width: 100%;
+  border-collapse: collapse;
+  border-radius: 12px;
+  font-size: 14px;
+}
+.emergency-table th,
+.emergency-table td {
+  text-align: left;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+.emergency-table thead th {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.emergency-table tbody tr:last-child td { border-bottom: 0; }
+.triage-badge {
+  display: inline-block;
+  min-width: 22px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  border: 1px dashed var(--line);
+  color: var(--muted);
+}
+.status-badge.status-waiting { border-color: var(--gold, #b8860b); color: var(--gold, #b8860b); }
+.status-badge.status-in_treatment { border-color: var(--text, inherit); color: var(--text, inherit); }
+.status-badge.status-closed { opacity: 0.85; }
+.emergency-row-actions {
+  white-space: nowrap;
+}
+.emergency-row-actions button {
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px;
+  margin-left: 6px;
+}
+.emergency-row-actions button:first-child { margin-left: 0; }
+.emergency-row-actions button:disabled { opacity: 0.6; cursor: not-allowed; }
+.emergency-transition { color: inherit; }
+.emergency-transition-close { color: var(--muted); }
+.emergency-transition-confirm {
+  border-color: var(--gold, #b8860b);
+  color: var(--gold, #b8860b);
+  font-weight: 600;
+}
+.emergency-transition-cancel { color: var(--muted); }
+.emergency-form { padding: 18px; }
+.emergency-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+.emergency-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.emergency-field label { font-size: 13px; color: var(--muted); }
+.emergency-field-hint { font-size: 12px; color: var(--muted); }
+.emergency-form-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+}
+.emergency-save,
+.emergency-cancel {
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: 0;
+  cursor: pointer;
+  font-weight: 600;
+}
+.emergency-save { background: var(--gold, #b8860b); color: #fff; }
+.emergency-save:disabled { opacity: 0.6; cursor: not-allowed; }
+.emergency-cancel { background: transparent; border: 1px solid var(--line); color: inherit; }
+
+@media (max-width: 560px) {
+  /* The emergency-visits list keeps its columns readable on narrow screens:
+     values wrap (overflow-wrap) and the wrap scrolls horizontally if needed. */
+  .emergency-table th,
+  .emergency-table td { padding: 8px; font-size: 13px; }
+  .emergency-form-grid { grid-template-columns: 1fr; gap: 0; }
+  .emergency-form-actions,
+  .emergency-actions { flex-direction: column; align-items: stretch; }
+  .emergency-actions .emergency-new { width: 100%; }
+}

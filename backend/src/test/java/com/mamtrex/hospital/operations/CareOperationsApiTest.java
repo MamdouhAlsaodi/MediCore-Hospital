@@ -54,8 +54,8 @@ import static org.junit.jupiter.api.Assertions.*;
  *   Task 3 lifecycle WAITING -> IN_TREATMENT | CLOSED, IN_TREATMENT ->
  *   CLOSED, CLOSED terminal (the triage label stays a neutral 1-5 demo value
  *   with no clinical meaning); admissions own PUT /api/admissions/{id}/status;
- * - the dashboard exposes exactly five raw count keys with row-count
- *   semantics and no status awareness (beds are not counted);
+ * - the dashboard exposes exactly the eleven Task 5 keys — the five
+ *   whole-table totals plus status-aware aggregates (beds add no key);
  * - the RBAC family rules are unchanged by Tasks 2, 3, and 4: DOCTOR and NURSE
  *   keep live admissions/emergency writes (plan2 §7.1 write-role narrowing is
  *   an owner decision), and BILLING is isolated to invoices with 403 elsewhere.
@@ -103,9 +103,11 @@ class CareOperationsApiTest {
     private static final Set<String> BED_ENTITY_FIELDS = Set.of(
             "ward", "room", "bedNumber", "occupancyStatus", "patientId");
 
-    /** Current dashboard contract: exactly these five raw count keys. */
+    /** Task 5 dashboard contract: totals plus status-aware aggregates, exactly these eleven keys. */
     private static final Set<String> DASHBOARD_KEYS = Set.of(
-            "patients", "appointments", "admissions", "emergencyVisits", "invoices");
+            "patients", "appointments", "admissions", "emergencyVisits", "invoices",
+            "openAdmissions", "activeEmergencyVisits",
+            "invoicesDraft", "invoicesIssued", "invoicesPaid", "invoicesVoid");
 
     @Autowired
     TestRestTemplate rest;
@@ -1071,11 +1073,13 @@ class CareOperationsApiTest {
     // ------------------------------------------------------------------
 
     /**
-     * Dashboard today: exactly five raw count keys with whole-table row-count
-     * semantics — beds add no key, deletes feed straight back into the counts,
-     * and there is no status awareness anywhere. Asserted with deltas over
-     * test-created synthetic records only. The Task 2 admission contract
-     * needs one verified patient, created before the baseline snapshot.
+     * Dashboard contract at integration level: exactly the eleven Task 5 keys
+     * — five whole-table totals plus status-aware aggregates — with beds
+     * adding no key and deletes feeding straight back into the totals.
+     * Detailed bucket semantics are pinned in DashboardApiTest; this test
+     * preserves its existing deltas over test-created synthetic records only.
+     * The Task 2 admission contract needs one verified patient, created
+     * before the baseline snapshot.
      */
     @Test
     void dashboardSummaryPinsExactKeySetAndRowCountSemantics() {
@@ -1086,9 +1090,9 @@ class CareOperationsApiTest {
         assertEquals(HttpStatus.OK, before.getStatusCode());
         Map<String, Object> beforeBody = before.getBody();
         assertNotNull(beforeBody, "dashboard response must carry a body");
-        assertEquals(DASHBOARD_KEYS, beforeBody.keySet(), "the dashboard must currently expose exactly five keys");
+        assertEquals(DASHBOARD_KEYS, beforeBody.keySet(), "the dashboard must expose exactly the eleven Task 5 keys");
         for (String key : DASHBOARD_KEYS) {
-            assertInstanceOf(Number.class, beforeBody.get(key), "dashboard key '" + key + "' must be a raw count");
+            assertInstanceOf(Number.class, beforeBody.get(key), "dashboard key '" + key + "' must be a numeric count");
         }
         long patientsBefore = count(beforeBody, "patients");
         long appointmentsBefore = count(beforeBody, "appointments");
@@ -1284,7 +1288,7 @@ class CareOperationsApiTest {
 
     private long count(Map<String, Object> body, String key) {
         Object value = body.get(key);
-        assertInstanceOf(Number.class, value, "dashboard key '" + key + "' must be a raw count");
+        assertInstanceOf(Number.class, value, "dashboard key '" + key + "' must be a numeric count");
         return ((Number) value).longValue();
     }
 

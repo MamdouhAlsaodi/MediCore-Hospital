@@ -945,3 +945,16 @@ button.appointment-cancel:focus-visible {
   .invoice-actions { flex-direction: column; align-items: stretch; }
   .invoice-actions .invoice-new { width: 100%; }
 }
+
+/* Dashboard grouped sections (docs/plan2.md Task 5): each group reuses the
+   shared .cards grid under a quiet heading; labels render exactly as the
+   Task 5 contract words them, so the generic capitalize transform is off. */
+.dashboard-group { margin: 20px 0; }
+.dashboard-group h2 { margin: 0 0 12px; font-size: 15px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+.dashboard-group .cards { margin: 0; }
+.dashboard-group .cards small { text-transform: none; }
+
+@media (max-width: 560px) {
+  .dashboard-group { margin: 16px 0; }
+  .dashboard-group .cards { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
+}

@@ -16,4 +16,7 @@ public interface InvoiceRepository extends JpaRepository<Invoice, UUID> {
 
     /** Duplicate-invoice-number pre-check lookup (docs/plan2.md Task 4). */
     Optional<Invoice> findByInvoiceNumber(String invoiceNumber);
+
+    /** Count of invoices currently in the given lifecycle status (Task 5 dashboard). */
+    long countByStatus(String status);
 }

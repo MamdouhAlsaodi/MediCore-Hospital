@@ -1,1 +1,29 @@
-package com.mamtrex.hospital.reporting; import com.mamtrex.hospital.patient.PatientRepository; import com.mamtrex.hospital.appointment.AppointmentRepository; import com.mamtrex.hospital.admission.AdmissionRepository; import com.mamtrex.hospital.emergency.EmergencyVisitRepository; import com.mamtrex.hospital.billing.InvoiceRepository; import org.springframework.web.bind.annotation.*; import java.util.*; @RestController @RequestMapping("/api/dashboard") public class DashboardController { private final PatientRepository patients; private final AppointmentRepository appointments; private final AdmissionRepository admissions; private final EmergencyVisitRepository emergency; private final InvoiceRepository invoices; public DashboardController(PatientRepository p,AppointmentRepository a,AdmissionRepository ad,EmergencyVisitRepository e,InvoiceRepository i){patients=p;appointments=a;admissions=ad;emergency=e;invoices=i;} @GetMapping public Map<String,Long> summary(){return Map.of("patients",patients.count(),"appointments",appointments.count(),"admissions",admissions.count(),"emergencyVisits",emergency.count(),"invoices",invoices.count());} }
+package com.mamtrex.hospital.reporting;
+
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.Map;
+
+/**
+ * Thin mapper for GET /api/dashboard (docs/plan2.md Task 5): aggregation
+ * lives in {@link DashboardService}. The endpoint stays reachable for any
+ * authenticated role through the unchanged SecurityConfig rule and is
+ * strictly read-only.
+ */
+@RestController
+@RequestMapping("/api/dashboard")
+public class DashboardController {
+
+    private final DashboardService dashboardService;
+
+    public DashboardController(DashboardService dashboardService) {
+        this.dashboardService = dashboardService;
+    }
+
+    @GetMapping
+    public Map<String, Long> summary() {
+        return dashboardService.summary();
+    }
+}

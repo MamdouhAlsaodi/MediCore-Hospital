@@ -8,9 +8,12 @@ import { PERMISSIONS, can } from './authorization.js';
 // authority for what a request may actually do (401 expired session, 403
 // refused role). These tests pin the map so the UI hint surface cannot drift
 // silently from the documented matrix.
-// plan2.md Task 2 adds the admission resource (read/create/transition),
-// mirroring the unchanged server family rule on /api/admissions/**: all four
-// clinical-administrative roles on every method — UI mirroring only.
+// plan2.md Tasks 2-3 add the admission and emergencyVisit resources
+// (read/create/transition), mirroring the unchanged server family rules on
+// /api/admissions/** and /api/emergency-visits/**: all four
+// clinical-administrative roles on every method — UI mirroring only. The
+// emergency-visit triage label is a neutral 1-5 demo value with no clinical
+// meaning.
 const sessionFor = (...roles) => ({ token: 'synthetic-token', username: 'testuser', roles });
 
 // Frontend capability matrix (UI hints only — convenience gating).
@@ -48,13 +51,27 @@ const ADMISSION_MATRIX = {
   RECEPTIONIST: { read: true, create: true, transition: true },
 };
 
+const EMERGENCY_VISIT_MATRIX = {
+  // The server family rule on /api/emergency-visits/** admits all four
+  // clinical-administrative roles on every method and Task 3 changed no
+  // role policy (plan2 §7.1 narrowing stays an owner decision), so the UI
+  // hint grants register (create) and status transitions exactly as widely
+  // as read. A direct API call from any other role is refused with 403
+  // server-side (SecurityAuthorizationTest/CareOperationsApiTest pin it).
+  ADMIN: { read: true, create: true, transition: true },
+  DOCTOR: { read: true, create: true, transition: true },
+  NURSE: { read: true, create: true, transition: true },
+  RECEPTIONIST: { read: true, create: true, transition: true },
+};
+
 const ACTIONS_PER_RESOURCE = {
   patient: ['read', 'create', 'update', 'formView'],
   appointment: ['read', 'create'],
   admission: ['read', 'create', 'transition'],
+  emergencyVisit: ['read', 'create', 'transition'],
 };
 
-describe('authorization permission map (plan1.md Task 9 + plan2.md Task 2)', () => {
+describe('authorization permission map (plan1.md Task 9 + plan2.md Tasks 2-3)', () => {
   it('grants patient actions exactly per the documented matrix', () => {
     for (const [role, expected] of Object.entries(PATIENT_MATRIX)) {
       for (const action of ACTIONS_PER_RESOURCE.patient) {
@@ -82,6 +99,17 @@ describe('authorization permission map (plan1.md Task 9 + plan2.md Task 2)', () 
         expect(
           can(sessionFor(role), action, 'admission'),
           `${role} can ${action} admission`,
+        ).toBe(expected[action]);
+      }
+    }
+  });
+
+  it('grants emergency-visit actions exactly per the documented four-role family matrix', () => {
+    for (const [role, expected] of Object.entries(EMERGENCY_VISIT_MATRIX)) {
+      for (const action of ACTIONS_PER_RESOURCE.emergencyVisit) {
+        expect(
+          can(sessionFor(role), action, 'emergencyVisit'),
+          `${role} can ${action} emergencyVisit`,
         ).toBe(expected[action]);
       }
     }
@@ -127,5 +155,6 @@ describe('authorization permission map (plan1.md Task 9 + plan2.md Task 2)', () 
     expect(PERMISSIONS.patient.read).toEqual(['ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST']);
     expect(PERMISSIONS.appointment.read).toEqual(['ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST']);
     expect(PERMISSIONS.admission.read).toEqual(['ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST']);
+    expect(PERMISSIONS.emergencyVisit.read).toEqual(['ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST']);
   });
 });

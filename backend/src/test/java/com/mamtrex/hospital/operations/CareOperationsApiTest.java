@@ -24,31 +24,32 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Care-operations contract suite. Characterized the raw baseline in docs/plan2.md
- * Task 1 (packet MEDICORE-PLAN2-TASK1-030) and updated by Task 2 (packet
- * MEDICORE-PLAN2-TASK2-031): the admissions tests now pin the normalized
- * Task 2 workflow (verified patient references, DTO responses without
- * persistence metadata, server-owned ADMITTED -> DISCHARGED lifecycle with a
- * server-stamped discharge time, 409 on repeat/invalid transitions, exactly
- * one audit event per successful mutation and none on failures), while the
- * other families still deliberately freeze TODAY'S raw behavior as later
- * change targets —
+ * Task 1 (packet MEDICORE-PLAN2-TASK1-030), updated by Task 2 (packet
+ * MEDICORE-PLAN2-TASK2-031) for admissions, and updated by Task 3 (packet
+ * MEDICORE-PLAN2-TASK3-032) for emergency visits: the admissions and
+ * emergency-visit tests now pin the normalized workflows (verified patient
+ * references, DTO responses without persistence metadata, server-owned
+ * lifecycles with 409 on repeat/invalid transitions, exactly one audit event
+ * per successful mutation and none on failures), while the remaining families
+ * still deliberately freeze TODAY'S raw behavior as later change targets —
  *
- * - emergency/invoice/bed controllers still return JPA entities directly, so
- *   responses expose the persistence metadata id/createdAt/updatedAt/version
- *   (later: DTOs; admissions already return the normalized DTO);
- * - emergency/invoice/bed request fields are still raw @NotBlank Strings
- *   stored verbatim — raw statuses, non-ISO dates, arbitrary amounts, and
- *   nonexistent patientId values are all accepted there (later: verified
- *   references, typed values, per-domain status sets);
+ * - invoice/bed controllers still return JPA entities directly, so responses
+ *   expose the persistence metadata id/createdAt/updatedAt/version (later:
+ *   DTOs; admissions and emergency visits already return the normalized DTO);
+ * - invoice/bed request fields are still raw @NotBlank Strings stored
+ *   verbatim — raw statuses, arbitrary amounts, and nonexistent patientId
+ *   values are all accepted there (later: verified references, typed values,
+ *   per-domain status sets);
  * - invoiceNumber has no uniqueness and there is no invoice lifecycle;
- * - emergency visits have no update or transition endpoint (unsupported PUT
- *   surfaces as the 401 error-dispatch artifact); admissions now own
- *   PUT /api/admissions/{id}/status;
+ * - emergency visits now own PUT /api/emergency-visits/{id}/status with the
+ *   Task 3 lifecycle WAITING -> IN_TREATMENT | CLOSED, IN_TREATMENT ->
+ *   CLOSED, CLOSED terminal (the triage label stays a neutral 1-5 demo value
+ *   with no clinical meaning); admissions own PUT /api/admissions/{id}/status;
  * - the dashboard exposes exactly five raw count keys with row-count
  *   semantics and no status awareness (beds are not counted);
- * - the RBAC family rules are unchanged by Task 2: DOCTOR and NURSE keep
- *   live admissions/emergency writes (plan2 §7.1 write-role narrowing is an
- *   owner decision), and BILLING is isolated to invoices with 403 elsewhere.
+ * - the RBAC family rules are unchanged by Tasks 2 and 3: DOCTOR and NURSE
+ *   keep live admissions/emergency writes (plan2 §7.1 write-role narrowing is
+ *   an owner decision), and BILLING is isolated to invoices with 403 elsewhere.
  *
  * Runs against an isolated in-memory H2 database (never the production file
  * store) with disposable synthetic test-only secrets and fabricated record
@@ -82,8 +83,9 @@ class CareOperationsApiTest {
     private static final Set<String> ADMISSION_DTO_FIELDS = Set.of(
             "id", "patientId", "admittedAt", "dischargedAt", "reason", "status");
 
-    private static final Set<String> EMERGENCY_ENTITY_FIELDS = Set.of(
-            "patientId", "arrivalAt", "triageLevel", "chiefComplaint", "status");
+    /** Task 3 DTO contract: exactly these six fields, no persistence metadata. */
+    private static final Set<String> EMERGENCY_VISIT_DTO_FIELDS = Set.of(
+            "id", "patientId", "arrivalAt", "triageLevel", "chiefComplaint", "status");
 
     private static final Set<String> INVOICE_ENTITY_FIELDS = Set.of(
             "patientId", "invoiceNumber", "amount", "currency", "status");
@@ -210,7 +212,8 @@ class CareOperationsApiTest {
                 "NURSE must currently be able to write admissions (no method narrowing exists)");
         String admissionId = requireId(admitted);
 
-        ResponseEntity<Map<String, Object>> visited = post("/api/emergency-visits", nurseToken, emergencyPayload("nurse"));
+        ResponseEntity<Map<String, Object>> visited = post("/api/emergency-visits", nurseToken,
+                emergencyCreatePayload("nurse", patientId));
         assertEquals(HttpStatus.OK, visited.getStatusCode(),
                 "NURSE must currently be able to write emergency visits (no method narrowing exists)");
         String visitId = requireId(visited);
@@ -418,58 +421,247 @@ class CareOperationsApiTest {
     }
 
     // ------------------------------------------------------------------
-    // Emergency visit CRUD contract
+    // Emergency-visit workflow contract (docs/plan2.md Task 3 — normalized)
     // ------------------------------------------------------------------
 
     /**
-     * Emergency visits today: the same raw entity contract; the triage level
-     * is an unconstrained raw string (no 1–5 rule yet — a deliberate plan2
-     * Task 3 change target), the status is caller-invented, and patientId is
-     * never verified.
+     * Task 3 create contract: a verified patient reference (unknown patient
+     * is the shared safe 404), typed ISO arrivalAt stored as its canonical
+     * string, a neutral 1–5 triage demo label with NO clinical meaning, and a
+     * non-blank synthetic chief complaint — the response is exactly the
+     * six-field DTO with server-owned status WAITING, and a client-sent
+     * status value never reaches storage. Detail and list share the same DTO
+     * contract with no persistence metadata anywhere.
      */
     @Test
-    void emergencyVisitCrudExposesRawEntityContractWithUnconstrainedTriage() {
+    void emergencyVisitCreatePinsNormalizedDtoContractWithVerifiedPatientReference() {
+        // The patient fixture is ADMIN-created; DOCTOR registering the visit
+        // pins the four-role family write on the normalized contract.
         String token = login(DOCTOR_USER);
-        String unknownPatientId = UUID.randomUUID().toString();
-        Map<String, Object> payload = Map.of(
-                "patientId", unknownPatientId,
-                "arrivalAt", "yesterday-ish",
-                "triageLevel", "9-out-of-5",
-                "chiefComplaint", "synthetic unvalidated complaint " + suffix,
-                "status", "IN_LIMBO");
-        Set<String> entityContract = union(METADATA_KEYS, EMERGENCY_ENTITY_FIELDS);
+        String patientId = createSyntheticPatient(login(ADMIN_USER), "contract");
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("patientId", patientId);
+        payload.put("arrivalAt", "2031-01-01T09:15:00");
+        payload.put("triageLevel", "3");
+        payload.put("chiefComplaint", "synthetic normalized complaint " + suffix);
+        // Not part of the create contract: the server owns the lifecycle, so
+        // this client value must be ignored, never stored.
+        payload.put("status", "WHENEVER-RAW");
 
         ResponseEntity<Map<String, Object>> created = post("/api/emergency-visits", token, payload);
-        assertEquals(HttpStatus.OK, created.getStatusCode(),
-                "an out-of-range raw triage level and unknown patientId must currently be accepted");
+        assertEquals(HttpStatus.OK, created.getStatusCode(), "a verified patient must register a visit successfully");
         Map<String, Object> body = created.getBody();
         assertNotNull(body);
-        assertEquals(entityContract, body.keySet(),
-                "the emergency-visit response must currently be the raw entity incl. persistence metadata");
-        assertEquals("9-out-of-5", body.get("triageLevel"), "triage must currently be an unconstrained raw string");
-        assertEquals(unknownPatientId, body.get("patientId"), "patientId must be stored verbatim without verification");
+        assertEquals(EMERGENCY_VISIT_DTO_FIELDS, body.keySet(),
+                "the emergency-visit response must be exactly the DTO contract with no persistence metadata");
+        assertEquals(patientId, body.get("patientId"),
+                "patientId must be the canonical UUID string of the verified patient");
+        assertEquals("2031-01-01T09:15", body.get("arrivalAt"), "arrivalAt must be the canonical ISO string");
+        assertEquals("3", body.get("triageLevel"), "triageLevel must be the neutral demo label, stored canonically");
+        assertEquals("synthetic normalized complaint " + suffix, body.get("chiefComplaint"));
+        assertEquals("WAITING", body.get("status"), "the server must set status=WAITING, never a client value");
         String visitId = requireId(created);
 
-        assertEquals(HttpStatus.OK, getMap("/api/emergency-visits/" + visitId, token).getStatusCode());
+        ResponseEntity<Map<String, Object>> detail = getMap("/api/emergency-visits/" + visitId, token);
+        assertEquals(HttpStatus.OK, detail.getStatusCode());
+        assertNotNull(detail.getBody());
+        assertEquals(EMERGENCY_VISIT_DTO_FIELDS, detail.getBody().keySet(), "detail must match the same DTO contract");
+        assertEquals(patientId, detail.getBody().get("patientId"));
+        assertEquals("WAITING", detail.getBody().get("status"));
+
         ResponseEntity<List<Map<String, Object>>> list = getList("/api/emergency-visits", token);
         assertEquals(HttpStatus.OK, list.getStatusCode());
         List<Map<String, Object>> listBody = list.getBody();
         assertNotNull(listBody, "emergency list must carry a body");
-        assertTrue(listBody.stream().anyMatch(v -> visitId.equals(String.valueOf(v.get("id")))),
-                "the created visit must appear in the raw list");
-        for (Map<String, Object> item : listBody) {
-            assertEquals(entityContract, item.keySet(), "every list item must match the raw entity contract");
+        List<Map<String, Object>> mine = listBody.stream()
+                .filter(v -> visitId.equals(String.valueOf(v.get("id"))))
+                .collect(Collectors.toList());
+        assertEquals(1, mine.size(), "the created visit must appear exactly once in the list");
+        assertEquals(EMERGENCY_VISIT_DTO_FIELDS, mine.get(0).keySet(), "every list item must match the DTO contract");
+
+        assertEquals(HttpStatus.BAD_REQUEST, getStatus("/api/emergency-visits/not-a-uuid", token).getStatusCode(),
+                "a malformed visit UUID path must be a client error, never a 500");
+    }
+
+    /**
+     * Task 3 failure contracts: an unknown patient is the shared safe 404, a
+     * non-UUID patientId or an unparseable arrivalAt is a malformed body 400,
+     * a triage label outside the neutral 1–5 demo set is a validation 400,
+     * and missing/blank required fields are validation 400s — none of them
+     * may persist a visit.
+     */
+    @Test
+    void emergencyVisitCreateRejectsUnknownPatientAndInvalidTriageWithoutPersisting() {
+        String token = login(DOCTOR_USER);
+        long visitsBefore = dashboardCount("emergencyVisits", token);
+
+        Map<String, Object> unknownPatient = emergencyCreatePayload("unknown", UUID.randomUUID().toString());
+        ResponseEntity<Map<String, Object>> notFound = post("/api/emergency-visits", token, unknownPatient);
+        assertEquals(HttpStatus.NOT_FOUND, notFound.getStatusCode(),
+                "an unknown patient reference must return the shared 404, never persist");
+        Map<String, Object> notFoundBody = notFound.getBody();
+        assertNotNull(notFoundBody, "the 404 must carry the shared ApiError body");
+        assertEquals(404, ((Number) notFoundBody.get("status")).intValue(), "ApiError.status must echo 404");
+        assertEquals("Not Found", notFoundBody.get("error"));
+
+        Map<String, Object> nonUuidPatient = emergencyCreatePayload("nonuuid", "not-a-uuid");
+        assertEquals(HttpStatus.BAD_REQUEST, post("/api/emergency-visits", token, nonUuidPatient).getStatusCode(),
+                "a non-UUID patientId fails typed deserialization as a malformed body");
+
+        Map<String, Object> badTimestamp = emergencyCreatePayload("badtime", null);
+        badTimestamp.put("arrivalAt", "yesterday-ish");
+        assertEquals(HttpStatus.BAD_REQUEST, post("/api/emergency-visits", token, badTimestamp).getStatusCode(),
+                "an unparseable arrivalAt fails typed deserialization as a malformed body");
+
+        for (String rejected : List.of("9-out-of-5", "0", "6", "3.5", " 3 ", "")) {
+            Map<String, Object> badTriage = emergencyCreatePayload("triage-" + rejected.hashCode(), null);
+            badTriage.put("triageLevel", rejected);
+            assertEquals(HttpStatus.BAD_REQUEST,
+                    post("/api/emergency-visits", token, badTriage).getStatusCode(),
+                    "a triage label outside the neutral 1–5 demo set must be rejected: '" + rejected + "'");
         }
-        // Same error-dispatch artifact as before the Task 2 admission change: no
-        // emergency transition handler exists yet, and the unsupported method
-        // surfaces as the 401 outcome — a deliberate Task 3 change target.
-        assertEquals(HttpStatus.UNAUTHORIZED,
-                put("/api/emergency-visits/" + visitId, token, payload).getStatusCode(),
-                "an unsupported PUT must currently surface as the 401 error-dispatch outcome, "
-                        + "proving no transition handler exists — intentional later change target");
+
+        Map<String, Object> missingTriage = emergencyCreatePayload("missing-triage", null);
+        missingTriage.remove("triageLevel");
+        assertEquals(HttpStatus.BAD_REQUEST, post("/api/emergency-visits", token, missingTriage).getStatusCode(),
+                "a missing triageLevel must be rejected by validation");
+
+        Map<String, Object> blankComplaint = emergencyCreatePayload("blank-complaint", null);
+        blankComplaint.put("chiefComplaint", "   ");
+        assertEquals(HttpStatus.BAD_REQUEST, post("/api/emergency-visits", token, blankComplaint).getStatusCode(),
+                "a blank chiefComplaint must be rejected by validation");
+
+        Map<String, Object> missingPatient = new LinkedHashMap<>();
+        missingPatient.put("arrivalAt", "2031-01-01T09:15:00");
+        missingPatient.put("triageLevel", "3");
+        missingPatient.put("chiefComplaint", "synthetic missing reference " + suffix);
+        assertEquals(HttpStatus.BAD_REQUEST, post("/api/emergency-visits", token, missingPatient).getStatusCode(),
+                "a missing patientId must be rejected by validation");
+
+        Map<String, Object> missingArrival = new LinkedHashMap<>();
+        missingArrival.put("patientId", UUID.randomUUID().toString());
+        missingArrival.put("triageLevel", "3");
+        missingArrival.put("chiefComplaint", "synthetic missing timestamp " + suffix);
+        assertEquals(HttpStatus.BAD_REQUEST, post("/api/emergency-visits", token, missingArrival).getStatusCode(),
+                "a missing arrivalAt must be rejected by validation");
+
+        assertEquals(visitsBefore, dashboardCount("emergencyVisits", token),
+                "no rejected create may persist an emergency visit");
+    }
+
+    /**
+     * Task 3 transition lifecycle: PUT /api/emergency-visits/{id}/status
+     * permits exactly WAITING -> IN_TREATMENT | CLOSED and
+     * IN_TREATMENT -> CLOSED; CLOSED is terminal. The response is the same
+     * six-field DTO with the server-applied status. Repeats, backward moves,
+     * and unknown targets are the safe shared 409 with a controlled message;
+     * failed operations produce no audit events, and the successful create
+     * and each transition produce exactly one audit event with the session
+     * actor.
+     */
+    @Test
+    void emergencyVisitTransitionsPinLifecycleConflictsAndAudit() {
+        String token = login(RECEPTIONIST_USER);
+        String patientId = createSyntheticPatient(login(ADMIN_USER), "transition");
+        String visitId = requireId(post("/api/emergency-visits", token, emergencyCreatePayload("transition", patientId)));
+
+        List<Map<String, Object>> beforeTransitions = auditEvents(login(ADMIN_USER));
+        assertSingleEvent(beforeTransitions, "EmergencyVisit", visitId, "CREATE", RECEPTIONIST_USER, "created");
+
+        ResponseEntity<Map<String, Object>> inTreatment =
+                put("/api/emergency-visits/" + visitId + "/status", token, Map.of("status", "IN_TREATMENT"));
+        assertEquals(HttpStatus.OK, inTreatment.getStatusCode(),
+                "WAITING -> IN_TREATMENT must be a legal transition");
+        Map<String, Object> treated = inTreatment.getBody();
+        assertNotNull(treated);
+        assertEquals(EMERGENCY_VISIT_DTO_FIELDS, treated.keySet(), "the transition response must stay on the DTO contract");
+        assertEquals("IN_TREATMENT", treated.get("status"), "the server must apply the requested legal transition");
+        assertEquals(patientId, treated.get("patientId"), "transitions must not change the verified reference");
+        assertEquals("2031-01-01T09:15", treated.get("arrivalAt"), "transitions must not change arrivalAt");
+        assertEquals("3", treated.get("triageLevel"), "transitions must not change the triage label");
+
+        assertSingleEvent(auditEvents(login(ADMIN_USER)), "EmergencyVisit", visitId, "UPDATE", RECEPTIONIST_USER, "in treatment");
+
+        ResponseEntity<Map<String, Object>> closed =
+                put("/api/emergency-visits/" + visitId + "/status", token, Map.of("status", "CLOSED"));
+        assertEquals(HttpStatus.OK, closed.getStatusCode(), "IN_TREATMENT -> CLOSED must be a legal transition");
+        assertNotNull(closed.getBody());
+        assertEquals("CLOSED", closed.getBody().get("status"));
+
+        assertSingleEvent(auditEvents(login(ADMIN_USER)), "EmergencyVisit", visitId, "UPDATE", RECEPTIONIST_USER, "closed");
+
+        ResponseEntity<Map<String, Object>> repeat =
+                put("/api/emergency-visits/" + visitId + "/status", token, Map.of("status", "CLOSED"));
+        assertEquals(HttpStatus.CONFLICT, repeat.getStatusCode(),
+                "repeating a transition on a CLOSED visit must return the shared 409");
+        Map<String, Object> conflict = repeat.getBody();
+        assertNotNull(conflict, "the 409 must carry the shared ApiError body");
+        assertEquals(409, ((Number) conflict.get("status")).intValue(), "ApiError.status must echo 409");
+        assertEquals("Conflict", conflict.get("error"));
+        String conflictMessage = String.valueOf(conflict.get("message"));
+        assertTrue(conflictMessage.contains("CLOSED"),
+                "the 409 message must name the terminal state, never an entity or stack dump");
+        assertFalse(conflictMessage.contains("Exception"), "the 409 message must not leak exception internals");
+
+        assertEquals(HttpStatus.CONFLICT,
+                put("/api/emergency-visits/" + visitId + "/status", token, Map.of("status", "IN_TREATMENT")).getStatusCode(),
+                "a CLOSED visit is terminal: every further transition must 409");
+
+        // WAITING -> CLOSED is legal directly; repeating it is not.
+        String directCloseId = requireId(post("/api/emergency-visits", token,
+                emergencyCreatePayload("direct-close", patientId)));
+        assertEquals(HttpStatus.OK,
+                put("/api/emergency-visits/" + directCloseId + "/status", token, Map.of("status", "CLOSED")).getStatusCode(),
+                "WAITING -> CLOSED must be a legal transition");
+        assertEquals(HttpStatus.CONFLICT,
+                put("/api/emergency-visits/" + directCloseId + "/status", token, Map.of("status", "CLOSED")).getStatusCode(),
+                "closing an already-CLOSED visit must return the shared 409");
+
+        String unknownId = UUID.randomUUID().toString();
+        assertEquals(HttpStatus.NOT_FOUND,
+                put("/api/emergency-visits/" + unknownId + "/status", token, Map.of("status", "CLOSED")).getStatusCode(),
+                "transitioning an unknown visit must be the shared 404");
+
+        ResponseEntity<Map<String, Object>> unknownTarget =
+                put("/api/emergency-visits/" + visitId + "/status", token, Map.of("status", "DERANGED"));
+        assertEquals(HttpStatus.CONFLICT, unknownTarget.getStatusCode(),
+                "a status outside the transition map must 409, never be stored");
+        assertNotNull(unknownTarget.getBody());
+        assertTrue(String.valueOf(unknownTarget.getBody().get("message")).contains("no DERANGED transition"),
+                "the unknown-target 409 message must be controlled and client-safe");
+
+        List<Map<String, Object>> afterFailures = auditEvents(login(ADMIN_USER));
+        assertSingleEvent(afterFailures, "EmergencyVisit", visitId, "CREATE", RECEPTIONIST_USER, "created");
+        assertSingleEvent(afterFailures, "EmergencyVisit", visitId, "UPDATE", RECEPTIONIST_USER, "in treatment");
+        assertSingleEvent(afterFailures, "EmergencyVisit", visitId, "UPDATE", RECEPTIONIST_USER, "closed");
+        assertSingleEvent(afterFailures, "EmergencyVisit", directCloseId, "CREATE", RECEPTIONIST_USER, "created");
+        assertSingleEvent(afterFailures, "EmergencyVisit", directCloseId, "UPDATE", RECEPTIONIST_USER, "closed");
+    }
+
+    /**
+     * Delete stays service-owned and audited under the normalized contract:
+     * 404-safe on repeat, the shared ApiError body afterwards, and exactly
+     * one DELETE audit event with the session actor.
+     */
+    @Test
+    void emergencyVisitDeleteRemainsServiceOwnedSafeAndAudited() {
+        String token = login(NURSE_USER);
+        String patientId = createSyntheticPatient(login(ADMIN_USER), "delete");
+        String visitId = requireId(post("/api/emergency-visits", token, emergencyCreatePayload("delete", patientId)));
 
         assertEquals(HttpStatus.OK, delete("/api/emergency-visits/" + visitId, token).getStatusCode());
-        assertEquals(HttpStatus.NOT_FOUND, getStatus("/api/emergency-visits/" + visitId, token).getStatusCode());
+        ResponseEntity<String> gone = getStatus("/api/emergency-visits/" + visitId, token);
+        assertEquals(HttpStatus.NOT_FOUND, gone.getStatusCode(), "get after delete must be 404");
+        Map<String, Object> error = parseError(gone);
+        assertEquals(Set.of("timestamp", "status", "error", "message", "path"), error.keySet(),
+                "404 must use the shared ApiError contract shape exactly");
+        assertEquals(404, ((Number) error.get("status")).intValue(), "ApiError.status must echo 404");
+        assertEquals("Not Found", error.get("error"));
+        assertEquals("/api/emergency-visits/" + visitId, error.get("path"));
+        assertEquals(HttpStatus.NOT_FOUND, delete("/api/emergency-visits/" + visitId, token).getStatusCode(),
+                "deleting an unknown visit must be 404, not a silent success");
+
+        assertSingleEvent(auditEvents(login(ADMIN_USER)), "EmergencyVisit", visitId, "DELETE", NURSE_USER, "deleted");
     }
 
     // ------------------------------------------------------------------
@@ -597,7 +789,7 @@ class CareOperationsApiTest {
         long invoicesBefore = count(beforeBody, "invoices");
 
         String admissionId = requireId(post("/api/admissions", adminToken, admissionCreatePayload("dash", patientId)));
-        String visitId = requireId(post("/api/emergency-visits", adminToken, emergencyPayload("dash")));
+        String visitId = requireId(post("/api/emergency-visits", adminToken, emergencyCreatePayload("dash", patientId)));
         String invoiceId = requireId(post("/api/invoices", adminToken, invoicePayload("dash")));
         String bedId = requireId(post("/api/beds", adminToken, bedPayload()));
 
@@ -644,7 +836,7 @@ class CareOperationsApiTest {
         String adminToken = login(ADMIN_USER);
         String patientId = createSyntheticPatient(adminToken, "audit");
         String admissionId = requireId(post("/api/admissions", login(NURSE_USER), admissionCreatePayload("audit", patientId)));
-        String visitId = requireId(post("/api/emergency-visits", login(DOCTOR_USER), emergencyPayload("audit")));
+        String visitId = requireId(post("/api/emergency-visits", login(DOCTOR_USER), emergencyCreatePayload("audit", patientId)));
         String invoiceId = requireId(post("/api/invoices", login(BILLING_USER), invoicePayload("audit")));
         String bedId = requireId(post("/api/beds", login(ADMIN_USER), bedPayload()));
 
@@ -666,14 +858,23 @@ class CareOperationsApiTest {
         assertSingleEvent(afterDeletion, "Bed", bedId, "DELETE", ADMIN_USER, "deleted");
     }
 
+    /**
+     * Pins exactly one audit event per (resourceType, resourceId, action,
+     * details): the details filter matters for resources that legitimately
+     * accumulate several UPDATE events — an emergency visit carries one
+     * UPDATE per transition ("in treatment", "closed") — while still
+     * proving no duplicate or unexpected event exists for the named
+     * mutation.
+     */
     private void assertSingleEvent(List<Map<String, Object>> events, String resourceType, String resourceId,
                                    String action, String actor, String details) {
         List<Map<String, Object>> matches = events.stream()
                 .filter(e -> resourceType.equals(e.get("resourceType")) && resourceId.equals(e.get("resourceId"))
-                        && action.equals(e.get("action")))
+                        && action.equals(e.get("action")) && details.equals(e.get("details")))
                 .collect(Collectors.toList());
         assertEquals(1, matches.size(),
-                "exactly one " + action + " audit event must exist for " + resourceType + " " + resourceId);
+                "exactly one " + action + " ('" + details + "') audit event must exist for "
+                        + resourceType + " " + resourceId);
         Map<String, Object> event = matches.get(0);
         assertEquals(action, event.get("action"));
         assertEquals(actor, event.get("actor"), "the audit actor must be the authenticated session user");
@@ -716,13 +917,19 @@ class CareOperationsApiTest {
         return requireId(created);
     }
 
-    private Map<String, Object> emergencyPayload(String tag) {
-        return Map.of(
-                "patientId", UUID.randomUUID().toString(),
-                "arrivalAt", "2031-01-01T09:00:00-" + tag,
-                "triageLevel", "3",
-                "chiefComplaint", "synthetic complaint " + suffix + " " + tag,
-                "status", "WAITING-RAW");
+    /**
+     * Task 3 create contract body: verified patientId, typed ISO arrivalAt, a
+     * neutral 1–5 demo triage label (no clinical meaning), and a non-blank
+     * synthetic complaint — nothing else. The optional patientId override
+     * lets failure tests substitute unknown or malformed references.
+     */
+    private Map<String, Object> emergencyCreatePayload(String tag, String patientIdOverride) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("patientId", patientIdOverride != null ? patientIdOverride : UUID.randomUUID().toString());
+        payload.put("arrivalAt", "2031-01-01T09:15:00");
+        payload.put("triageLevel", "3");
+        payload.put("chiefComplaint", "synthetic complaint " + suffix + " " + tag);
+        return payload;
     }
 
     private Map<String, Object> invoicePayload(String tag) {

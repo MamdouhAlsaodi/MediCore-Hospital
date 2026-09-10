@@ -64,6 +64,28 @@ const ADMISSIONS_PAGE = [
   },
 ];
 
+// Emergency-visits list over GET /api/emergency-visits (docs/plan2.md Task 3
+// DTO contract): id/patientId/arrivalAt/triageLevel/chiefComplaint/status —
+// no persistence metadata. The triage label is a neutral demo value.
+const EMERGENCY_VISITS_PAGE = [
+  {
+    id: '88888888-8888-4888-8888-888888888901',
+    patientId: '55555555-5555-4555-8555-555555555555',
+    arrivalAt: '2031-01-01T09:15',
+    triageLevel: '3',
+    chiefComplaint: 'Synthetic demo complaint',
+    status: 'WAITING',
+  },
+  {
+    id: '88888888-8888-4888-8888-888888888902',
+    patientId: 'raw unresolved reference',
+    arrivalAt: '2031-01-02T11:30',
+    triageLevel: '5',
+    chiefComplaint: 'Synthetic closed visit',
+    status: 'CLOSED',
+  },
+];
+
 // AuditEvent contract over GET /api/audit (ADMIN-only): evidence fields plus
 // internal metadata the screen must never render.
 const AUDIT_EVENTS = [
@@ -94,6 +116,7 @@ function stubBackendApi() {
     if (path === '/api/patients') return Promise.resolve(jsonResponse(PATIENTS_PAGE));
     if (path === '/api/appointments') return Promise.resolve(jsonResponse(APPOINTMENTS_PAGE));
     if (path === '/api/admissions') return Promise.resolve(jsonResponse(ADMISSIONS_PAGE));
+    if (path === '/api/emergency-visits') return Promise.resolve(jsonResponse(EMERGENCY_VISITS_PAGE));
     if (path === '/api/staff') return Promise.resolve(jsonResponse(STAFF_DIRECTORY));
     if (path === '/api/audit') return Promise.resolve(jsonResponse(AUDIT_EVENTS));
     return Promise.resolve(jsonResponse({ error: 'not found' }, 404));
@@ -131,10 +154,13 @@ describe('AppShell', () => {
   it('lists only the destinations the session roles permit and never offers unimplemented modules', async () => {
     renderShell(['DOCTOR']);
 
-    // plan2.md Task 2: Admissions joins the four clinical-administrative
-    // destinations (server family rule on /api/admissions/**).
-    expect(navigationItems()).toEqual(['Dashboard', 'Patients', 'Appointments', 'Admissions']);
-    for (const unimplemented of ['Billing', 'Laboratory', 'Pharmacy', 'Emergency']) {
+    // plan2.md Tasks 2-3: Admissions and Emergency Visits join the four
+    // clinical-administrative destinations (server family rules on
+    // /api/admissions/** and /api/emergency-visits/**).
+    expect(navigationItems()).toEqual(
+      ['Dashboard', 'Patients', 'Appointments', 'Admissions', 'Emergency Visits'],
+    );
+    for (const unimplemented of ['Billing', 'Laboratory', 'Pharmacy', 'Beds']) {
       expect(screen.queryByRole('button', { name: unimplemented })).not.toBeInTheDocument();
     }
     // The audit evidence screen is implemented but ADMIN-only (plan1.md
@@ -147,7 +173,7 @@ describe('AppShell', () => {
     renderShell(['BILLING']);
 
     expect(navigationItems()).toEqual(['Dashboard']);
-    for (const denied of ['Patients', 'Appointments', 'Admissions', 'Audit']) {
+    for (const denied of ['Patients', 'Appointments', 'Admissions', 'Emergency Visits', 'Audit']) {
       expect(screen.queryByRole('button', { name: denied })).not.toBeInTheDocument();
     }
     await waitForDashboardStats();
@@ -216,7 +242,9 @@ describe('AppShell', () => {
     renderShell(['RECEPTIONIST']);
     await waitForDashboardStats();
 
-    expect(navigationItems()).toEqual(['Dashboard', 'Patients', 'Appointments', 'Admissions']);
+    expect(navigationItems()).toEqual(
+      ['Dashboard', 'Patients', 'Appointments', 'Admissions', 'Emergency Visits'],
+    );
     await user.click(screen.getByRole('button', { name: 'Admissions' }));
 
     expect(screen.getByRole('button', { name: 'Admissions' })).toHaveAttribute('aria-current', 'page');
@@ -240,6 +268,38 @@ describe('AppShell', () => {
     expect(admissionCalls[0][1].headers.Authorization).toBe('Bearer synthetic-token');
   });
 
+  it('opens the emergency-visits screen for a clinical-administrative role and loads its list once', async () => {
+    const user = userEvent.setup();
+    renderShell(['NURSE']);
+    await waitForDashboardStats();
+
+    await user.click(screen.getByRole('button', { name: 'Emergency Visits' }));
+
+    expect(screen.getByRole('button', { name: 'Emergency Visits' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('heading', { name: 'Emergency Visits' })).toBeInTheDocument();
+    const emergencyScreen = screen.getByRole('region', { name: 'Emergency Visits screen' });
+    const table = await within(emergencyScreen).findByRole('table', { name: 'Registered emergency visits' });
+    expect(within(table).getAllByRole('row')).toHaveLength(3); // header + two records
+    // Resolved patient name, neutral triage demo labels, and status badges.
+    expect(within(table).getByText('Synthetic Patient')).toBeInTheDocument();
+    expect(within(table).getByText('WAITING')).toBeInTheDocument();
+    expect(within(table).getByText('CLOSED')).toBeInTheDocument();
+    // Unresolved references render honestly; raw values never surface.
+    expect(emergencyScreen).toHaveTextContent('Unknown record');
+    expect(emergencyScreen).not.toHaveTextContent('raw unresolved reference');
+    // The non-clinical boundary is demonstrably labeled in the UI.
+    expect(emergencyScreen).toHaveTextContent(/no clinical meaning/i);
+    // A clinical-administrative role may register visits.
+    expect(
+      within(emergencyScreen).getByRole('button', { name: 'Register visit' })
+    ).toBeInTheDocument();
+
+    const visitCalls = fetchMock.mock.calls.filter(([path]) => path === '/api/emergency-visits');
+    expect(visitCalls).toHaveLength(1);
+    expect(visitCalls[0][1].method).toBe('GET');
+    expect(visitCalls[0][1].headers.Authorization).toBe('Bearer synthetic-token');
+  });
+
   it('activates a destination from the keyboard', async () => {
     const user = userEvent.setup();
     renderShell(['DOCTOR']);
@@ -256,7 +316,9 @@ describe('AppShell', () => {
     const user = userEvent.setup();
     renderShell(['ADMIN']);
 
-    expect(navigationItems()).toEqual(['Dashboard', 'Patients', 'Appointments', 'Admissions', 'Audit']);
+    expect(navigationItems()).toEqual(
+      ['Dashboard', 'Patients', 'Appointments', 'Admissions', 'Emergency Visits', 'Audit'],
+    );
     await waitForDashboardStats();
 
     await user.click(screen.getByRole('button', { name: 'Audit' }));

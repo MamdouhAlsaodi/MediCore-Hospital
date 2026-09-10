@@ -94,10 +94,17 @@ button.primary:focus-visible, button.logout:focus-visible {
 /* Authenticated shell */
 .app { display: grid; grid-template-columns: 250px 1fr; min-height: 100vh; }
 
+/* Desktop: pin the sidebar to the viewport while main scrolls. align-self: start
+   plus a bounded 100vh height stop grid stretch from defeating position: sticky;
+   overflow: auto lets taller-than-viewport navigation scroll internally. */
 aside {
   background: var(--navy);
   color: #fff;
   padding: 24px;
+  position: sticky;
+  top: 0;
+  align-self: start;
+  height: 100vh;
   overflow: auto;
   display: flex;
   flex-direction: column;
@@ -168,6 +175,11 @@ header span { color: var(--muted); }
     gap: 4px 12px;
     padding: 10px 14px;
     overflow: visible;
+    /* Reset the desktop sticky pin: the top nav joins normal document flow. */
+    position: static;
+    top: auto;
+    height: auto;
+    align-self: auto;
   }
   aside h1 { font-size: 20px; }
   aside > p { display: none; }

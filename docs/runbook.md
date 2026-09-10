@@ -56,13 +56,34 @@ Seeding is idempotent and safe to restart: every insert is lookup-before-create 
 
 Verify by logging in as an ADMIN and checking Patients (search `DEMO-`), Appointments, and the Audit screen (CREATE events with actor `system`, one per newly created seeded record). Never enable demo seeding against a shared or production data store.
 
+## Review accounts (opt-in, disabled by default)
+
+Review-account bootstrapping is off unless explicitly enabled. For a local training/review backend that needs one DOCTOR and one NURSE reviewer login, set `MEDICORE_REVIEW_ACCOUNTS_ENABLED=true` in the runtime environment and provide both review passwords before starting it:
+
+```bash
+cd backend
+MEDICORE_REVIEW_ACCOUNTS_ENABLED=true \
+HOSPITAL_REVIEW_DOCTOR_PASSWORD="$HOSPITAL_REVIEW_DOCTOR_PASSWORD" \
+HOSPITAL_REVIEW_NURSE_PASSWORD="$HOSPITAL_REVIEW_NURSE_PASSWORD" \
+HOSPITAL_ADMIN_PASSWORD="$HOSPITAL_ADMIN_PASSWORD" HOSPITAL_JWT_SECRET="$HOSPITAL_JWT_SECRET" \
+mvn spring-boot:run
+```
+
+Behavior and boundaries:
+
+- When the flag is enabled, both variables are required and must each be at least 12 characters. Startup fails with a configuration error naming the offending variable (never any value) if one is missing, blank, or too short.
+- Startup creates username `doctor` with exactly the `DOCTOR` role and username `nurse` with exactly the `NURSE` role, encoded with the same BCrypt encoder as every other account. Both creations are lookup-before-create: an existing account is never duplicated, and its password, roles, or any other field are never modified, so restarts are idempotent.
+- With the flag false or absent, behavior is exactly as before: only the initial `admin` bootstrap applies, no `doctor`/`nurse` accounts are created, and the review-password variables are never required.
+- These accounts exist only to exercise DOCTOR/NURSE views during training and review. MediCore is an educational, non-clinical project: never enable this against a shared or production data store, and treat the review credentials as disposable values owned entirely by the runtime environment (never tracked files).
+
 ## Automated verification
 
 Run the full test gates from the repository root:
 
 ```bash
-cd backend && mvn test                        # 34 tests (PatientJourneyApiTest 19,
+cd backend && mvn test                        # 40 tests (PatientJourneyApiTest 19,
                                               # SecurityAuthorizationTest 9,
+                                              # DevAdminInitializerTest 6,
                                               # DemoDataInitializerTest 5,
                                               # ArchitectureSmokeTest 1)
 cd ../frontend && npm test && npm run build   # 61 tests across 7 files + production build

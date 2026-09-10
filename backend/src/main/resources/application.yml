@@ -33,3 +33,11 @@ server:
 medicore:
   demo:
     seed: ${MEDICORE_DEMO_SEED:false}
+  # Opt-in review accounts (training/review environments only): disabled by
+  # default. With MEDICORE_REVIEW_ACCOUNTS_ENABLED=true, startup creates the
+  # doctor/nurse review accounts only if absent, using the runtime-only
+  # HOSPITAL_REVIEW_DOCTOR_PASSWORD and HOSPITAL_REVIEW_NURSE_PASSWORD
+  # variables; existing accounts are never modified. No real or secret values
+  # belong in this file.
+  review-accounts:
+    enabled: ${MEDICORE_REVIEW_ACCOUNTS_ENABLED:false}

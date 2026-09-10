@@ -46,9 +46,27 @@ describe('navigation registry (plan1.md Task 9 + plan2.md Tasks 2-4)', () => {
   });
 
   it('offers a role outside the admitted sets only the dashboard', () => {
-    for (const role of ['LAB_TECH', 'PHARMACIST', 'HR', 'STAFF']) {
+    // plan2.md Task 6: every dashboard-only role is pinned, including
+    // RADIOLOGY_TECH — the registry must not invent destinations the
+    // server refuses with 403.
+    for (const role of ['LAB_TECH', 'RADIOLOGY_TECH', 'PHARMACIST', 'HR', 'STAFF']) {
       expect(destinationIds([role])).toEqual(['dashboard']);
     }
+  });
+
+  it('offers multi-role sessions the union of their destination sets', () => {
+    // Combining roles may add destinations but never widens past the
+    // per-role sets: audit stays reachable through ADMIN only.
+    expect(destinationIds(['DOCTOR', 'BILLING'])).toEqual(
+      ['dashboard', 'patients', 'appointments', 'admissions', 'emergency-visits', 'invoices'],
+    );
+    expect(destinationIds(['LAB_TECH', 'BILLING'])).toEqual(['dashboard', 'invoices']);
+    expect(destinationIds(['RECEPTIONIST', 'HR'])).toEqual(
+      ['dashboard', 'patients', 'appointments', 'admissions', 'emergency-visits'],
+    );
+    expect(destinationIds(['ADMIN', 'LAB_TECH'])).toEqual(
+      ['dashboard', 'patients', 'appointments', 'admissions', 'emergency-visits', 'invoices', 'audit'],
+    );
   });
 
   it('admissions is an implemented destination with its own label and heading', () => {

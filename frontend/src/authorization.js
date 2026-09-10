@@ -1,4 +1,6 @@
-// Single source of truth for UI capability hints (plan1.md Task 9).
+// Single source of truth for UI capability hints (plan1.md Task 9; the
+// care-operations families below were added by plan2.md Tasks 2-4 and are
+// pinned against the enforced server matrix by plan2.md Task 6).
 //
 // Pure data plus one predicate. No side effects, no transport. Everything
 // here is a convenience boundary for the interface only: it decides which
@@ -7,7 +9,7 @@
 // deny-by-default and authoritative for every request (401 on an expired
 // or absent session, 403 on a role the path rules refuse).
 //
-// Implemented UI actions only (plan1.md Tasks 6-10):
+// Implemented UI actions only (plan1.md Tasks 6-10 and plan2.md Tasks 2-4):
 //   patient read       GET  /api/patients, GET /api/patients/{id}
 //                      (list/search screen and detail view)
 //   patient create     POST /api/patients       (the "New patient" action)

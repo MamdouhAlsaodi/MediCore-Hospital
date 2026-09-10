@@ -87,7 +87,13 @@ const ACTIONS_PER_RESOURCE = {
   admission: ['read', 'create', 'transition'],
   emergencyVisit: ['read', 'create', 'transition'],
   invoice: ['read', 'create', 'transition'],
+  audit: ['read'],
 };
+
+// Every role outside the named families must be denied by default across
+// the whole implemented map (plan2.md Task 6: dashboard-only roles never
+// gain a care-operation or audit capability from the UI hint layer).
+const DENY_BY_DEFAULT_ROLES = ['LAB_TECH', 'RADIOLOGY_TECH', 'PHARMACIST', 'HR', 'STAFF'];
 
 describe('authorization permission map (plan1.md Task 9 + plan2.md Tasks 2-4)', () => {
   it('grants patient actions exactly per the documented matrix', () => {
@@ -166,6 +172,47 @@ describe('authorization permission map (plan1.md Task 9 + plan2.md Tasks 2-4)', 
         expect(can(session, action, resource), `unknown role can ${action} ${resource}`).toBe(false);
       }
     }
+  });
+
+  it('denies every implemented action to every deny-by-default role, including RADIOLOGY_TECH', () => {
+    // plan2.md Task 6: LAB_TECH, RADIOLOGY_TECH, PHARMACIST, HR, and STAFF
+    // hold no destination beyond the dashboard and no implemented action —
+    // the hint layer must never invent one the server refuses with 403.
+    for (const role of DENY_BY_DEFAULT_ROLES) {
+      const session = sessionFor(role);
+      for (const [resource, actions] of Object.entries(ACTIONS_PER_RESOURCE)) {
+        for (const action of actions) {
+          expect(can(session, action, resource), `${role} can ${action} ${resource}`).toBe(false);
+        }
+      }
+    }
+  });
+
+  it('grants multi-role sessions the union of their single-role capabilities and nothing more', () => {
+    // A session carries a role list; the predicate is a union over it.
+    // Combining roles may add capabilities but can never widen past the
+    // per-role sets (e.g. no combination below reaches audit read).
+    const doctorBilling = sessionFor('DOCTOR', 'BILLING');
+    expect(can(doctorBilling, 'read', 'invoice')).toBe(true); // via BILLING
+    expect(can(doctorBilling, 'create', 'invoice')).toBe(true); // via BILLING
+    expect(can(doctorBilling, 'transition', 'admission')).toBe(true); // via DOCTOR
+    expect(can(doctorBilling, 'read', 'patient')).toBe(true); // via DOCTOR
+    expect(can(doctorBilling, 'create', 'patient')).toBe(false); // neither role
+    expect(can(doctorBilling, 'read', 'audit')).toBe(false); // neither role
+
+    const receptionistBilling = sessionFor('RECEPTIONIST', 'BILLING');
+    expect(can(receptionistBilling, 'create', 'patient')).toBe(true); // via RECEPTIONIST
+    expect(can(receptionistBilling, 'transition', 'invoice')).toBe(true); // via BILLING
+    expect(can(receptionistBilling, 'read', 'audit')).toBe(false);
+
+    const nurseLabTech = sessionFor('NURSE', 'LAB_TECH');
+    expect(can(nurseLabTech, 'create', 'emergencyVisit')).toBe(true); // via NURSE
+    expect(can(nurseLabTech, 'read', 'invoice')).toBe(false); // LAB_TECH adds nothing
+    expect(can(nurseLabTech, 'read', 'audit')).toBe(false);
+
+    const adminPharmacist = sessionFor('ADMIN', 'PHARMACIST');
+    expect(can(adminPharmacist, 'read', 'audit')).toBe(true); // via ADMIN
+    expect(can(adminPharmacist, 'transition', 'invoice')).toBe(true); // via ADMIN
   });
 
   it('denies by default for missing sessions, empty role lists, unknown questions, and audit read outside ADMIN', () => {

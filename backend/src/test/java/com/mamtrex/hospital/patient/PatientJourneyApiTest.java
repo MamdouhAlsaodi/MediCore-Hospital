@@ -1,6 +1,13 @@
 package com.mamtrex.hospital.patient;
 
+import com.mamtrex.hospital.auth.ActingAssignment;
+import com.mamtrex.hospital.auth.ActingAssignmentRepository;
+import com.mamtrex.hospital.auth.AssignmentScope;
 import com.mamtrex.hospital.auth.Role;
+import com.mamtrex.hospital.organization.Branch;
+import com.mamtrex.hospital.organization.BranchRepository;
+import com.mamtrex.hospital.organization.HospitalOrganization;
+import com.mamtrex.hospital.organization.HospitalOrganizationRepository;
 import com.mamtrex.hospital.auth.UserAccount;
 import com.mamtrex.hospital.auth.UserAccountRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -78,9 +85,26 @@ class PatientJourneyApiTest {
     @Autowired
     PasswordEncoder encoder;
 
+    @Autowired
+    ActingAssignmentRepository assignments;
+
+    @Autowired
+    HospitalOrganizationRepository organizations;
+
+    @Autowired
+    BranchRepository branches;
+
     /** Unique synthetic suffix per test instance keeps every record disposable. */
     private final String suffix = UUID.randomUUID().toString().substring(0, 8);
 
+    private static final String TEST_ORG_CODE = "JOURNEY-ORG";
+    private static final String TEST_BRANCH_CODE = "JOURNEY-BR-DEFAULT";
+
+    /**
+     * Task 3 seeding: every synthetic account logs in through an explicit
+     * enabled acting assignment on a stable synthetic organization and
+     * default branch — no global-role fallback exists.
+     */
     @BeforeEach
     void seedDisposableAccounts() {
         if (accounts.findByUsername(RECEPTIONIST).isEmpty()) {
@@ -91,6 +115,34 @@ class PatientJourneyApiTest {
         }
         if (accounts.findByUsername(DENIED).isEmpty()) {
             accounts.save(new UserAccount(DENIED, encoder.encode(TEST_ACCOUNT_PASSWORD), Set.of(Role.STAFF)));
+        }
+        HospitalOrganization org = organizations.findByCode(TEST_ORG_CODE).orElseGet(() ->
+                organizations.save(new HospitalOrganization(TEST_ORG_CODE, "Synthetic Journey Hospital")));
+        Branch branch = branches.findByOrganizationIdAndCode(org.getId(), TEST_BRANCH_CODE).orElseGet(() ->
+                branches.save(new Branch(org, TEST_BRANCH_CODE, "Synthetic Journey Branch", "1 Journey Way")));
+        ensureAssignment(ADMIN_USER, Role.ADMIN, AssignmentScope.ORGANIZATION, org, null);
+        ensureAssignment(RECEPTIONIST, Role.RECEPTIONIST, AssignmentScope.BRANCH, org, branch);
+        ensureAssignment(DENIED, Role.STAFF, AssignmentScope.BRANCH, org, branch);
+    }
+
+    private void ensureAssignment(String username, Role role, AssignmentScope scope,
+                                  HospitalOrganization org, Branch branch) {
+        UserAccount account = accounts.findByUsername(username).orElseThrow();
+        boolean present = switch (scope) {
+            case ORGANIZATION -> assignments
+                    .findByAccountIdAndRoleAndScopeAndBranchIsNullAndDepartmentIsNull(account.getId(), role, scope)
+                    .isPresent();
+            case BRANCH -> assignments
+                    .findByAccountIdAndRoleAndScopeAndBranchId(account.getId(), role, scope, branch.getId())
+                    .isPresent();
+            case DEPARTMENT -> false;
+        };
+        if (!present) {
+            assignments.save(switch (scope) {
+                case ORGANIZATION -> ActingAssignment.organization(account, org, role);
+                case BRANCH -> ActingAssignment.branch(account, org, role, branch);
+                case DEPARTMENT -> throw new IllegalArgumentException("These suites seed organization/branch scopes only");
+            });
         }
     }
 

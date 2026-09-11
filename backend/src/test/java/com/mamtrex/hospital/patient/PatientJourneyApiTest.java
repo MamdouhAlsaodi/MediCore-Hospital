@@ -42,7 +42,12 @@ import static org.junit.jupiter.api.Assertions.*;
  * relationships: patientId/professionalId are typed UUIDs, unknown
  * references return 404, malformed references return 400, only verified
  * references persist an appointment, and only the successful mutation
- * records an Appointment CREATE audit event. Runs against an isolated
+ * records an Appointment CREATE audit event. Plan 3 Task 4
+ * (docs/plan3.md) binds the whole journey to the actor's branch: patient,
+ * staff, and appointment records are owned by the acting branch derived
+ * from the acting context (never client input), responses expose the
+ * owning branchId, and every journey read resolves inside that branch.
+ * Runs against an isolated
  * in-memory H2 database (never the production file store) with disposable
  * synthetic test-only secrets and fabricated record values; no real
  * personal or clinical data is ever used.
@@ -67,14 +72,14 @@ class PatientJourneyApiTest {
     /** STAFF is deliberately NOT in the /api/patients/** allowed role set. */
     private static final String DENIED = "journey-denied-staff";
 
-    /** Stable public Patient DTO contract; persistence internals stay out. */
+    /** Stable public Patient DTO contract (plan3 Task 4 adds branchId); persistence internals stay out. */
     private static final Set<String> PATIENT_CONTRACT_FIELDS = Set.of(
-            "id", "medicalRecordNumber", "fullName", "dateOfBirth", "sex",
+            "id", "branchId", "medicalRecordNumber", "fullName", "dateOfBirth", "sex",
             "phone", "email", "nationalId", "address", "active");
 
-    /** Stable public Appointment DTO contract; references are verified UUIDs. */
+    /** Stable public Appointment DTO contract (plan3 Task 4 adds branchId); references are verified UUIDs. */
     private static final Set<String> APPOINTMENT_CONTRACT_FIELDS = Set.of(
-            "id", "patientId", "professionalId", "scheduledAt", "type", "status");
+            "id", "branchId", "patientId", "professionalId", "scheduledAt", "type", "status");
 
     @Autowired
     TestRestTemplate rest;
@@ -624,6 +629,55 @@ class PatientJourneyApiTest {
         assertEquals(RECEPTIONIST, event.get("actor"));
         assertEquals(mrn, event.get("details"));
         assertNotNull(event.get("occurredAt"));
+    }
+
+    /**
+     * Plan 3 Task 4 branch-bound journey: patient, staff, and appointment
+     * creation derives ownership from the actor's acting context — the
+     * created records carry the actor's acting branch id, never a
+     * client-supplied branch — and the created appointment shares that
+     * branch with its same-branch references.
+     */
+    @Test
+    void patientAndAppointmentCreationDeriveBranchOwnershipFromTheActingContext() {
+        String expectedBranchId = actingBranchId(RECEPTIONIST);
+        String token = login(RECEPTIONIST);
+        String patientId = createVerifiedPatientId(token, "-BRANCH");
+        ResponseEntity<Map<String, Object>> patient = getMap("/api/patients/" + patientId, token);
+        assertEquals(HttpStatus.OK, patient.getStatusCode());
+        assertNotNull(patient.getBody());
+        assertEquals(expectedBranchId, String.valueOf(patient.getBody().get("branchId")),
+                "patient ownership must derive from the actor's acting branch, never from client input");
+
+        String professionalId = createVerifiedStaffId("-BRANCH");
+        ResponseEntity<Map<String, Object>> created = post("/api/appointments", token, Map.of(
+                "patientId", patientId,
+                "professionalId", professionalId,
+                "scheduledAt", "2031-08-08T09:30:00",
+                "type", "consultation",
+                "status", "scheduled"));
+        assertEquals(HttpStatus.OK, created.getStatusCode(),
+                "same-branch verified references must allow the appointment create");
+        assertNotNull(created.getBody());
+        assertEquals(expectedBranchId, String.valueOf(created.getBody().get("branchId")),
+                "appointment ownership must derive from the actor's acting branch as well");
+
+        ResponseEntity<Map<String, Object>> detail = getMap("/api/appointments/" + created.getBody().get("id"), token);
+        assertEquals(HttpStatus.OK, detail.getStatusCode());
+        assertNotNull(detail.getBody());
+        assertEquals(expectedBranchId, String.valueOf(detail.getBody().get("branchId")),
+                "the branch-scoped detail read must expose the same owning branch");
+    }
+
+    /** The acting branch id the login contract selected for the account (actingContext.branchId). */
+    private String actingBranchId(String username) {
+        ResponseEntity<Map<String, Object>> res = post("/api/auth/login", null, Map.of(
+                "username", username, "password", TEST_ACCOUNT_PASSWORD));
+        assertEquals(HttpStatus.OK, res.getStatusCode(), "login should succeed for " + username);
+        Map<String, Object> body = res.getBody();
+        assertNotNull(body);
+        assertInstanceOf(Map.class, body.get("actingContext"));
+        return String.valueOf(((Map<?, ?>) body.get("actingContext")).get("branchId"));
     }
 
     /** Creates a verified synthetic patient and returns its UUID string. */

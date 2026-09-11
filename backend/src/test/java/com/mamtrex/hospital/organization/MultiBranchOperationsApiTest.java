@@ -4,10 +4,16 @@ import com.mamtrex.hospital.auth.ActingAssignment;
 import com.mamtrex.hospital.auth.ActingAssignmentRepository;
 import com.mamtrex.hospital.auth.AssignmentScope;
 import com.mamtrex.hospital.auth.Role;
+import com.mamtrex.hospital.appointment.Appointment;
+import com.mamtrex.hospital.appointment.AppointmentRepository;
 import com.mamtrex.hospital.auth.UserAccount;
 import com.mamtrex.hospital.auth.UserAccountRepository;
 import com.mamtrex.hospital.department.Department;
 import com.mamtrex.hospital.department.DepartmentRepository;
+import com.mamtrex.hospital.patient.Patient;
+import com.mamtrex.hospital.patient.PatientRepository;
+import com.mamtrex.hospital.staff.StaffMember;
+import com.mamtrex.hospital.staff.StaffMemberRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -124,6 +130,15 @@ class MultiBranchOperationsApiTest {
 
     @Autowired
     ActingAssignmentRepository assignments;
+
+    @Autowired
+    PatientRepository patients;
+
+    @Autowired
+    StaffMemberRepository staffMembers;
+
+    @Autowired
+    AppointmentRepository appointments;
 
     /** Unique synthetic suffix per test instance keeps every record disposable and scoped. */
     private final String suffix = UUID.randomUUID().toString().substring(0, 8);
@@ -932,6 +947,203 @@ class MultiBranchOperationsApiTest {
     }
 
     // ------------------------------------------------------------------
+    // 22. Task 4: patients, staff, and appointments are branch-owned.
+    // ------------------------------------------------------------------
+
+    /** Issues a replacement ADMIN token acting exactly on one synthetic branch through the real context contract. */
+    private String adminTokenActingOn(Branch branch) {
+        UUID adminAssignmentId = assignments
+                .findByAccountIdAndEnabledTrueOrderByRoleAscScopeAscIdAsc(
+                        accounts.findByUsername(ADMIN).orElseThrow().getId())
+                .stream().filter(a -> a.getRole() == Role.ADMIN).findFirst().orElseThrow().getId();
+        ResponseEntity<Map<String, Object>> switched = postJson("/api/auth/context", login(ADMIN), Map.of(
+                "assignmentId", adminAssignmentId.toString(),
+                "branchId", branch.getId().toString()));
+        assertEquals(HttpStatus.OK, switched.getStatusCode(),
+                "the organization-scope ADMIN must act on any active branch of its organization");
+        assertNotNull(switched.getBody());
+        return String.valueOf(switched.getBody().get("accessToken"));
+    }
+
+    /** Creates a branch through the public contract and loads the persisted entity. */
+    private Branch createdBranch(String code) {
+        String id = String.valueOf(createBranch(login(ADMIN), code).get("id"));
+        return branches.findById(UUID.fromString(id))
+                .orElseThrow(() -> new AssertionError("the created branch must be persisted: " + code));
+    }
+
+    /** The id set of a JSON-array response body, asserting the shared 200 shape first. */
+    private List<String> listOfIds(ResponseEntity<List<Map<String, Object>>> response) {
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        List<Map<String, Object>> body = response.getBody();
+        assertNotNull(body, "the list response must carry a body");
+        return body.stream().map(row -> String.valueOf(row.get("id"))).toList();
+    }
+
+    /**
+     * Task 4 two-branch proof: patient, staff, and appointment creation
+     * derives ownership from the acting context on each branch (the
+     * response branchId equals the acting branch, and the create request
+     * carries no branch input), while every list, search, and detail read
+     * resolves only inside the acting branch — a cross-branch id answers
+     * the shared 404, indistinguishable from a nonexistent row.
+     */
+    @Test
+    void workflowRecordsAreOwnedByTheActingBranchAndEveryWorkflowReadIsBranchScoped() {
+        Branch branchA = createdBranch(suffix + "-ta");
+        Branch branchB = createdBranch(suffix + "-tb");
+        String tokenA = adminTokenActingOn(branchA);
+        String tokenB = adminTokenActingOn(branchB);
+
+        // Creation derives ownership from the acting context on both branches.
+        Map<String, Object> patientA = postJson("/api/patients", tokenA, patientCreatePayload("ta")).getBody();
+        Map<String, Object> staffA = postJson("/api/staff", tokenA, staffCreatePayload("ta")).getBody();
+        Map<String, Object> patientB = postJson("/api/patients", tokenB, patientCreatePayload("tb")).getBody();
+        Map<String, Object> staffB = postJson("/api/staff", tokenB, staffCreatePayload("tb")).getBody();
+        assertNotNull(patientA);
+        assertNotNull(staffA);
+        assertNotNull(patientB);
+        assertNotNull(staffB);
+        assertEquals(branchA.getId().toString(), String.valueOf(patientA.get("branchId")),
+                "the patient must be owned by the acting branch derived from the context");
+        assertEquals(branchB.getId().toString(), String.valueOf(patientB.get("branchId")),
+                "the same request shape must bind to the other acting branch, proving context derivation");
+        assertEquals(branchA.getId().toString(), String.valueOf(staffA.get("branchId")),
+                "the staff record must be owned by the acting branch");
+        assertEquals(branchB.getId().toString(), String.valueOf(staffB.get("branchId")),
+                "the other-branch staff record must bind to its own acting branch");
+
+        Map<String, Object> appointmentA = postJson("/api/appointments", tokenA,
+                appointmentPayload(String.valueOf(patientA.get("id")), String.valueOf(staffA.get("id")))).getBody();
+        Map<String, Object> appointmentB = postJson("/api/appointments", tokenB,
+                appointmentPayload(String.valueOf(patientB.get("id")), String.valueOf(staffB.get("id")))).getBody();
+        assertNotNull(appointmentA);
+        assertNotNull(appointmentB);
+        assertEquals(branchA.getId().toString(), String.valueOf(appointmentA.get("branchId")),
+                "the appointment must be owned by the acting branch");
+
+        // Cross-branch detail reads are the shared 404 — indistinguishable from nonexistent.
+        assertEquals(HttpStatus.NOT_FOUND, getJson("/api/patients/" + patientB.get("id"), tokenA).getStatusCode(),
+                "branch A must not see branch B's patient");
+        assertEquals(HttpStatus.NOT_FOUND, getJson("/api/staff/" + staffB.get("id"), tokenA).getStatusCode(),
+                "branch A must not see branch B's professional");
+        assertEquals(HttpStatus.NOT_FOUND, getJson("/api/appointments/" + appointmentB.get("id"), tokenA).getStatusCode(),
+                "branch A must not see branch B's appointment");
+        assertEquals(HttpStatus.NOT_FOUND, getJson("/api/patients/" + patientA.get("id"), tokenB).getStatusCode(),
+                "the isolation is symmetric");
+
+        // Lists resolve only inside the acting branch.
+        List<String> patientIdsA = listOfIds(getList("/api/patients", tokenA));
+        assertTrue(patientIdsA.contains(String.valueOf(patientA.get("id"))), "branch A lists its own patient");
+        assertFalse(patientIdsA.contains(String.valueOf(patientB.get("id"))), "branch A never lists branch B's patient");
+        List<String> staffIdsA = listOfIds(getList("/api/staff", tokenA));
+        assertTrue(staffIdsA.contains(String.valueOf(staffA.get("id"))), "branch A lists its own professional");
+        assertFalse(staffIdsA.contains(String.valueOf(staffB.get("id"))), "branch A never lists branch B's professional");
+        List<String> appointmentIdsA = listOfIds(getList("/api/appointments", tokenA));
+        assertTrue(appointmentIdsA.contains(String.valueOf(appointmentA.get("id"))), "branch A lists its own appointment");
+        assertFalse(appointmentIdsA.contains(String.valueOf(appointmentB.get("id"))),
+                "branch A never lists branch B's appointment");
+
+        // Search resolves only inside the acting branch (the per-instance suffix matches exactly this method's rows).
+        assertEquals(List.of(String.valueOf(patientA.get("id"))), listOfIds(getList("/api/patients?q=" + suffix, tokenA)),
+                "the branch-scoped search must match only branch A's row");
+        assertEquals(List.of(String.valueOf(patientB.get("id"))), listOfIds(getList("/api/patients?q=" + suffix, tokenB)),
+                "the same query from branch B must match only branch B's row");
+    }
+
+    /**
+     * Task 4 reference validation and audit contract: an appointment
+     * referencing a row of another branch is refused with the same 404 as a
+     * nonexistent reference (no existence leak), failed writes record no
+     * audit event while the same-branch success records exactly one, and
+     * the MRN uniqueness stays global — a cross-branch duplicate is still
+     * the shared 409.
+     */
+    @Test
+    void crossBranchReferencesAreRefusedWithoutAuditWhileGlobalUniquenessStaysGlobal() {
+        Branch branchA = createdBranch(suffix + "-ra");
+        Branch branchB = createdBranch(suffix + "-rb");
+        String tokenA = adminTokenActingOn(branchA);
+        String tokenB = adminTokenActingOn(branchB);
+
+        Map<String, Object> patientA = postJson("/api/patients", tokenA, patientCreatePayload("ra")).getBody();
+        Map<String, Object> staffA = postJson("/api/staff", tokenA, staffCreatePayload("ra")).getBody();
+        Map<String, Object> patientB = postJson("/api/patients", tokenB, patientCreatePayload("rb")).getBody();
+        Map<String, Object> staffB = postJson("/api/staff", tokenB, staffCreatePayload("rb")).getBody();
+        assertNotNull(patientA);
+        assertNotNull(staffA);
+        assertNotNull(patientB);
+        assertNotNull(staffB);
+
+        long appointmentCreatesBefore = auditEventCount("Appointment", "CREATE");
+        assertEquals(HttpStatus.NOT_FOUND, postJson("/api/appointments", tokenA,
+                        appointmentPayload(String.valueOf(patientB.get("id")), String.valueOf(staffA.get("id")))).getStatusCode(),
+                "a cross-branch patient reference must be indistinguishable from a nonexistent one");
+        assertEquals(HttpStatus.NOT_FOUND, postJson("/api/appointments", tokenA,
+                        appointmentPayload(String.valueOf(patientA.get("id")), String.valueOf(staffB.get("id")))).getStatusCode(),
+                "a cross-branch professional reference must be refused like an unknown one");
+        assertEquals(appointmentCreatesBefore, auditEventCount("Appointment", "CREATE"),
+                "failed cross-branch writes must record no audit event");
+
+        assertTrue(postJson("/api/appointments", tokenA,
+                        appointmentPayload(String.valueOf(patientA.get("id")), String.valueOf(staffA.get("id"))))
+                        .getStatusCode().is2xxSuccessful(),
+                "the same-branch reference pair must succeed");
+        assertEquals(appointmentCreatesBefore + 1, auditEventCount("Appointment", "CREATE"),
+                "exactly one Appointment CREATE audit event must follow the successful write");
+
+        Map<String, Object> duplicateMrn = new HashMap<>(patientCreatePayload("rb-dup"));
+        duplicateMrn.put("medicalRecordNumber", patientA.get("medicalRecordNumber"));
+        assertEquals(HttpStatus.CONFLICT, postJson("/api/patients", tokenB, duplicateMrn).getStatusCode(),
+                "MRN uniqueness stays global in Phase 3 — a cross-branch duplicate is still the shared conflict");
+        assertEquals(appointmentCreatesBefore + 1, auditEventCount("Appointment", "CREATE"),
+                "the refused duplicate patient write must record no audit event");
+    }
+
+    /**
+     * Task 4 legacy seam: workflow rows persisted before branch ownership
+     * (null branch) are invisible and untouchable through every
+     * branch-scoped endpoint while staying untouched in the store —
+     * mirroring the Task 2 unassigned-department contract.
+     */
+    @Test
+    void unassignedLegacyWorkflowRowsStayInvisibleAndUntouchableThroughBranchScopedEndpoints() {
+        String token = adminTokenActingOn(branchByCode(TEST_DEFAULT_BRANCH_CODE));
+
+        Patient legacyPatient = patients.save(new Patient(null, "MRN-MB-" + suffix + "-legacy",
+                "Legacy Unassigned Patient " + suffix, null, null, null, null, null, null));
+        StaffMember legacyStaff = staffMembers.save(new StaffMember(null, "EMP-MB-" + suffix + "-legacy",
+                "Legacy Unassigned Professional " + suffix, "cardiology", "LIC-MB-" + suffix + "-legacy",
+                "internal medicine"));
+        Appointment legacyAppointment = appointments.save(new Appointment(null,
+                legacyPatient.getId().toString(), legacyStaff.getId().toString(),
+                "2031-09-09T09:00", "consultation", "scheduled"));
+
+        assertEquals(HttpStatus.NOT_FOUND, getJson("/api/patients/" + legacyPatient.getId(), token).getStatusCode(),
+                "get must not disclose an unassigned legacy patient");
+        assertEquals(HttpStatus.NOT_FOUND, getJson("/api/staff/" + legacyStaff.getId(), token).getStatusCode(),
+                "get must not disclose an unassigned legacy professional");
+        assertEquals(HttpStatus.NOT_FOUND, getJson("/api/appointments/" + legacyAppointment.getId(), token).getStatusCode(),
+                "get must not disclose an unassigned legacy appointment");
+        assertFalse(listOfIds(getList("/api/patients", token)).contains(legacyPatient.getId().toString()),
+                "the list must never disclose an unassigned legacy patient");
+        assertFalse(listOfIds(getList("/api/staff", token)).contains(legacyStaff.getId().toString()),
+                "the list must never disclose an unassigned legacy professional");
+        assertFalse(listOfIds(getList("/api/appointments", token)).contains(legacyAppointment.getId().toString()),
+                "the list must never disclose an unassigned legacy appointment");
+
+        assertEquals(legacyPatient.getMedicalRecordNumber(),
+                patients.findById(legacyPatient.getId()).orElseThrow().getMedicalRecordNumber(),
+                "the legacy patient row must stay untouched");
+        assertNull(patients.findById(legacyPatient.getId()).orElseThrow().getBranch(),
+                "the legacy patient row must remain unassigned");
+        assertNull(staffMembers.findById(legacyStaff.getId()).orElseThrow().getBranch(),
+                "the legacy professional row must remain unassigned");
+        assertNull(appointments.findById(legacyAppointment.getId()).orElseThrow().getBranch(),
+                "the legacy appointment row must remain unassigned");
+    }
+
+    // ------------------------------------------------------------------
     // HTTP and synthetic-data helpers
     // ------------------------------------------------------------------
 
@@ -942,11 +1154,16 @@ class MultiBranchOperationsApiTest {
     }
 
     /**
-     * Wipes the hierarchy tables in FK-safe order — acting assignments first,
-     * because they reference branches and organizations — and then fully
-     * restores the shared foundation so every later login keeps working.
+     * Wipes the hierarchy tables in FK-safe order — since docs/plan3.md
+     * Task 4 the workflow rows are branch-owned and reference branches, so
+     * they leave first alongside the acting assignments that also reference
+     * branches and organizations — and then fully restores the shared
+     * foundation so every later login keeps working.
      */
     private void wipeHierarchy() {
+        appointments.deleteAll();
+        staffMembers.deleteAll();
+        patients.deleteAll();
         assignments.deleteAll();
         departments.deleteAll();
         branches.deleteAll();

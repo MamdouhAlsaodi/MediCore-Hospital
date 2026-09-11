@@ -51,7 +51,9 @@ import static org.junit.jupiter.api.Assertions.*;
  * resets, every newly created seeded record produces exactly one CREATE
  * audit event attributed to the system actor (reused records add none),
  * unknown pre-existing null-branch departments stay untouched and
- * unassigned, the dashboard aggregates reflect the exact fixture
+ * unassigned, the seeded workflow cohort (patients, professionals,
+ * appointments) is bound at creation time to the stable default branch
+ * (docs/plan3.md Task 4), the dashboard aggregates reflect the exact fixture
  * composition through the real {@link DashboardService}, and the disabled
  * default touches no store and records no event. Runs against an isolated
  * in-memory H2 database (never the production file store) with disposable
@@ -206,6 +208,50 @@ class DemoDataInitializerTest {
                 "demo department names must be obviously synthetic");
         assertTrue(assigned.stream().allMatch(department -> branch.getId().equals(department.getBranch().getId())),
                 "every assigned department must resolve to the demo default branch");
+    }
+
+    /**
+     * Plan 3 Task 4: every seeded workflow row — patients, professionals,
+     * and appointments — resolves to the stable {@code DEMO-BR-001} default
+     * branch at creation time, and repeated seeding keeps that binding
+     * without inflating rows, reassigning records, or touching unknown
+     * unassigned rows.
+     */
+    @Test
+    void demoWorkflowCohortIsAssignedToTheStableDefaultBranchIdempotently() {
+        Branch branch = branches.findByOrganizationIdAndCode(
+                organizations.findByCode(DEMO_ORG_CODE).orElseThrow().getId(), DEMO_BRANCH_CODE).orElseThrow();
+
+        List<Patient> cohort = demoPatients();
+        assertEquals(3, cohort.size(), "the demo patient cohort must be present");
+        assertTrue(cohort.stream().allMatch(p -> p.getBranch() != null
+                        && branch.getId().equals(p.getBranch().getId())),
+                "every seeded patient must be owned by the stable default branch");
+        assertTrue(demoStaff().stream().allMatch(s -> s.getBranch() != null
+                        && branch.getId().equals(s.getBranch().getId())),
+                "every seeded professional must be owned by the stable default branch");
+        assertTrue(appointments.findAll().stream().allMatch(a -> a.getBranch() != null
+                        && branch.getId().equals(a.getBranch().getId())),
+                "every seeded appointment must be owned by the stable default branch");
+
+        long patientsBefore = patients.count();
+        long staffBefore = staff.count();
+        long appointmentsBefore = appointments.count();
+        initializer.seedDemoCohort();
+        initializer.seedDemoCohort();
+
+        assertEquals(patientsBefore, patients.count(), "reruns must not inflate patients");
+        assertEquals(staffBefore, staff.count(), "reruns must not inflate professionals");
+        assertEquals(appointmentsBefore, appointments.count(), "reruns must not inflate appointments");
+        assertTrue(demoPatients().stream().allMatch(p -> p.getBranch() != null
+                        && branch.getId().equals(p.getBranch().getId())),
+                "the patient branch binding must stay stable across reruns");
+        assertTrue(demoStaff().stream().allMatch(s -> s.getBranch() != null
+                        && branch.getId().equals(s.getBranch().getId())),
+                "the professional branch binding must stay stable across reruns");
+        assertTrue(appointments.findAll().stream().allMatch(a -> a.getBranch() != null
+                        && branch.getId().equals(a.getBranch().getId())),
+                "the appointment branch binding must stay stable across reruns");
     }
 
     /**

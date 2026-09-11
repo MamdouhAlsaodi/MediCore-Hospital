@@ -249,14 +249,16 @@ class DashboardApiTest {
     // ------------------------------------------------------------------
 
     private void seedExactCohort() {
-        Patient first = patients.save(new Patient("MRN-DASH-A-" + suffix, "Synthetic Dashboard Patient A",
+        // Task 4 (docs/plan3.md): null branch = deliberate legacy unassigned
+        // rows; the dashboard stays whole-table and branchless this task.
+        Patient first = patients.save(new Patient(null, "MRN-DASH-A-" + suffix, "Synthetic Dashboard Patient A",
                 null, null, null, null, null, null));
-        Patient second = patients.save(new Patient("MRN-DASH-B-" + suffix, "Synthetic Dashboard Patient B",
+        Patient second = patients.save(new Patient(null, "MRN-DASH-B-" + suffix, "Synthetic Dashboard Patient B",
                 null, null, null, null, null, null));
         String firstId = first.getId().toString();
 
         for (int i = 0; i < 3; i++) {
-            appointments.save(new Appointment(firstId, "raw-professional-ref", "2031-01-0" + (i + 1) + "T09:00",
+            appointments.save(new Appointment(null, firstId, "raw-professional-ref", "2031-01-0" + (i + 1) + "T09:00",
                     "Consultation", "scheduled"));
         }
 

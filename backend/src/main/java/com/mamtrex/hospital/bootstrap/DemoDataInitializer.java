@@ -69,6 +69,14 @@ import java.time.LocalDateTime;
  * Create events fire only when a new hierarchy row is actually inserted;
  * idempotent lookups fabricate nothing.</p>
  *
+ * <p>Plan 3 Task 4 binds the seeded workflow cohort to that same stable
+ * default branch: patients, professionals, and appointments created here
+ * carry the {@code DEMO-BR-001} branch at creation time, so the cohort is
+ * fully visible inside branch-scoped workflows. The nullable association
+ * stays the deliberate legacy seam — unknown pre-existing unassigned rows
+ * are never mass-updated and stay inaccessible through branch-scoped
+ * endpoints.</p>
+ *
  * <p>Care-operation rows keep the Task 2–4 persistence representation:
  * String-typed canonical UUID references. Patients and professionals are
  * seeded first and every row then stores {@code getId().toString()} of the
@@ -147,21 +155,21 @@ public class DemoDataInitializer implements ApplicationRunner {
      * is seeded first so every later fixture keeps a stable foundation.
      */
     void seedDemoCohort() {
-        seedDemoHierarchy();
-        Patient alpha = seedPatient("DEMO-0001", "Demo Patient Alpha", LocalDate.of(2001, 1, 1),
+        Branch defaultBranch = seedDemoHierarchy();
+        Patient alpha = seedPatient(defaultBranch, "DEMO-0001", "Demo Patient Alpha", LocalDate.of(2001, 1, 1),
                 "unspecified", "+10000000001", "demo.alpha@synthetic.test", "NID-DEMO-1", "1 Demo Way");
-        Patient bravo = seedPatient("DEMO-0002", "Demo Patient Bravo", LocalDate.of(2002, 2, 2),
+        Patient bravo = seedPatient(defaultBranch, "DEMO-0002", "Demo Patient Bravo", LocalDate.of(2002, 2, 2),
                 "unspecified", "+10000000002", "demo.bravo@synthetic.test", "NID-DEMO-2", "2 Demo Way");
-        Patient charlie = seedPatient("DEMO-0003", "Demo Patient Charlie", LocalDate.of(2003, 3, 3),
+        Patient charlie = seedPatient(defaultBranch, "DEMO-0003", "Demo Patient Charlie", LocalDate.of(2003, 3, 3),
                 "unspecified", "+10000000003", "demo.charlie@synthetic.test", "NID-DEMO-3", "3 Demo Way");
 
-        StaffMember physician = seedStaffMember("DEMO-STAFF-001", "Demo Physician Alpha",
+        StaffMember physician = seedStaffMember(defaultBranch, "DEMO-STAFF-001", "Demo Physician Alpha",
                 "internal medicine", "DEMO-LIC-001", "Demo Care");
-        StaffMember nurse = seedStaffMember("DEMO-STAFF-002", "Demo Nurse Bravo",
+        StaffMember nurse = seedStaffMember(defaultBranch, "DEMO-STAFF-002", "Demo Nurse Bravo",
                 "nursing", "DEMO-LIC-002", "Demo Care");
 
-        seedAppointment(alpha, physician, LocalDateTime.of(2031, 3, 2, 9, 0), "consultation", "scheduled");
-        seedAppointment(bravo, nurse, LocalDateTime.of(2031, 3, 9, 10, 30), "follow-up", "confirmed");
+        seedAppointment(defaultBranch, alpha, physician, LocalDateTime.of(2031, 3, 2, 9, 0), "consultation", "scheduled");
+        seedAppointment(defaultBranch, bravo, nurse, LocalDateTime.of(2031, 3, 9, 10, 30), "follow-up", "confirmed");
 
         seedCareOperations(alpha, bravo, charlie);
     }
@@ -203,8 +211,10 @@ public class DemoDataInitializer implements ApplicationRunner {
      * the (organization, code) branch pair, and the (branch, code)
      * department pair. An existing row is reused untouched; only the
      * creating path records the CREATE audit event, so reruns add nothing.
+     * Returns the stable default branch that every seeded workflow fixture
+     * binds to (docs/plan3.md Task 4).
      */
-    private void seedDemoHierarchy() {
+    private Branch seedDemoHierarchy() {
         HospitalOrganization organization = organizationRepository
                 .findByCode(DEMO_ORGANIZATION_CODE)
                 .orElseGet(() -> {
@@ -224,6 +234,7 @@ public class DemoDataInitializer implements ApplicationRunner {
                 });
         seedDemoDepartment(branch, "DEMO-DEP-0001", "Demo Internal Medicine", "internal medicine", "Demo Tower A");
         seedDemoDepartment(branch, "DEMO-DEP-0002", "Demo Emergency Care", "emergency medicine", "Demo Tower B");
+        return branch;
     }
 
     /**
@@ -246,13 +257,14 @@ public class DemoDataInitializer implements ApplicationRunner {
     /**
      * Stable key: the medical record number. An existing demo patient is
      * reused, never duplicated; only the creating path records the CREATE
-     * audit event (details = the MRN, matching {@code PatientService}).
+     * audit event (details = the MRN, matching {@code PatientService}) and
+     * binds the row to the stable default branch (docs/plan3.md Task 4).
      */
-    private Patient seedPatient(String mrn, String fullName, LocalDate dateOfBirth, String sex,
+    private Patient seedPatient(Branch branch, String mrn, String fullName, LocalDate dateOfBirth, String sex,
                                 String phone, String email, String nationalId, String address) {
         return patientRepository.findByMedicalRecordNumber(mrn).orElseGet(() -> {
             Patient saved = patientRepository.save(
-                    new Patient(mrn, fullName, dateOfBirth, sex, phone, email, nationalId, address));
+                    new Patient(branch, mrn, fullName, dateOfBirth, sex, phone, email, nationalId, address));
             auditService.record("CREATE", "Patient", saved.getId().toString(), mrn);
             return saved;
         });
@@ -265,14 +277,14 @@ public class DemoDataInitializer implements ApplicationRunner {
      * Only the creating path records the CREATE audit event (details =
      * {@code created}, matching the staff controller).
      */
-    private StaffMember seedStaffMember(String employeeCode, String fullName, String profession,
+    private StaffMember seedStaffMember(Branch branch, String employeeCode, String fullName, String profession,
                                         String licenseNumber, String department) {
         return staffMemberRepository.findAll().stream()
                 .filter(staff -> employeeCode.equals(staff.getEmployeeCode()))
                 .findFirst()
                 .orElseGet(() -> {
                     StaffMember saved = staffMemberRepository.save(
-                            new StaffMember(employeeCode, fullName, profession, licenseNumber, department));
+                            new StaffMember(branch, employeeCode, fullName, profession, licenseNumber, department));
                     auditService.record("CREATE", "StaffMember", saved.getId().toString(), "created");
                     return saved;
                 });
@@ -284,7 +296,7 @@ public class DemoDataInitializer implements ApplicationRunner {
      * updated, or deleted. Only the creating path records the CREATE audit
      * event (details = {@code created}, matching {@code AppointmentService}).
      */
-    private void seedAppointment(Patient patient, StaffMember professional,
+    private void seedAppointment(Branch branch, Patient patient, StaffMember professional,
                                  LocalDateTime scheduledAt, String type, String status) {
         String patientKey = patient.getId().toString();
         String professionalKey = professional.getId().toString();
@@ -296,7 +308,7 @@ public class DemoDataInitializer implements ApplicationRunner {
                         && type.equals(appointment.getType()));
         if (!alreadySeeded) {
             Appointment saved = appointmentRepository.save(
-                    new Appointment(patientKey, professionalKey, scheduledAtKey, type, status));
+                    new Appointment(branch, patientKey, professionalKey, scheduledAtKey, type, status));
             auditService.record("CREATE", "Appointment", saved.getId().toString(), "created");
         }
     }

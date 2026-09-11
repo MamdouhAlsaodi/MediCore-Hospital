@@ -48,6 +48,13 @@ import static org.junit.jupiter.api.Assertions.*;
  * frontend/src/authorization.js mirror, and never replace, server
  * enforcement. Deny-by-default is preserved: a representative role outside
  * every named family (LAB_TECH) gets only the dashboard.
+ *
+ * Plan 3 Task 1 (docs/plan3.md) adds a narrow baseline pin for the global
+ * role model that Plan 3 Task 3 will intentionally change: a successful
+ * login carries no assignments and no acting context, no assignment header
+ * is required for an authorized call, and an account holding several roles
+ * exercises the union of those roles globally. The existing care-operations
+ * matrix above is neither weakened nor duplicated by these pins.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
         "spring.datasource.url=jdbc:h2:mem:authz-test;MODE=PostgreSQL;DB_CLOSE_DELAY=-1",
@@ -634,5 +641,72 @@ class SecurityAuthorizationTest {
         ResponseEntity<Map<String, Object>> after = getJson("/api/invoices/" + adminInvoiceId, adminToken);
         assertEquals("DRAFT", after.getBody() != null ? after.getBody().get("status") : null,
                 "a 403 transition attempt must leave the persisted DRAFT status untouched");
+    }
+
+    // ------------------------------------------------------------------
+    // Plan 3 Task 1 baseline (docs/plan3.md Task 1) — the global role
+    // model that Plan 3 Task 3 will deliberately replace with acting
+    // assignments and a branch-bound context. Characterization only.
+    // ------------------------------------------------------------------
+
+    /**
+     * PLAN 3 BASELINE (Task 3 will intentionally change it): a successful
+     * login answers with exactly the global token/username/roles shape — no
+     * {@code assignments}, no {@code actingContext} — and the resulting
+     * token authorizes an allowed endpoint with no assignment or branch
+     * header of any kind.
+     */
+    @Test
+    void plan3BaselineLoginCarriesNoAssignmentOrActingContextAndNoneIsRequired() {
+        HttpHeaders loginHeaders = new HttpHeaders();
+        loginHeaders.setContentType(MediaType.APPLICATION_JSON);
+        ResponseEntity<Map<String, Object>> response = rest.exchange("/api/auth/login", HttpMethod.POST,
+                new HttpEntity<>(Map.of("username", ADMIN, "password", TEST_ACCOUNT_PASSWORD), loginHeaders),
+                new ParameterizedTypeReference<Map<String, Object>>() {});
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        Map<String, Object> body = response.getBody();
+        assertNotNull(body);
+        assertEquals(Set.of("accessToken", "tokenType", "username", "roles"), body.keySet(),
+                "today's login response is the global-role shape only");
+        assertFalse(body.containsKey("assignments"), "no acting assignments exist today");
+        assertFalse(body.containsKey("actingContext"), "no acting context exists today");
+        String token = String.valueOf(body.get("accessToken"));
+        assertEquals(HttpStatus.OK, get("/api/dashboard", token).getStatusCode(),
+                "an authorized call must succeed with only the bearer token and no assignment header");
+    }
+
+    /**
+     * PLAN 3 BASELINE (Task 3 will intentionally change it): an account
+     * holding several global roles exercises the union of those roles on
+     * every matching endpoint family with no acting assignment — the NURSE
+     * half grants the patients-family read and the BILLING half grants the
+     * invoice family, both from one plain bearer token. A disposable
+     * multi-role account with a unique name keeps the single-role matrix
+     * above untouched.
+     */
+    @Test
+    void plan3BaselineGlobalRoleUnionGrantsEveryHeldRoleWithoutAnyAssignment() {
+        String union = "plan3-union-" + suffix;
+        if (accounts.findByUsername(union).isEmpty()) {
+            accounts.save(new UserAccount(union, encoder.encode(TEST_ACCOUNT_PASSWORD),
+                    Set.of(Role.NURSE, Role.BILLING)));
+        }
+        HttpHeaders loginHeaders = new HttpHeaders();
+        loginHeaders.setContentType(MediaType.APPLICATION_JSON);
+        ResponseEntity<Map<String, Object>> response = rest.exchange("/api/auth/login", HttpMethod.POST,
+                new HttpEntity<>(Map.of("username", union, "password", TEST_ACCOUNT_PASSWORD), loginHeaders),
+                new ParameterizedTypeReference<Map<String, Object>>() {});
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        Map<String, Object> body = response.getBody();
+        assertNotNull(body);
+        List<?> roles = assertInstanceOf(List.class, body.get("roles"),
+                "login must list the account's global role names");
+        assertTrue(roles.contains("NURSE") && roles.contains("BILLING"),
+                "the login roles list must carry the full global union of held roles");
+        String token = String.valueOf(body.get("accessToken"));
+        assertEquals(HttpStatus.OK, get("/api/patients", token).getStatusCode(),
+                "the NURSE half of the global union must grant the patients-family read");
+        assertEquals(HttpStatus.OK, get("/api/invoices", token).getStatusCode(),
+                "the BILLING half of the global union must grant the invoice-family read");
     }
 }

@@ -7,8 +7,14 @@ import com.mamtrex.hospital.appointment.AppointmentRepository;
 import com.mamtrex.hospital.audit.AuditService;
 import com.mamtrex.hospital.billing.Invoice;
 import com.mamtrex.hospital.billing.InvoiceRepository;
+import com.mamtrex.hospital.department.Department;
+import com.mamtrex.hospital.department.DepartmentRepository;
 import com.mamtrex.hospital.emergency.EmergencyVisit;
 import com.mamtrex.hospital.emergency.EmergencyVisitRepository;
+import com.mamtrex.hospital.organization.Branch;
+import com.mamtrex.hospital.organization.BranchRepository;
+import com.mamtrex.hospital.organization.HospitalOrganization;
+import com.mamtrex.hospital.organization.HospitalOrganizationRepository;
 import com.mamtrex.hospital.patient.Patient;
 import com.mamtrex.hospital.patient.PatientRepository;
 import com.mamtrex.hospital.staff.StaffMember;
@@ -52,6 +58,17 @@ import java.time.LocalDateTime;
  * the demo data (the admin account remains owned by
  * {@code DevAdminInitializer} and the runtime environment).</p>
  *
+ * <p>Plan 3 Task 2 adds the hierarchy foundation to the same opt-in run:
+ * one clearly synthetic organization ({@code DEMO-ORG-001}) and one stable
+ * default branch ({@code DEMO-BR-001}) are created under immutable
+ * business keys, and only the departments this initializer itself owns
+ * ({@code DEMO-DEP-0001..0002}) are created assigned to that branch. The
+ * nullable department-branch association is the deliberate legacy
+ * transition seam: unknown pre-existing rows with no branch are never
+ * mass-updated and stay absent from the normalized assigned-rows contract.
+ * Create events fire only when a new hierarchy row is actually inserted;
+ * idempotent lookups fabricate nothing.</p>
+ *
  * <p>Care-operation rows keep the Task 2–4 persistence representation:
  * String-typed canonical UUID references. Patients and professionals are
  * seeded first and every row then stores {@code getId().toString()} of the
@@ -77,17 +94,21 @@ public class DemoDataInitializer implements ApplicationRunner {
     private final AdmissionRepository admissionRepository;
     private final EmergencyVisitRepository emergencyVisitRepository;
     private final InvoiceRepository invoiceRepository;
+    private final HospitalOrganizationRepository organizationRepository;
+    private final BranchRepository branchRepository;
+    private final DepartmentRepository departmentRepository;
     private final AuditService auditService;
 
     /**
-     * Why seven constructor parameters: this bounded seeder needs the whole
-     * write surface of the demo cohort — one repository per seeded aggregate
-     * plus {@link AuditService} — and Spring constructor injection keeps
-     * every collaborator explicit and fakeable in tests. This is a
-     * deliberate, documented clean-code exception to the few-dependencies
-     * heuristic, not a pattern to copy elsewhere. Revisit trigger: split
-     * collaborators only when a second seed profile or a second persistence
-     * adapter creates a real independent actor.
+     * Why ten constructor parameters: this bounded seeder needs the whole
+     * write surface of the demo cohort — one repository per seeded
+     * aggregate (now including the Task 2 hierarchy) plus
+     * {@link AuditService} — and Spring constructor injection keeps every
+     * collaborator explicit and fakeable in tests. This is a deliberate,
+     * documented clean-code exception to the few-dependencies heuristic,
+     * not a pattern to copy elsewhere. Revisit trigger: split collaborators
+     * only when a second seed profile or a second persistence adapter
+     * creates a real independent actor.
      */
     public DemoDataInitializer(PatientRepository patientRepository,
                                StaffMemberRepository staffMemberRepository,
@@ -95,6 +116,9 @@ public class DemoDataInitializer implements ApplicationRunner {
                                AdmissionRepository admissionRepository,
                                EmergencyVisitRepository emergencyVisitRepository,
                                InvoiceRepository invoiceRepository,
+                               HospitalOrganizationRepository organizationRepository,
+                               BranchRepository branchRepository,
+                               DepartmentRepository departmentRepository,
                                AuditService auditService) {
         this.patientRepository = patientRepository;
         this.staffMemberRepository = staffMemberRepository;
@@ -102,6 +126,9 @@ public class DemoDataInitializer implements ApplicationRunner {
         this.admissionRepository = admissionRepository;
         this.emergencyVisitRepository = emergencyVisitRepository;
         this.invoiceRepository = invoiceRepository;
+        this.organizationRepository = organizationRepository;
+        this.branchRepository = branchRepository;
+        this.departmentRepository = departmentRepository;
         this.auditService = auditService;
     }
 
@@ -110,8 +137,17 @@ public class DemoDataInitializer implements ApplicationRunner {
         seedDemoCohort();
     }
 
-    /** Seeds the synthetic demo cohort; safe to call repeatedly (idempotent). */
+    /** Immutable Task 2 hierarchy business keys; the initializer owns only these rows. */
+    static final String DEMO_ORGANIZATION_CODE = "DEMO-ORG-001";
+    static final String DEMO_BRANCH_CODE = "DEMO-BR-001";
+
+    /**
+     * Seeds the synthetic demo cohort; safe to call repeatedly (idempotent).
+     * The Task 2 hierarchy (organization, default branch, owned departments)
+     * is seeded first so every later fixture keeps a stable foundation.
+     */
     void seedDemoCohort() {
+        seedDemoHierarchy();
         Patient alpha = seedPatient("DEMO-0001", "Demo Patient Alpha", LocalDate.of(2001, 1, 1),
                 "unspecified", "+10000000001", "demo.alpha@synthetic.test", "NID-DEMO-1", "1 Demo Way");
         Patient bravo = seedPatient("DEMO-0002", "Demo Patient Bravo", LocalDate.of(2002, 2, 2),
@@ -158,6 +194,53 @@ public class DemoDataInitializer implements ApplicationRunner {
         seedInvoice(bravo, new InvoiceFixture("DEMO-INV-0002", "80.50", "USD", "ISSUED"));
         seedInvoice(charlie, new InvoiceFixture("DEMO-INV-0003", "150.00", "USD", "PAID"));
         seedInvoice(alpha, new InvoiceFixture("DEMO-INV-0004", "40.00", "USD", "VOID"));
+    }
+
+    /**
+     * Task 2 hierarchy fixtures: one synthetic organization, one active
+     * default branch, and only the departments this initializer owns, each
+     * created assigned to that branch. Stable keys: the organization code,
+     * the (organization, code) branch pair, and the (branch, code)
+     * department pair. An existing row is reused untouched; only the
+     * creating path records the CREATE audit event, so reruns add nothing.
+     */
+    private void seedDemoHierarchy() {
+        HospitalOrganization organization = organizationRepository
+                .findByCode(DEMO_ORGANIZATION_CODE)
+                .orElseGet(() -> {
+                    HospitalOrganization saved = organizationRepository.save(
+                            new HospitalOrganization(DEMO_ORGANIZATION_CODE, "Demo Synthetic Hospital"));
+                    auditService.record("CREATE", "HospitalOrganization",
+                            saved.getId().toString(), "created");
+                    return saved;
+                });
+        Branch branch = branchRepository
+                .findByOrganizationIdAndCode(organization.getId(), DEMO_BRANCH_CODE)
+                .orElseGet(() -> {
+                    Branch saved = branchRepository.save(
+                            new Branch(organization, DEMO_BRANCH_CODE, "Demo Main Branch", "1 Demo Campus"));
+                    auditService.record("CREATE", "Branch", saved.getId().toString(), "created");
+                    return saved;
+                });
+        seedDemoDepartment(branch, "DEMO-DEP-0001", "Demo Internal Medicine", "internal medicine", "Demo Tower A");
+        seedDemoDepartment(branch, "DEMO-DEP-0002", "Demo Emergency Care", "emergency medicine", "Demo Tower B");
+    }
+
+    /**
+     * One demo-owned department fixture under the stable (branch, code)
+     * pair. Unknown pre-existing null-branch departments are never looked
+     * at here: only rows this initializer identifies by its own key are
+     * created or reused, never mass-updated.
+     */
+    private void seedDemoDepartment(Branch branch, String code, String name,
+                                    String specialty, String location) {
+        departmentRepository.findByBranchIdAndCode(branch.getId(), code)
+                .orElseGet(() -> {
+                    Department saved = departmentRepository.save(
+                            new Department(branch, code, name, specialty, location));
+                    auditService.record("CREATE", "Department", saved.getId().toString(), "created");
+                    return saved;
+                });
     }
 
     /**

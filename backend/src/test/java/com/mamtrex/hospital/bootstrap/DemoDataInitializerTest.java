@@ -9,8 +9,14 @@ import com.mamtrex.hospital.audit.AuditEventRepository;
 import com.mamtrex.hospital.audit.AuditService;
 import com.mamtrex.hospital.billing.Invoice;
 import com.mamtrex.hospital.billing.InvoiceRepository;
+import com.mamtrex.hospital.department.Department;
+import com.mamtrex.hospital.department.DepartmentRepository;
 import com.mamtrex.hospital.emergency.EmergencyVisit;
 import com.mamtrex.hospital.emergency.EmergencyVisitRepository;
+import com.mamtrex.hospital.organization.Branch;
+import com.mamtrex.hospital.organization.BranchRepository;
+import com.mamtrex.hospital.organization.HospitalOrganization;
+import com.mamtrex.hospital.organization.HospitalOrganizationRepository;
 import com.mamtrex.hospital.patient.Patient;
 import com.mamtrex.hospital.patient.PatientRepository;
 import com.mamtrex.hospital.reporting.DashboardService;
@@ -32,20 +38,25 @@ import java.util.stream.Collectors;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Demo seeding contract tests (docs/plan1.md Task 11, docs/plan2.md Task 8).
+ * Demo seeding contract tests (docs/plan1.md Task 11, docs/plan2.md Task 8,
+ * docs/plan3.md Task 2).
  *
  * Pins the opt-in bootstrap behavior: the initializer does not exist by
  * default (no flag, no writes), the dedicated {@code medicore.demo.seed}
- * flag produces a coherent, obviously synthetic cohort, every seeded
- * reference resolves to a seeded record, repeated initialization is
- * idempotent without duplicate inflation or destructive resets, every newly
- * created seeded record produces exactly one CREATE audit event attributed
- * to the system actor (reused records add none), the dashboard aggregates
- * reflect the exact fixture composition through the real
- * {@link DashboardService}, and the disabled default touches no store and
- * records no event. Runs against an isolated in-memory H2 database (never
- * the production file store) with disposable synthetic test-only secrets; no
- * real personal or clinical data and no hardcoded credentials are involved.
+ * flag produces a coherent, obviously synthetic cohort including the Task 2
+ * hierarchy — one stable synthetic organization, one stable default branch,
+ * and only the initializer-owned demo departments assigned to that branch —
+ * every seeded reference resolves to a seeded record, repeated
+ * initialization is idempotent without duplicate inflation or destructive
+ * resets, every newly created seeded record produces exactly one CREATE
+ * audit event attributed to the system actor (reused records add none),
+ * unknown pre-existing null-branch departments stay untouched and
+ * unassigned, the dashboard aggregates reflect the exact fixture
+ * composition through the real {@link DashboardService}, and the disabled
+ * default touches no store and records no event. Runs against an isolated
+ * in-memory H2 database (never the production file store) with disposable
+ * synthetic test-only secrets; no real personal or clinical data and no
+ * hardcoded credentials are involved.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
         "spring.datasource.url=jdbc:h2:mem:demo-data-test;MODE=PostgreSQL;DB_CLOSE_DELAY=-1",
@@ -66,14 +77,23 @@ class DemoDataInitializerTest {
     private static final Set<String> DEMO_MRNS = Set.of("DEMO-0001", "DEMO-0002", "DEMO-0003");
     private static final Set<String> DEMO_STAFF_CODES = Set.of("DEMO-STAFF-001", "DEMO-STAFF-002");
 
+    /** Task 2 immutable hierarchy business keys; the initializer owns only these rows. */
+    private static final String DEMO_ORG_CODE = "DEMO-ORG-001";
+    private static final String DEMO_BRANCH_CODE = "DEMO-BR-001";
+    private static final Set<String> DEMO_DEPARTMENT_CODES = Set.of("DEMO-DEP-0001", "DEMO-DEP-0002");
+
     /** Task 8 contract: exactly one invoice per lifecycle status. */
     private static final Set<String> INVOICE_STATUSES = Set.of("DRAFT", "ISSUED", "PAID", "VOID");
 
     /** Meaningless demo triage labels (docs/plan2.md Task 8: never clinical advice). */
     private static final Set<String> DEMO_TRIAGE_LABELS = Set.of("1", "2", "3", "4", "5");
 
-    /** Total CREATE events of the full fixture: 3 patients + 2 professionals + 2 appointments + 2 admissions + 3 emergency visits + 4 invoices. */
-    private static final long FULL_AUDIT_LEDGER_SIZE = 16;
+    /**
+     * Total CREATE events of the full fixture: 3 patients + 2 professionals
+     * + 2 appointments + 2 admissions + 3 emergency visits + 4 invoices +
+     * Task 2 hierarchy (1 organization + 1 branch + 2 demo departments).
+     */
+    private static final long FULL_AUDIT_LEDGER_SIZE = 20;
 
     @Autowired
     DemoDataInitializer initializer;
@@ -102,6 +122,15 @@ class DemoDataInitializerTest {
     @Autowired
     DashboardService dashboardService;
 
+    @Autowired
+    HospitalOrganizationRepository organizations;
+
+    @Autowired
+    BranchRepository branches;
+
+    @Autowired
+    DepartmentRepository departments;
+
     /**
      * The flag creates exactly the named synthetic cohort at startup; this
      * test never calls the seeder itself, so a green run proves the runner
@@ -128,6 +157,79 @@ class DemoDataInitializerTest {
 
         List<Appointment> demoAppointments = appointments.findAll().stream().toList();
         assertEquals(2, demoAppointments.size(), "the demo cohort must contain exactly two synthetic appointments");
+    }
+
+    // ------------------------------------------------------------------
+    // Task 2: the hierarchy foundation is part of the demo cohort.
+    // ------------------------------------------------------------------
+
+    /**
+     * Task 2: the initializer owns exactly one synthetic organization and
+     * one default branch under immutable business keys, and the branch is
+     * active and bound to that organization.
+     */
+    @Test
+    void demoHierarchyIsOneStableSyntheticOrganizationWithOneDefaultBranch() {
+        List<HospitalOrganization> orgs = organizations.findAll().stream().toList();
+        assertEquals(1, orgs.size(), "the initializer must own exactly one organization");
+        assertEquals(DEMO_ORG_CODE, orgs.get(0).getCode(), "the organization code must be the immutable demo key");
+        assertTrue(orgs.get(0).getName().startsWith("Demo "), "the organization name must be obviously synthetic");
+
+        List<Branch> demoBranches = branches.findAll().stream().toList();
+        assertEquals(1, demoBranches.size(), "the initializer must own exactly one default branch");
+        Branch branch = demoBranches.get(0);
+        assertEquals(DEMO_BRANCH_CODE, branch.getCode(), "the branch code must be the immutable demo key");
+        assertTrue(branch.isActive(), "the default demo branch must be active");
+        assertTrue(branch.getName().startsWith("Demo "), "the branch name must be obviously synthetic");
+        assertFalse(branch.getLocationLabel().isBlank(), "the branch must carry a location label");
+        assertEquals(orgs.get(0).getId(), branch.getOrganization().getId(),
+                "the default branch must belong to the demo organization");
+    }
+
+    /**
+     * Task 2: only initializer-owned demo departments are branch-assigned —
+     * every assigned row carries a DEMO-DEP stable key and resolves to the
+     * demo branch. Unknown pre-existing rows (never seeded here) are
+     * covered by the dedicated preservation test.
+     */
+    @Test
+    void demoDepartmentsAreAssignedOnlyToTheDemoOwnedBranch() {
+        Branch branch = branches.findAll().stream().findFirst().orElseThrow();
+        List<Department> assigned = departments.findAll().stream()
+                .filter(department -> department.getBranch() != null)
+                .toList();
+        assertEquals(2, assigned.size(), "the initializer must own exactly two demo departments");
+        assertEquals(DEMO_DEPARTMENT_CODES, assigned.stream()
+                        .map(Department::getCode).collect(Collectors.toSet()),
+                "assigned departments must carry exactly the stable DEMO-DEP keys");
+        assertTrue(assigned.stream().allMatch(department -> department.getName().startsWith("Demo ")),
+                "demo department names must be obviously synthetic");
+        assertTrue(assigned.stream().allMatch(department -> branch.getId().equals(department.getBranch().getId())),
+                "every assigned department must resolve to the demo default branch");
+    }
+
+    /**
+     * Task 2 legacy seam: an unknown pre-existing null-branch department is
+     * never mass-updated. After two more seeding runs it stays untouched
+     * and unassigned, while the demo hierarchy counts stay stable.
+     */
+    @Test
+    void unknownNullBranchDepartmentsStayUntouchedAndRemainUnassigned() {
+        String legacyCode = "LEGACY-UNKNOWN-" + UUID.randomUUID().toString().substring(0, 8);
+        Department legacy = departments.save(new Department(null, legacyCode, "Unknown Legacy Row", "s", "l"));
+        assertNull(legacy.getBranch(), "the fabricated legacy row must start unassigned");
+
+        initializer.seedDemoCohort();
+        initializer.seedDemoCohort();
+
+        Department reloaded = departments.findById(legacy.getId()).orElseThrow();
+        assertEquals(legacyCode, reloaded.getCode(), "the unknown row must stay untouched by seeding");
+        assertNull(reloaded.getBranch(), "the unknown row must remain unassigned after reruns");
+        assertEquals(2, departments.findAll().stream()
+                        .filter(department -> department.getBranch() != null).count(),
+                "reruns must not assign or create additional owned departments");
+        assertEquals(1, organizations.count(), "reruns must not inflate organizations");
+        assertEquals(1, branches.count(), "reruns must not inflate branches");
     }
 
     /** Referential integrity: every appointment reference resolves to a seeded record. */
@@ -259,20 +361,22 @@ class DemoDataInitializerTest {
     }
 
     /**
-     * Audit evidence: the startup seeding records exactly one CREATE event per
-     * newly created record (3 patients + 2 professionals + 2 appointments
-     * + 2 admissions + 3 emergency visits + 4 invoices) under the same
-     * resource-type conventions the services use. No user is authenticated
-     * during startup, so {@link AuditService} attributes every event to the
-     * system actor — this is what makes the seeded journey visible on the
-     * ADMIN audit screen.
+     * Audit evidence: the startup seeding records exactly one CREATE event
+     * per newly created record (3 patients + 2 professionals + 2
+     * appointments + 2 admissions + 3 emergency visits + 4 invoices + the
+     * Task 2 hierarchy of 1 organization + 1 branch + 2 demo departments)
+     * under the same resource-type conventions the services use. No user is
+     * authenticated during startup, so {@link AuditService} attributes
+     * every event to the system actor. Reused hierarchy rows record
+     * nothing, which is what keeps reruns audit-idempotent.
      */
     @Test
     void seededCreatesProduceSystemActorAuditEvents() {
         List<AuditEvent> events = auditEvents.findAll().stream().toList();
         assertEquals(FULL_AUDIT_LEDGER_SIZE, events.size(),
                 "seeding must record exactly one CREATE audit event per newly created record "
-                        + "(3 patients + 2 professionals + 2 appointments + 2 admissions + 3 emergency visits + 4 invoices)");
+                        + "(3 patients + 2 professionals + 2 appointments + 2 admissions + 3 emergency visits "
+                        + "+ 4 invoices + 1 organization + 1 branch + 2 departments)");
         for (AuditEvent event : events) {
             assertEquals("CREATE", event.getAction(), "seeded creations must be recorded as CREATE events");
             assertEquals("system", event.getActor(),
@@ -280,7 +384,8 @@ class DemoDataInitializerTest {
         }
         Map<String, List<AuditEvent>> byType = events.stream()
                 .collect(Collectors.groupingBy(AuditEvent::getResourceType));
-        assertEquals(Set.of("Patient", "StaffMember", "Appointment", "Admission", "EmergencyVisit", "Invoice"),
+        assertEquals(Set.of("Patient", "StaffMember", "Appointment", "Admission", "EmergencyVisit", "Invoice",
+                        "HospitalOrganization", "Branch", "Department"),
                 byType.keySet(), "event resource types must follow the conventions the services use");
         assertEquals(3, byType.get("Patient").size(), "each newly created seeded patient must produce one CREATE event");
         assertEquals(2, byType.get("StaffMember").size(), "each newly created seeded professional must produce one CREATE event");
@@ -288,13 +393,19 @@ class DemoDataInitializerTest {
         assertEquals(2, byType.get("Admission").size(), "each newly created seeded admission must produce one CREATE event");
         assertEquals(3, byType.get("EmergencyVisit").size(), "each newly created seeded emergency visit must produce one CREATE event");
         assertEquals(4, byType.get("Invoice").size(), "each newly created seeded invoice must produce one CREATE event");
+        assertEquals(1, byType.get("HospitalOrganization").size(), "the organization insert must produce one CREATE event");
+        assertEquals(1, byType.get("Branch").size(), "the default-branch insert must produce one CREATE event");
+        assertEquals(2, byType.get("Department").size(), "each demo department insert must produce one CREATE event");
         assertEquals(DEMO_MRNS, byType.get("Patient").stream().map(AuditEvent::getDetails).collect(Collectors.toSet()),
                 "patient events must carry the MRN as details, matching the PatientService convention");
         assertTrue(byType.get("StaffMember").stream().allMatch(e -> "created".equals(e.getDetails()))
                         && byType.get("Appointment").stream().allMatch(e -> "created".equals(e.getDetails()))
                         && byType.get("Admission").stream().allMatch(e -> "created".equals(e.getDetails()))
                         && byType.get("EmergencyVisit").stream().allMatch(e -> "created".equals(e.getDetails()))
-                        && byType.get("Invoice").stream().allMatch(e -> "created".equals(e.getDetails())),
+                        && byType.get("Invoice").stream().allMatch(e -> "created".equals(e.getDetails()))
+                        && byType.get("HospitalOrganization").stream().allMatch(e -> "created".equals(e.getDetails()))
+                        && byType.get("Branch").stream().allMatch(e -> "created".equals(e.getDetails()))
+                        && byType.get("Department").stream().allMatch(e -> "created".equals(e.getDetails())),
                 "non-patient events must carry the non-sensitive 'created' detail");
         assertEquals(demoPatients().stream().map(p -> p.getId().toString()).collect(Collectors.toSet()),
                 byType.get("Patient").stream().map(AuditEvent::getResourceId).collect(Collectors.toSet()),
@@ -314,6 +425,17 @@ class DemoDataInitializerTest {
         assertEquals(invoices.findAll().stream().map(i -> i.getId().toString()).collect(Collectors.toSet()),
                 byType.get("Invoice").stream().map(AuditEvent::getResourceId).collect(Collectors.toSet()),
                 "each invoice event must reference the canonical id of the persisted record");
+        assertEquals(organizations.findAll().stream().map(o -> o.getId().toString()).collect(Collectors.toSet()),
+                byType.get("HospitalOrganization").stream().map(AuditEvent::getResourceId).collect(Collectors.toSet()),
+                "the organization event must reference the canonical id of the persisted record");
+        assertEquals(branches.findAll().stream().map(b -> b.getId().toString()).collect(Collectors.toSet()),
+                byType.get("Branch").stream().map(AuditEvent::getResourceId).collect(Collectors.toSet()),
+                "the branch event must reference the canonical id of the persisted record");
+        assertEquals(departments.findAll().stream()
+                        .filter(d -> d.getBranch() != null)
+                        .map(d -> d.getId().toString()).collect(Collectors.toSet()),
+                byType.get("Department").stream().map(AuditEvent::getResourceId).collect(Collectors.toSet()),
+                "each department event must reference the canonical id of the persisted assigned record");
     }
 
     /**
@@ -344,7 +466,10 @@ class DemoDataInitializerTest {
         assertEquals(1L, summary.get("invoicesVoid"), "the VOID invoice bucket must hold exactly the one VOID fixture");
     }
 
-    /** Idempotency: a second run changes no counts, creates no duplicates, and adds no audit events. */
+    /**
+     * Idempotency: a second run changes no counts, creates no duplicates,
+     * adds no audit events, and leaves the hierarchy business keys stable.
+     */
     @Test
     void repeatedInitializationIsIdempotentWithoutDuplicateInflation() {
         long patientsBefore = patients.count();
@@ -353,16 +478,24 @@ class DemoDataInitializerTest {
         long admissionsBefore = admissions.count();
         long emergencyVisitsBefore = emergencyVisits.count();
         long invoicesBefore = invoices.count();
+        long organizationsBefore = organizations.count();
+        long branchesBefore = branches.count();
+        long departmentsBefore = departments.count();
         assertEquals(3, demoPatients().size());
         assertEquals(2, demoStaff().size());
         assertEquals(2, appointmentsBefore);
         assertEquals(2, admissionsBefore);
         assertEquals(3, emergencyVisitsBefore);
         assertEquals(4, invoicesBefore);
+        assertEquals(1, organizationsBefore);
+        assertEquals(1, branchesBefore);
+        assertEquals(2, departments.findAll().stream()
+                        .filter(d -> d.getBranch() != null).count(),
+                "exactly the two demo departments are assigned regardless of preserved legacy rows");
 
         long auditEventsBefore = auditEvents.count();
         assertEquals(FULL_AUDIT_LEDGER_SIZE, auditEventsBefore,
-                "the startup run must have recorded exactly the sixteen CREATE events");
+                "the startup run must have recorded exactly the twenty CREATE events");
         initializer.seedDemoCohort();
         initializer.seedDemoCohort();
 
@@ -380,6 +513,20 @@ class DemoDataInitializerTest {
                 "a repeated seed must not create additional emergency visits");
         assertEquals(invoicesBefore, invoices.count(),
                 "a repeated seed must not create additional invoices");
+        assertEquals(organizationsBefore, organizations.count(),
+                "a repeated seed must not create additional organizations");
+        assertEquals(branchesBefore, branches.count(),
+                "a repeated seed must not create additional branches");
+        assertEquals(departmentsBefore, departments.count(),
+                "a repeated seed must not create additional departments");
+        assertEquals(DEMO_ORG_CODE, organizations.findAll().stream().findFirst().orElseThrow().getCode(),
+                "the organization business key must stay unchanged after a repeated seed");
+        assertEquals(DEMO_BRANCH_CODE, branches.findAll().stream().findFirst().orElseThrow().getCode(),
+                "the branch business key must stay unchanged after a repeated seed");
+        assertEquals(DEMO_DEPARTMENT_CODES, departments.findAll().stream()
+                        .filter(d -> d.getBranch() != null)
+                        .map(Department::getCode).collect(Collectors.toSet()),
+                "the demo department keys must stay unchanged after a repeated seed");
         assertEquals(DEMO_MRNS, demoPatients().stream()
                 .map(Patient::getMedicalRecordNumber)
                 .collect(Collectors.toSet()), "the stable demo keys must stay unchanged after a repeated seed");
@@ -404,6 +551,9 @@ class DemoDataInitializerTest {
         AdmissionRepository admissionRepository = Mockito.mock(AdmissionRepository.class);
         EmergencyVisitRepository emergencyVisitRepository = Mockito.mock(EmergencyVisitRepository.class);
         InvoiceRepository invoiceRepository = Mockito.mock(InvoiceRepository.class);
+        HospitalOrganizationRepository organizationRepository = Mockito.mock(HospitalOrganizationRepository.class);
+        BranchRepository branchRepository = Mockito.mock(BranchRepository.class);
+        DepartmentRepository departmentRepository = Mockito.mock(DepartmentRepository.class);
         AuditService auditService = Mockito.mock(AuditService.class);
         new ApplicationContextRunner()
                 .withUserConfiguration(DemoDataInitializer.class)
@@ -413,12 +563,16 @@ class DemoDataInitializerTest {
                 .withBean("admissionRepository", AdmissionRepository.class, () -> admissionRepository)
                 .withBean("emergencyVisitRepository", EmergencyVisitRepository.class, () -> emergencyVisitRepository)
                 .withBean("invoiceRepository", InvoiceRepository.class, () -> invoiceRepository)
+                .withBean("organizationRepository", HospitalOrganizationRepository.class, () -> organizationRepository)
+                .withBean("branchRepository", BranchRepository.class, () -> branchRepository)
+                .withBean("departmentRepository", DepartmentRepository.class, () -> departmentRepository)
                 .withBean("auditService", AuditService.class, () -> auditService)
                 .run(context -> {
                     assertTrue(context.getBeansOfType(DemoDataInitializer.class).isEmpty(),
                             "the initializer bean must not exist when the demo flag is absent (default off)");
                     Mockito.verifyNoInteractions(patientRepository, staffMemberRepository, appointmentRepository,
-                            admissionRepository, emergencyVisitRepository, invoiceRepository, auditService);
+                            admissionRepository, emergencyVisitRepository, invoiceRepository,
+                            organizationRepository, branchRepository, departmentRepository, auditService);
                 });
     }
 

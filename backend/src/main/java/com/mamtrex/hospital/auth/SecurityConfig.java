@@ -21,7 +21,10 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
  * policy: patient create/update and appointment create are ADMIN/RECEPTIONIST
  * only, and the staff directory read additionally allows RECEPTIONIST while
  * staff writes stay ADMIN/HR — so no implemented write action depends solely
- * on frontend hiding.
+ * on frontend hiding. The Plan 3 Task 2 hierarchy policy also rides these
+ * method-level rules: the organization/branch surface is ADMIN-only and
+ * department create/delete are narrowed to ADMIN (hierarchy writes), while
+ * the department read keeps its ADMIN/HR family role.
  * Unauthenticated requests receive 401 so clients can distinguish an expired
  * session (401) from an authenticated but unauthorized role (403).
  */
@@ -48,6 +51,12 @@ public class SecurityConfig {
                         .requestMatchers("/api/audit/**").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.GET, "/api/staff/**")
                             .hasAnyRole("ADMIN", "HR", "RECEPTIONIST")
+                        .requestMatchers("/api/organization/**", "/api/branches/**")
+                            .hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.POST, "/api/departments/**")
+                            .hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.DELETE, "/api/departments/**")
+                            .hasRole("ADMIN")
                         .requestMatchers("/api/staff/**", "/api/departments/**", "/api/shifts/**")
                             .hasAnyRole("ADMIN", "HR")
                         .requestMatchers("/api/invoices/**", "/api/insurance-claims/**")

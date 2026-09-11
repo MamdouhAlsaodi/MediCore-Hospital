@@ -1,5 +1,8 @@
 package com.mamtrex.hospital.organization;
 
+import com.mamtrex.hospital.auth.ActingAssignment;
+import com.mamtrex.hospital.auth.ActingAssignmentRepository;
+import com.mamtrex.hospital.auth.AssignmentScope;
 import com.mamtrex.hospital.auth.Role;
 import com.mamtrex.hospital.auth.UserAccount;
 import com.mamtrex.hospital.auth.UserAccountRepository;
@@ -76,6 +79,9 @@ class MultiBranchOperationsApiTest {
     /** Stable synthetic test organization key; provisioned via the real repository (no create endpoint exists). */
     private static final String TEST_ORG_CODE = "MBOPS-ORG";
 
+    /** Stable deterministic default branch the synthetic accounts act on. */
+    private static final String TEST_DEFAULT_BRANCH_CODE = "MBOPS-BR-DEFAULT";
+
     /** Exact Task 2 branch DTO allowlist. */
     private static final Set<String> BRANCH_DTO_KEYS =
             Set.of("id", "organizationId", "code", "name", "locationLabel", "active");
@@ -116,9 +122,17 @@ class MultiBranchOperationsApiTest {
     @Autowired
     DepartmentRepository departments;
 
+    @Autowired
+    ActingAssignmentRepository assignments;
+
     /** Unique synthetic suffix per test instance keeps every record disposable and scoped. */
     private final String suffix = UUID.randomUUID().toString().substring(0, 8);
 
+    /**
+     * Task 3 seeding: the synthetic accounts log in through explicit enabled
+     * acting assignments (ADMIN organization-scope, NURSE bound to the
+     * deterministic default branch) — no global-role fallback exists.
+     */
     @BeforeEach
     void seedDisposableAccountsAndOrganization() {
         if (accounts.findByUsername(ADMIN).isEmpty()) {
@@ -127,7 +141,39 @@ class MultiBranchOperationsApiTest {
         if (accounts.findByUsername(NURSE).isEmpty()) {
             accounts.save(new UserAccount(NURSE, encoder.encode(TEST_ACCOUNT_PASSWORD), Set.of(Role.NURSE)));
         }
+        ensureAssignmentContext();
+    }
+
+    /** Loads or creates the hierarchy foundation plus the accounts' acting assignments. */
+    private void ensureAssignmentContext() {
         ensureOrganization();
+        HospitalOrganization org = organizations.findByCode(TEST_ORG_CODE).orElseThrow();
+        Branch defaultBranch = branches.findByOrganizationIdAndCode(org.getId(), TEST_DEFAULT_BRANCH_CODE)
+                .orElseGet(() -> branches.save(new Branch(org, TEST_DEFAULT_BRANCH_CODE,
+                        "Synthetic Default Branch", "0 Default Circle")));
+        ensureAssignment(ADMIN, Role.ADMIN, AssignmentScope.ORGANIZATION, org, null);
+        ensureAssignment(NURSE, Role.NURSE, AssignmentScope.BRANCH, org, defaultBranch);
+    }
+
+    private void ensureAssignment(String username, Role role, AssignmentScope scope,
+                                  HospitalOrganization org, Branch branch) {
+        UserAccount account = accounts.findByUsername(username).orElseThrow();
+        boolean present = switch (scope) {
+            case ORGANIZATION -> assignments
+                    .findByAccountIdAndRoleAndScopeAndBranchIsNullAndDepartmentIsNull(account.getId(), role, scope)
+                    .isPresent();
+            case BRANCH -> assignments
+                    .findByAccountIdAndRoleAndScopeAndBranchId(account.getId(), role, scope, branch.getId())
+                    .isPresent();
+            case DEPARTMENT -> false;
+        };
+        if (!present) {
+            assignments.save(switch (scope) {
+                case ORGANIZATION -> ActingAssignment.organization(account, org, role);
+                case BRANCH -> ActingAssignment.branch(account, org, role, branch);
+                case DEPARTMENT -> throw new IllegalArgumentException("These suites seed organization/branch scopes only");
+            });
+        }
     }
 
     // ------------------------------------------------------------------
@@ -176,35 +222,42 @@ class MultiBranchOperationsApiTest {
     // ------------------------------------------------------------------
 
     /**
-     * With no organization row at all, GET /api/organization answers the
-     * shared safe 404 ApiError contract, and POST /api/branches cannot bind
-     * to a nonexistent organization (referential integrity through the
-     * public contract) — it refuses with the same shared 404, never a
-     * created orphan. The test restores the shared organization so every
-     * other test stays order-independent.
+     * Task 3 translation of the Task 2 absent-organization contract: with
+     * the whole hierarchy wiped, the organization 404 state is no longer
+     * observable by an authorized caller over HTTP — authentication itself
+     * requires an enabled assignment whose organization and selected branch
+     * exist, so the wiped state fails closed (old token 401, re-login 401)
+     * and anonymous callers stay on the shared 401 boundary. Once the
+     * hierarchy and assignments are restored, the Task 2 present-state
+     * contracts hold again: authorized GET /api/organization answers 200 and
+     * a branch can be created through the public contract (an orphan branch
+     * can never exist because no caller can authenticate while the sole
+     * organization is absent).
      */
     @Test
-    void absentOrganizationReturnsTheSharedSafe404AndBranchesCannotBindToIt() {
+    void wipedHierarchyFailsClosedAndTheRestoredHierarchyRecoversTheTask2Contracts() {
+        String token = login(ADMIN);
         wipeHierarchy();
 
-        ResponseEntity<Map<String, Object>> orgResponse = getJson("/api/organization", login(ADMIN));
-        assertEquals(HttpStatus.NOT_FOUND, orgResponse.getStatusCode(), "no organization exists after the wipe");
-        Map<String, Object> error = orgResponse.getBody();
-        assertNotNull(error);
-        assertEquals(API_ERROR_KEYS, error.keySet(),
-                "the absent organization must use the shared safe ApiError contract");
-        assertEquals(404, ((Number) error.get("status")).intValue());
+        assertEquals(HttpStatus.UNAUTHORIZED, getJson("/api/organization", token).getStatusCode(),
+                "a token whose assignment organization was wiped is unauthenticated immediately");
+        ResponseEntity<Map<String, Object>> refusedLogin = postJson("/api/auth/login", null, Map.of(
+                "username", ADMIN,
+                "password", TEST_ACCOUNT_PASSWORD));
+        assertEquals(HttpStatus.UNAUTHORIZED, refusedLogin.getStatusCode(),
+                "without the hierarchy and assignments, login fails closed");
+        assertEquals(HttpStatus.UNAUTHORIZED, getJson("/api/organization", null).getStatusCode(),
+                "anonymous callers stay on the shared 401 boundary in the wiped state");
 
-        ResponseEntity<Map<String, Object>> branchResponse = postJson("/api/branches", login(ADMIN),
-                Map.of("code", "MBOPS-ORPHAN-" + suffix, "name", "Orphan Attempt", "locationLabel", "Nowhere"));
-        assertEquals(HttpStatus.NOT_FOUND, branchResponse.getStatusCode(),
-                "a branch must not be creatable without the sole organization (referential integrity)");
-        assertNotNull(branchResponse.getBody());
-        assertEquals(API_ERROR_KEYS, branchResponse.getBody().keySet());
-
-        ensureOrganization();
-        assertEquals(HttpStatus.OK, getJson("/api/organization", login(ADMIN)).getStatusCode(),
-                "restoring the organization must return the hierarchy endpoint to service");
+        ensureAssignmentContext();
+        String recoveredToken = login(ADMIN);
+        ResponseEntity<Map<String, Object>> orgResponse = getJson("/api/organization", recoveredToken);
+        assertEquals(HttpStatus.OK, orgResponse.getStatusCode(),
+                "the restored hierarchy answers the authorized organization read again");
+        ResponseEntity<Map<String, Object>> branchResponse = postJson("/api/branches", recoveredToken,
+                Map.of("code", "MBOPS-RECOVER-" + suffix, "name", "Recovery Probe", "locationLabel", "Back"));
+        assertTrue(branchResponse.getStatusCode().is2xxSuccessful(),
+                "branch creation works through the public contract once the sole organization exists");
     }
 
     // ------------------------------------------------------------------
@@ -633,51 +686,66 @@ class MultiBranchOperationsApiTest {
     }
 
     // ------------------------------------------------------------------
-    // 16. Retained Task 1: login is global-role only.
+    // 16. Task 3 contract: login carries the acting-assignment shape.
     // ------------------------------------------------------------------
 
     /**
-     * Retained Task 1 characterization (Task 3 will change it): the login
-     * response carries exactly the token, token type, username, and global
-     * role names — no assignments, no actingContext, never the password hash.
+     * Task 3 contract (replaces the Task 1 global-role pin that Task 3
+     * intentionally changed): the login response carries exactly the six-key
+     * allowlist — token, token type, username, the single selected assignment
+     * role, the deterministic assignment list, and the acting context — and
+     * never the password hash or the legacy role union.
      */
     @Test
-    void loginResponseCarriesOnlyGlobalTokenAndRoleFieldsToday() {
+    void loginResponseCarriesTheActingAssignmentAllowlistWithOneSelectedRole() {
         ResponseEntity<Map<String, Object>> response = postJson("/api/auth/login", null, Map.of(
                 "username", ADMIN,
                 "password", TEST_ACCOUNT_PASSWORD));
         assertEquals(HttpStatus.OK, response.getStatusCode());
         Map<String, Object> body = response.getBody();
         assertNotNull(body, "the login response must carry a body");
-        assertEquals(Set.of("accessToken", "tokenType", "username", "roles"), body.keySet(),
-                "today's login response is the global-role shape: token, token type, username, roles");
+        assertEquals(Set.of("accessToken", "tokenType", "username", "roles", "assignments", "actingContext"),
+                body.keySet(),
+                "the Task 3 login response is the acting-assignment shape with assignments and actingContext");
         assertEquals("Bearer", body.get("tokenType"));
-        assertInstanceOf(List.class, body.get("roles"));
-        assertTrue(((List<?>) body.get("roles")).contains("ADMIN"),
-                "roles must list the account's global role names");
-        assertFalse(body.containsKey("assignments"), "no acting assignments exist today");
-        assertFalse(body.containsKey("actingContext"), "no acting context exists today");
+        assertEquals(List.of("ADMIN"), body.get("roles"),
+                "roles carries only the selected assignment role, never the legacy union");
         assertFalse(body.containsKey("passwordHash"), "the password hash must never be exposed");
+
+        assertInstanceOf(List.class, body.get("assignments"));
+        List<?> assignmentsView = (List<?>) body.get("assignments");
+        assertEquals(1, assignmentsView.size(), "the account's enabled assignments are listed");
+        assertInstanceOf(Map.class, body.get("actingContext"));
+        Map<?, ?> context = (Map<?, ?>) body.get("actingContext");
+        assertEquals(Set.of("username", "assignmentId", "role", "scope", "organizationId", "branchId",
+                "departmentId"), context.keySet(),
+                "the acting context is the strict allowlist value");
+        assertEquals(ADMIN, context.get("username"));
+        assertEquals("ORGANIZATION", context.get("scope"));
+        assertEquals("ADMIN", context.get("role"));
+        assertNotNull(context.get("branchId"),
+                "login deterministically binds the organization scope to the first active branch");
     }
 
     // ------------------------------------------------------------------
-    // 17. Retained Task 1: no acting context is required or honored.
+    // 17. Task 3 contract: context headers carry no authority.
     // ------------------------------------------------------------------
 
     /**
-     * Retained Task 1 characterization (Task 3 will change it): a plain
-     * bearer token authorizes existing reads and proposed context headers
-     * carry no scoping effect — the server answers from the same global
-     * data either way. Proven against an observable read response.
+     * Task 3 contract (replaces the Task 1 pin that Task 3 intentionally
+     * changed): a plain bearer token authorizes reads through its server-
+     * derived acting assignment, and proposed context headers can neither
+     * elevate authority nor change any response — the replacement-token
+     * endpoint is the only switching mechanism.
      */
     @Test
-    void existingReadsNeedNoActingContextAndArbitraryContextHeadersHaveNoEffectToday() {
+    void contextHeadersCarryNoAuthorityAndReadsFollowOnlyTheServerDerivedAssignment() {
         String token = login(ADMIN);
         String patientId = createVerifiedPatientId(token, "ctx");
 
         ResponseEntity<Map<String, Object>> plain = getJson("/api/patients/" + patientId, token);
         assertEquals(HttpStatus.OK, plain.getStatusCode(),
-                "a valid token must authorize the read with no assignment/branch header today");
+                "a valid token authorizes the read through its acting assignment with no extra headers");
         Map<String, Object> plainBody = plain.getBody();
         assertNotNull(plainBody);
         assertEquals(patientId, String.valueOf(plainBody.get("id")),
@@ -691,9 +759,15 @@ class MultiBranchOperationsApiTest {
         ResponseEntity<Map<String, Object>> decorated = rest.exchange(
                 "/api/patients/" + patientId, HttpMethod.GET, new HttpEntity<>(proposedContext), MAP);
         assertEquals(HttpStatus.OK, decorated.getStatusCode(),
-                "proposed context headers must not break or scope the read today");
+                "proposed context headers must not break the read");
         assertEquals(plainBody, decorated.getBody(),
-                "arbitrary context headers have no scoping effect on today's global reads");
+                "arbitrary context headers have no scoping or authority effect on the read");
+        HttpHeaders forged = new HttpHeaders();
+        forged.setBearerAuth(login(NURSE));
+        forged.set("X-Acting-Role", "ADMIN");
+        assertEquals(HttpStatus.FORBIDDEN,
+                rest.exchange("/api/audit", HttpMethod.GET, new HttpEntity<>(forged), String.class).getStatusCode(),
+                "a forged ADMIN role header cannot elevate a non-admin caller onto an ADMIN-only route");
     }
 
     // ------------------------------------------------------------------
@@ -867,8 +941,13 @@ class MultiBranchOperationsApiTest {
                 () -> organizations.save(new HospitalOrganization(TEST_ORG_CODE, "Synthetic MultiBranch Hospital")));
     }
 
-    /** Wipes the hierarchy tables in FK-safe order; every test re-establishes what it needs. */
+    /**
+     * Wipes the hierarchy tables in FK-safe order — acting assignments first,
+     * because they reference branches and organizations — and then fully
+     * restores the shared foundation so every later login keeps working.
+     */
     private void wipeHierarchy() {
+        assignments.deleteAll();
         departments.deleteAll();
         branches.deleteAll();
         organizations.deleteAll();

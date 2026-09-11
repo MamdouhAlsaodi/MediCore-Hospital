@@ -2,7 +2,14 @@ package com.mamtrex.hospital.reporting;
 
 import com.mamtrex.hospital.appointment.Appointment;
 import com.mamtrex.hospital.appointment.AppointmentRepository;
+import com.mamtrex.hospital.auth.ActingAssignment;
+import com.mamtrex.hospital.auth.ActingAssignmentRepository;
+import com.mamtrex.hospital.auth.AssignmentScope;
 import com.mamtrex.hospital.auth.Role;
+import com.mamtrex.hospital.organization.Branch;
+import com.mamtrex.hospital.organization.BranchRepository;
+import com.mamtrex.hospital.organization.HospitalOrganization;
+import com.mamtrex.hospital.organization.HospitalOrganizationRepository;
 import com.mamtrex.hospital.auth.UserAccount;
 import com.mamtrex.hospital.auth.UserAccountRepository;
 import com.mamtrex.hospital.admission.Admission;
@@ -104,9 +111,26 @@ class DashboardApiTest {
     @Autowired
     InvoiceRepository invoices;
 
+    @Autowired
+    ActingAssignmentRepository assignments;
+
+    @Autowired
+    HospitalOrganizationRepository organizations;
+
+    @Autowired
+    BranchRepository branches;
+
     /** Unique synthetic suffix per test instance keeps every record disposable. */
     private final String suffix = UUID.randomUUID().toString().substring(0, 8);
 
+    private static final String TEST_ORG_CODE = "DASHBOARD-ORG";
+    private static final String TEST_BRANCH_CODE = "DASHBOARD-BR-DEFAULT";
+
+    /**
+     * Task 3 seeding: the synthetic accounts log in through explicit enabled
+     * acting assignments on a stable synthetic organization and default
+     * branch — no global-role fallback exists.
+     */
     @BeforeEach
     void seedDisposableAccounts() {
         for (String username : List.of(ADMIN_USER, BILLING_USER)) {
@@ -114,6 +138,33 @@ class DashboardApiTest {
                 accounts.save(new UserAccount(username, encoder.encode(TEST_ACCOUNT_PASSWORD),
                         Set.of(username.equals(BILLING_USER) ? Role.BILLING : Role.ADMIN)));
             }
+        }
+        HospitalOrganization org = organizations.findByCode(TEST_ORG_CODE).orElseGet(() ->
+                organizations.save(new HospitalOrganization(TEST_ORG_CODE, "Synthetic Dashboard Hospital")));
+        Branch branch = branches.findByOrganizationIdAndCode(org.getId(), TEST_BRANCH_CODE).orElseGet(() ->
+                branches.save(new Branch(org, TEST_BRANCH_CODE, "Synthetic Dashboard Branch", "1 Dashboard Way")));
+        ensureAssignment(ADMIN_USER, Role.ADMIN, AssignmentScope.ORGANIZATION, org, null);
+        ensureAssignment(BILLING_USER, Role.BILLING, AssignmentScope.BRANCH, org, branch);
+    }
+
+    private void ensureAssignment(String username, Role role, AssignmentScope scope,
+                                  HospitalOrganization org, Branch branch) {
+        UserAccount account = accounts.findByUsername(username).orElseThrow();
+        boolean present = switch (scope) {
+            case ORGANIZATION -> assignments
+                    .findByAccountIdAndRoleAndScopeAndBranchIsNullAndDepartmentIsNull(account.getId(), role, scope)
+                    .isPresent();
+            case BRANCH -> assignments
+                    .findByAccountIdAndRoleAndScopeAndBranchId(account.getId(), role, scope, branch.getId())
+                    .isPresent();
+            case DEPARTMENT -> false;
+        };
+        if (!present) {
+            assignments.save(switch (scope) {
+                case ORGANIZATION -> ActingAssignment.organization(account, org, role);
+                case BRANCH -> ActingAssignment.branch(account, org, role, branch);
+                case DEPARTMENT -> throw new IllegalArgumentException("These suites seed organization/branch scopes only");
+            });
         }
     }
 

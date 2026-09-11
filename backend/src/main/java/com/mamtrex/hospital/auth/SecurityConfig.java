@@ -14,7 +14,10 @@ import org.springframework.security.web.*;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
 /**
- * Stateless JWT security. Only {@code /api/auth/**} and actuator health are public.
+ * Stateless JWT security. Only {@code POST /api/auth/login} and actuator
+ * health are public; {@code POST /api/auth/context} (the acting-context
+ * switch, docs/plan3.md Task 3) is authenticated, and no broad
+ * {@code /api/auth/**} permit-all exists.
  * Endpoint families carry explicit role rules ordered before the {@code /api/**}
  * catch-all, which is ADMIN-only (default deny for non-admin accounts).
  * Method-level rules ordered before the family rules enforce the Task 9 write
@@ -47,7 +50,9 @@ public class SecurityConfig {
         return http.csrf(csrf -> csrf.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(authorize -> authorize
-                        .requestMatchers("/api/auth/**", "/actuator/health").permitAll()
+                        .requestMatchers("/actuator/health").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/auth/login").permitAll()
+                        .requestMatchers("/api/auth/**").authenticated()
                         .requestMatchers("/api/audit/**").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.GET, "/api/staff/**")
                             .hasAnyRole("ADMIN", "HR", "RECEPTIONIST")

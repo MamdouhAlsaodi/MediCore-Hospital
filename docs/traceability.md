@@ -120,6 +120,7 @@ Evidence kinds: **[tests]** automated backend/frontend suites; **[smoke]** the l
 
 - **[tests]** fresh worker run at the documentation revision: backend `mvn test` — **70 tests, 0 failures** (`CareOperationsApiTest` 20, `PatientJourneyApiTest` 19, `SecurityAuthorizationTest` 14, `DemoDataInitializerTest` 8, `DevAdminInitializerTest` 6, `DashboardApiTest` 2, `ArchitectureSmokeTest` 1); frontend `npm test` — **125 tests across 12 files, 0 failures**; `npm run build` — exit 0.
 - **[smoke]** supervisor-recorded isolated live run: `RUNS=5`, exit 0, `SMOKE RESULT: PASS` — per-step table and environment assumptions in `docs/performance.md` (single-workstation regression tripwire; explicitly no capacity claim).
+- **[acceptance]** stop-gate acceptance at snapshot `b9df613`: independent clean-checkout verification passed the docs/source mechanical audit, backend `mvn test` (70/70), frontend `npm test` (125/125 across 12 files) and `npm run build` (no CSS warnings), the static smoke gate, and executable-mode checks, with the checkout clean before and after; a supervisor-owned live smoke on the same snapshot completed 15/15 journey steps (`RUNS=1`, `SMOKE RESULT: PASS`, exit 0, isolated loopback H2 runtime) — an acceptance run, not a new performance baseline or capacity measurement.
 
 ### §4.9 — Documentation describes only verified behavior; `git diff --check` clean
 
@@ -178,6 +179,6 @@ Performance baselines for the same script are recorded in `docs/performance.md` 
 | 7 | Audit coverage and failure-contract sweep | `6042678` | #21 |
 | 8 | Synthetic fixture expansion | `e777136` | #22 |
 | 9 | Journey smoke extension and performance re-baseline | `236dc3f` | #23 |
-| 10 | Documentation, portfolio evidence, and stop gate | this docs change | pending review |
+| 10 | Documentation, portfolio evidence, and stop gate | this docs change; accepted at snapshot `b9df613` | — |
 
-Publication state: the Plan 2 PRs (#15–#23) are merged into `main` as of 2026-09-10. Task 10's documentation change is not yet merged or accepted; it remains pending the stop-gate acceptance review, which runs from a clean checkout.
+Publication state: the Plan 2 PRs (#15–#23) are merged into `main` as of 2026-09-10. Task 10 is accepted at snapshot `b9df613`; concise acceptance evidence is recorded in §4.8 above.

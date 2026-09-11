@@ -318,6 +318,9 @@ mvn test
 | Modify | `backend/src/main/java/com/mamtrex/hospital/auth/DevAdminInitializer.java` |
 | Modify | `backend/src/test/java/com/mamtrex/hospital/auth/DevAdminInitializerTest.java` |
 | Modify | `backend/src/test/java/com/mamtrex/hospital/auth/SecurityAuthorizationTest.java` |
+| Modify | `backend/src/test/java/com/mamtrex/hospital/patient/PatientJourneyApiTest.java` |
+| Modify | `backend/src/test/java/com/mamtrex/hospital/operations/CareOperationsApiTest.java` |
+| Modify | `backend/src/test/java/com/mamtrex/hospital/reporting/DashboardApiTest.java` |
 | Modify | `backend/src/test/java/com/mamtrex/hospital/organization/MultiBranchOperationsApiTest.java` |
 
 **Authentication contract:**

@@ -2,7 +2,7 @@
 
 MediCore is an **educational, non-clinical training project**. It is not certified medical software, holds no regulatory approval, and must never be used for patient care or real clinical decisions. Everything described below is synthetic-data-only behavior of the local training build.
 
-This document describes the one workflow the Training/Portfolio milestone actually demonstrates — login → patient registration → search/detail → edit → appointment scheduling → audit evidence — exactly as implemented in code and pinned by automated tests. Every endpoint, field, and behavior claim was checked against source (see `docs/traceability.md` for the test and evidence map).
+This document describes the demonstrated patient journey — login → patient registration → search/detail → edit → appointment scheduling → audit evidence — exactly as implemented in code and pinned by automated tests. The journey continues after the appointment into **care operations** (admission with server-stamped discharge, an emergency visit with a neutral demo triage label, a uniquely numbered simulated invoice, and the status-aware dashboard): that continuation is told in [`docs/care-operations.md`](care-operations.md), with its layering in [`docs/architecture/care-operations.md`](architecture/care-operations.md). Every endpoint, field, and behavior claim was checked against source (see `docs/traceability.md` for the test and evidence map).
 
 ## Before you start
 
@@ -38,7 +38,7 @@ Failure states:
 
 - **Who:** any authenticated role (`/api/dashboard/**` is `authenticated()`; navigation shows Dashboard to everyone logged in).
 - **UI:** default screen after login (`DashboardPage.jsx`), fetched via `apiFetch`.
-- **API:** `GET /api/dashboard` → `{"patients":n,"appointments":n,"admissions":n,"emergencyVisits":n,"invoices":n}` (five count keys, `DashboardController`).
+- **API:** `GET /api/dashboard` → eleven flat count keys (`DashboardController` → `DashboardService`): the five totals `patients`, `appointments`, `admissions`, `emergencyVisits`, `invoices` plus the status-aware `openAdmissions`, `activeEmergencyVisits`, `invoicesDraft`, `invoicesIssued`, `invoicesPaid`, `invoicesVoid`. The frontend presents them as labeled groups (Current activity / Totals / Invoices by status); the full contract is in `docs/api.md`.
 - **Failure:** `401` → the shell clears the session and returns to Login; no other state is offered for this endpoint.
 
 ## Step 3 — Patient search and detail
@@ -158,6 +158,17 @@ Failure states:
 
 Successful patient create/update and appointment create/delete produce events (`PatientService`/`AppointmentService` record them atomically with the mutation); failed validations create neither records nor events (pinned by `failedAppointmentValidationCreatesNeitherAppointmentNorAudit`). Note that rows written directly by the opt-in demo seeder bypass the services and therefore produce **no** audit events (documented in `docs/runbook.md`).
 
+## Where the journey continues — care operations
+
+The appointment is not the end of the demonstrated workflow. With the same synthetic patient, the care-operations phase demonstrates (all on `/api/admissions`, `/api/emergency-visits`, and `/api/invoices`, each behind its enforced role family):
+
+- **Admission and discharge** — a register form on the Admissions screen (also offered as "Register admission" on the patient detail view) creates an admission for a verified patient; the server sets `ADMITTED`, and only the server stamps `dischargedAt` at the single legal transition.
+- **Emergency visit** — a register form with a **neutral `1–5` demo triage label** (no clinical meaning, not a real triage protocol) and guarded `WAITING → IN_TREATMENT → CLOSED` actions.
+- **Invoice (financial simulation)** — ADMIN and BILLING only: a uniquely numbered, display-only demo invoice moved through `DRAFT → ISSUED → PAID` or voided; the screen states on-page that no real payments, conversion, FX, or tax exist.
+- **Dashboard and audit** — the eleven-key status-aware dashboard and the ADMIN audit screen surface every one of these mutations (exactly one event per success, none on failure).
+
+Step-by-step story with failure examples: [`docs/care-operations.md`](care-operations.md). Layering and boundaries: [`docs/architecture/care-operations.md`](architecture/care-operations.md).
+
 ## Failure-state summary
 
 `401` always means "no valid session": the frontend invokes the session-expiry callback and the shell returns to Login — no local error is raised on top of it. `403` always means "authenticated but this role is refused": the backend is authoritative, and the UI shows the shared permission-denial message. `400` covers validation and malformed requests with the stable `ApiError` body; `404` covers missing records. All error bodies and UI behaviors above are pinned by tests — see `docs/traceability.md`.
@@ -166,14 +177,14 @@ Successful patient create/update and appointment create/delete produce events (`
 
 ```bash
 # automated suites
-cd backend && mvn test                       # 33 tests
-cd ../frontend && npm test && npm run build  # 61 tests + production build
+cd backend && mvn test                       # 70 tests
+cd ../frontend && npm test && npm run build  # 125 tests + production build
 
-# repeatable API smoke of the same journey (backend must be running;
-# disposable local database + demo seed — see docs/runbook.md)
+# repeatable API smoke of the full care-operations journey (backend must be
+# running; disposable local database + demo seed — see docs/runbook.md)
 BASE_URL=http://127.0.0.1:5501 RUNS=3 \
 HOSPITAL_SMOKE_PASSWORD="<disposable local value>" \
 ./scripts/smoke-patient-journey.sh
 ```
 
-The smoke script performs login → synthetic patient create → search → detail → appointment create → appointment list → dashboard per run, fails non-zero on any contract deviation, and prints per-step timings (baseline recorded in `docs/performance.md`).
+Per run the smoke performs login → synthetic patient create → search → detail → appointment create → list → admission with server-stamped discharge → emergency visit through its terminal state → invoice through `PAID` → eleven-key dashboard, fails non-zero on any contract deviation, and prints per-step timings (baseline recorded in `docs/performance.md`). The care-operations half of that journey is documented in [`docs/care-operations.md`](care-operations.md).

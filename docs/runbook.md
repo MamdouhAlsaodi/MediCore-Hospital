@@ -86,18 +86,20 @@ Behavior and boundaries:
 Run the full test gates from the repository root:
 
 ```bash
-cd backend && mvn test                        # 40 tests (PatientJourneyApiTest 19,
-                                              # SecurityAuthorizationTest 9,
+cd backend && mvn test                        # 70 tests (CareOperationsApiTest 20,
+                                              # PatientJourneyApiTest 19,
+                                              # SecurityAuthorizationTest 14,
+                                              # DemoDataInitializerTest 8,
                                               # DevAdminInitializerTest 6,
-                                              # DemoDataInitializerTest 5,
+                                              # DashboardApiTest 2,
                                               # ArchitectureSmokeTest 1)
-cd ../frontend && npm test && npm run build   # 61 tests across 7 files + production build
+cd ../frontend && npm test && npm run build   # 125 tests across 12 files + production build
 cd .. && git diff --check                     # whitespace/conflict-marker gate
 ```
 
 ## Patient Journey smoke and performance evidence
 
-With the backend running (a disposable local database with the demo cohort enabled — the seeded professionals are what make appointment references resolvable), run the repeatable API smoke of the demonstrated journey:
+With the backend running (a disposable local database with the demo cohort enabled — the seeded professionals are what make appointment references resolvable), run the repeatable API smoke of the demonstrated care-operations journey:
 
 ```bash
 BASE_URL=http://127.0.0.1:5501 RUNS=3 \
@@ -109,8 +111,8 @@ Behavior of the script:
 
 - Boots nothing itself — it preflights `/actuator/health` and the login, then requires the backend at `BASE_URL` (default `http://127.0.0.1:5501`).
 - Credentials come only from the environment: `HOSPITAL_SMOKE_USERNAME` (default `admin`) and the required `HOSPITAL_SMOKE_PASSWORD` (the disposable value you started the backend with). Nothing is hardcoded; never use a real or shared secret.
-- Per run it performs login → synthetic patient create (`SMOKE-<timestamp>-<run>` MRN) → search → detail → appointment create (patient + seeded professional) → appointment list → dashboard, and times each step.
-- It exits non-zero on any non-2xx response, missing contract field, or unresolvable reference; with no resolvable professional it fails by design with a hint to start with `MEDICORE_DEMO_SEED=true` — there is no skip-create mode.
+- Per run it performs the fifteen-step care-operations journey, timing each step: login → synthetic patient create (`SMOKE-<timestamp>-<run>` MRN) → patient search → patient detail → appointment create (patient + seeded professional) → appointment list → admission create (server sets `ADMITTED`) → discharge transition (the server applies `ADMITTED → DISCHARGED` and stamps a nonblank `dischargedAt`, which the script requires) → emergency-visit create (server sets `WAITING`; the triage label is a neutral 1–5 demo value with no clinical meaning) → `IN_TREATMENT` → `CLOSED` transitions → invoice create (a per-run unique number `SMOKE-INV-<timestamp>-<run>` and display-only demo amount/currency — financial simulation only; server sets `DRAFT`) → `ISSUED` → `PAID` transitions → dashboard (all eleven numeric count keys required; totals must at least be consistent with the journey just executed, and no status-aware key is required to be zero because the seed contains fixtures in every bucket).
+- It exits non-zero on any non-2xx response, any missing or malformed contract field (`accessToken`/`roles` at login, created-record ids, the server-returned lifecycle status on every create/transition, list arrays, the eleven dashboard count keys), or unresolvable reference; with no resolvable professional it fails by design with a hint to start with `MEDICORE_DEMO_SEED=true` — there is no skip-create mode.
 - It cleans up nothing: every created record is synthetic and it must only ever target a disposable local database.
 - On success it prints per-step min/median/max timings and `SMOKE RESULT: PASS`.
 

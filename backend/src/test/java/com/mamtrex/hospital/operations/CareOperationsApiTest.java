@@ -65,8 +65,10 @@ import static org.junit.jupiter.api.Assertions.*;
  *   plus the Task 7 PUT /api/admissions/{id}/bed command — an optional bedId
  *   at creation and atomic initial-assignment/transfer with the allowlisted
  *   branchId and current-bed summary on every response;
- * - the dashboard exposes exactly the eleven Task 5 keys — the five
- *   whole-table totals plus status-aware aggregates (beds add no key);
+ * - the dashboard alias answers the Task 10 typed branch summary — the
+ *   server-owned branch identity, the five whole-row totals plus
+ *   status-aware aggregates, the bed occupancy buckets, and today's
+ *   window — never the retired whole-table flat view;
  * - the RBAC family rules are unchanged by Tasks 2, 3, and 4: DOCTOR and NURSE
  *   keep live admissions/emergency writes (plan2 §7.1 write-role narrowing is
  *   an owner decision), and BILLING is isolated to invoices with 403 elsewhere.
@@ -122,11 +124,23 @@ class CareOperationsApiTest {
     private static final Set<String> BED_DTO_FIELDS = Set.of(
             "id", "branchId", "ward", "room", "bedNumber", "occupancyStatus");
 
-    /** Task 5 dashboard contract: totals plus status-aware aggregates, exactly these eleven keys. */
-    private static final Set<String> DASHBOARD_KEYS = Set.of(
+    /**
+     * Task 10 typed branch-summary contract: exactly these nineteen keys —
+     * the server-owned branch identity, the five whole-row totals plus
+     * status-aware aggregates, the bed occupancy buckets, today's window,
+     * and the invoice lifecycle buckets. The retained {@code /api/dashboard}
+     * alias answers this contract and never the retired whole-table flat view.
+     */
+    private static final Set<String> BRANCH_SUMMARY_KEYS = Set.of(
+            "branchId", "branchCode", "branchName",
             "patients", "appointments", "admissions", "emergencyVisits", "invoices",
             "openAdmissions", "activeEmergencyVisits",
+            "bedsAvailable", "bedsOccupied", "bedsMaintenance", "bedsOutOfService",
+            "todayAppointments",
             "invoicesDraft", "invoicesIssued", "invoicesPaid", "invoicesVoid");
+
+    /** The three branch-identity keys of the typed summary; every other key is a numeric count. */
+    private static final Set<String> BRANCH_IDENTITY_KEYS = Set.of("branchId", "branchCode", "branchName");
 
     /** Task 7 audit contract: exactly these six public event fields. */
     private static final Set<String> AUDIT_CONTRACT_KEYS = Set.of(
@@ -1377,13 +1391,19 @@ class CareOperationsApiTest {
     // ------------------------------------------------------------------
 
     /**
-     * Dashboard contract at integration level: exactly the eleven Task 5 keys
-     * — five whole-table totals plus status-aware aggregates — with beds
-     * adding no key and deletes feeding straight back into the totals.
-     * Detailed bucket semantics are pinned in DashboardApiTest; this test
-     * preserves its existing deltas over test-created synthetic records only.
-     * The Task 2 admission contract needs one verified patient, created
-     * before the baseline snapshot.
+     * Dashboard contract at integration level (docs/plan3.md Task 10): the
+     * retained {@code /api/dashboard} path is a deprecated compatibility
+     * alias that answers exactly the typed branch summary of the acting
+     * branch — the nineteen-key contract with the server-owned branch
+     * identity, the five whole-row totals plus status-aware aggregates, the
+     * bed occupancy buckets, today's window, and the invoice buckets — never
+     * the retired whole-table flat view. Counts stay branch-scoped row
+     * semantics: creates feed the acting branch's totals and buckets, a new
+     * bed feeds the existing occupancy bucket without adding a key, and
+     * deletes feed straight back out. Detailed bucket semantics are pinned
+     * in DashboardApiTest; this test preserves its existing deltas over
+     * test-created synthetic records only. The Task 2 admission contract
+     * needs one verified patient, created before the baseline snapshot.
      */
     @Test
     void dashboardSummaryPinsExactKeySetAndRowCountSemantics() {
@@ -1394,15 +1414,31 @@ class CareOperationsApiTest {
         assertEquals(HttpStatus.OK, before.getStatusCode());
         Map<String, Object> beforeBody = before.getBody();
         assertNotNull(beforeBody, "dashboard response must carry a body");
-        assertEquals(DASHBOARD_KEYS, beforeBody.keySet(), "the dashboard must expose exactly the eleven Task 5 keys");
-        for (String key : DASHBOARD_KEYS) {
-            assertInstanceOf(Number.class, beforeBody.get(key), "dashboard key '" + key + "' must be a numeric count");
+        assertEquals(BRANCH_SUMMARY_KEYS, beforeBody.keySet(),
+                "the dashboard alias must answer exactly the Task 10 typed branch-summary contract");
+        Branch actingBranch = branches.findByOrganizationIdAndCode(
+                organizations.findByCode(TEST_ORG_CODE).orElseThrow().getId(), TEST_BRANCH_CODE).orElseThrow();
+        assertEquals(actingBranch.getId().toString(), beforeBody.get("branchId"),
+                "branchId must be the server-owned branch row of the acting context");
+        assertEquals(actingBranch.getCode(), beforeBody.get("branchCode"),
+                "branchCode must be the acting branch's stable code");
+        assertEquals(actingBranch.getName(), beforeBody.get("branchName"),
+                "branchName must be the acting branch's server-owned name");
+        for (String key : BRANCH_SUMMARY_KEYS) {
+            if (BRANCH_IDENTITY_KEYS.contains(key)) {
+                assertNotNull(beforeBody.get(key), "dashboard key '" + key + "' must be present");
+            } else {
+                assertInstanceOf(Number.class, beforeBody.get(key),
+                        "dashboard key '" + key + "' must be a numeric count");
+            }
         }
         long patientsBefore = count(beforeBody, "patients");
         long appointmentsBefore = count(beforeBody, "appointments");
         long admissionsBefore = count(beforeBody, "admissions");
         long emergencyBefore = count(beforeBody, "emergencyVisits");
         long invoicesBefore = count(beforeBody, "invoices");
+        long invoicesDraftBefore = count(beforeBody, "invoicesDraft");
+        long bedsAvailableBefore = count(beforeBody, "bedsAvailable");
 
         String admissionId = requireId(post("/api/admissions", adminToken, admissionCreatePayload("dash", patientId)));
         String visitId = requireId(post("/api/emergency-visits", adminToken, emergencyCreatePayload("dash", patientId)));
@@ -1413,12 +1449,17 @@ class CareOperationsApiTest {
         assertEquals(HttpStatus.OK, after.getStatusCode());
         Map<String, Object> afterBody = after.getBody();
         assertNotNull(afterBody);
-        assertEquals(DASHBOARD_KEYS, afterBody.keySet(),
-                "creating a bed must not introduce a new dashboard key");
+        assertEquals(BRANCH_SUMMARY_KEYS, afterBody.keySet(),
+                "creating a bed must feed the existing occupancy bucket, never introduce a new dashboard key");
         assertEquals(admissionsBefore + 1, count(afterBody, "admissions"), "each created admission must count once");
         assertEquals(emergencyBefore + 1, count(afterBody, "emergencyVisits"), "each created visit must count once");
         assertEquals(invoicesBefore + 1, count(afterBody, "invoices"), "each created invoice must count once");
-        assertEquals(patientsBefore, count(afterBody, "patients"), "no patient was created after the baseline snapshot");
+        assertEquals(invoicesDraftBefore + 1, count(afterBody, "invoicesDraft"),
+                "each created DRAFT invoice must feed the DRAFT bucket");
+        assertEquals(bedsAvailableBefore + 1, count(afterBody, "bedsAvailable"),
+                "each created bed must feed its occupancy bucket (Task 6 creates AVAILABLE beds)");
+        assertEquals(patientsBefore, count(afterBody, "patients"),
+                "no patient was created after the baseline snapshot");
         assertEquals(appointmentsBefore, count(afterBody, "appointments"), "no appointment was created");
 
         assertEquals(HttpStatus.OK, delete("/api/admissions/" + admissionId, adminToken).getStatusCode());
@@ -1431,9 +1472,11 @@ class CareOperationsApiTest {
         Map<String, Object> restoredBody = restored.getBody();
         assertNotNull(restoredBody);
         assertEquals(admissionsBefore, count(restoredBody, "admissions"),
-                "deletes must feed straight back into the raw row counts");
+                "deletes must feed straight back into the branch-scoped row counts");
         assertEquals(emergencyBefore, count(restoredBody, "emergencyVisits"));
         assertEquals(invoicesBefore, count(restoredBody, "invoices"));
+        assertEquals(invoicesDraftBefore, count(restoredBody, "invoicesDraft"));
+        assertEquals(bedsAvailableBefore, count(restoredBody, "bedsAvailable"));
     }
 
     // ------------------------------------------------------------------

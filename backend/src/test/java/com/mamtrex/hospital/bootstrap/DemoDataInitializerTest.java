@@ -7,6 +7,9 @@ import com.mamtrex.hospital.appointment.AppointmentRepository;
 import com.mamtrex.hospital.audit.AuditEvent;
 import com.mamtrex.hospital.audit.AuditEventRepository;
 import com.mamtrex.hospital.audit.AuditService;
+import com.mamtrex.hospital.auth.ActingContext;
+import com.mamtrex.hospital.auth.AssignmentScope;
+import com.mamtrex.hospital.auth.Role;
 import com.mamtrex.hospital.billing.Invoice;
 import com.mamtrex.hospital.billing.InvoiceRepository;
 import com.mamtrex.hospital.department.Department;
@@ -19,6 +22,7 @@ import com.mamtrex.hospital.organization.HospitalOrganization;
 import com.mamtrex.hospital.organization.HospitalOrganizationRepository;
 import com.mamtrex.hospital.patient.Patient;
 import com.mamtrex.hospital.patient.PatientRepository;
+import com.mamtrex.hospital.reporting.DashboardDtos;
 import com.mamtrex.hospital.reporting.DashboardService;
 import com.mamtrex.hospital.staff.StaffMember;
 import com.mamtrex.hospital.staff.StaffMemberRepository;
@@ -27,6 +31,8 @@ import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -53,9 +59,11 @@ import static org.junit.jupiter.api.Assertions.*;
  * unknown pre-existing null-branch departments stay untouched and
  * unassigned, the seeded workflow cohort (patients, professionals,
  * appointments) is bound at creation time to the stable default branch
- * (docs/plan3.md Task 4), the dashboard aggregates reflect the exact fixture
- * composition through the real {@link DashboardService}, and the disabled
- * default touches no store and records no event. Runs against an isolated
+ * (docs/plan3.md Task 4), the branch-scoped typed dashboard summary through
+ * the real {@link DashboardService} counts the branch-bound cohort exactly
+ * while the legacy null-branch care-operation fixtures stay hidden and zero
+ * until Task 12's separate cohort work, and the disabled default touches no
+ * store and records no event. Runs against an isolated
  * in-memory H2 database (never the production file store) with disposable
  * synthetic test-only secrets; no real personal or clinical data and no
  * hardcoded credentials are involved.
@@ -485,31 +493,65 @@ class DemoDataInitializerTest {
     }
 
     /**
-     * Task 8 dashboard evidence: the real {@link DashboardService} aggregates
-     * must be non-zero and exact for the fixture composition — totals, the
-     * open-admission bucket excluding the DISCHARGED row, the active-emergency
-     * sum over WAITING + IN_TREATMENT, and the one-per-status invoice buckets.
+     * Task 8 dashboard evidence through the Task 10 typed contract: the real
+     * {@link DashboardService} branch summary of the stable demo branch is
+     * exact for the branch-bound cohort — exactly the three demo patients and
+     * two demo appointments — while every legacy null-branch care-operation
+     * fixture (admissions, emergency visits, invoices) stays honestly hidden
+     * and zero until Task 12 rebuilds the cohort on the branch-scoped
+     * contract. No record is seeded, moved, or mutated to revive the retired
+     * whole-table totals: the rows still exist, only the branch scope hides
+     * them, and this test proves both halves. The acting context below is a
+     * fabricated principal shape only — a branch-scoped context pointing at
+     * the real server-owned demo branch row, exactly the value the JWT filter
+     * derives for such an assignment — so the service resolves the branch
+     * from server state, never from test input.
      */
     @Test
     void dashboardAggregatesReflectExactFixtureComposition() {
-        Map<String, Long> summary = dashboardService.summary();
-        assertEquals(Set.of("patients", "appointments", "admissions", "emergencyVisits", "invoices",
-                        "openAdmissions", "activeEmergencyVisits",
-                        "invoicesDraft", "invoicesIssued", "invoicesPaid", "invoicesVoid"),
-                summary.keySet(), "the dashboard must expose exactly the contract keys");
-        assertEquals(3L, summary.get("patients"), "patients total must count the three demo patients");
-        assertEquals(2L, summary.get("appointments"), "appointments total must count the two demo appointments");
-        assertEquals(2L, summary.get("admissions"), "admissions total must count both admission fixtures");
-        assertEquals(3L, summary.get("emergencyVisits"), "emergencyVisits total must count all three visit fixtures");
-        assertEquals(4L, summary.get("invoices"), "invoices total must count all four invoice fixtures");
-        assertEquals(1L, summary.get("openAdmissions"),
-                "openAdmissions must count only the ADMITTED fixture and exclude the DISCHARGED one");
-        assertEquals(2L, summary.get("activeEmergencyVisits"),
-                "activeEmergencyVisits must sum WAITING and IN_TREATMENT and exclude CLOSED");
-        assertEquals(1L, summary.get("invoicesDraft"), "the DRAFT invoice bucket must hold exactly the one DRAFT fixture");
-        assertEquals(1L, summary.get("invoicesIssued"), "the ISSUED invoice bucket must hold exactly the one ISSUED fixture");
-        assertEquals(1L, summary.get("invoicesPaid"), "the PAID invoice bucket must hold exactly the one PAID fixture");
-        assertEquals(1L, summary.get("invoicesVoid"), "the VOID invoice bucket must hold exactly the one VOID fixture");
+        Branch branch = branches.findByOrganizationIdAndCode(
+                organizations.findByCode(DEMO_ORG_CODE).orElseThrow().getId(), DEMO_BRANCH_CODE).orElseThrow();
+        assertEquals(2, admissions.count(), "the legacy null-branch admission fixtures must still exist");
+        assertEquals(3, emergencyVisits.count(), "the legacy null-branch emergency fixtures must still exist");
+        assertEquals(4, invoices.count(), "the legacy null-branch invoice fixtures must still exist");
+
+        ActingContext actingContext = new ActingContext("system-dashboard-reader",
+                UUID.randomUUID(), Role.ADMIN, AssignmentScope.BRANCH,
+                branch.getOrganization().getId(), branch.getId(), null);
+        SecurityContextHolder.getContext().setAuthentication(
+                UsernamePasswordAuthenticationToken.authenticated(actingContext, null, List.of()));
+        DashboardDtos.BranchSummary summary;
+        try {
+            summary = dashboardService.branchSummary();
+        } finally {
+            SecurityContextHolder.clearContext();
+        }
+        assertEquals(branch.getId(), summary.branchId(),
+                "the typed summary must name the acting demo branch row the server owns");
+        assertEquals(DEMO_BRANCH_CODE, summary.branchCode(), "the typed summary must carry the stable demo branch code");
+        assertTrue(summary.branchName().startsWith("Demo "), "the branch name must be obviously synthetic");
+        assertEquals(3L, summary.patients(), "patients must count exactly the three branch-bound demo patients");
+        assertEquals(2L, summary.appointments(), "appointments must count exactly the two branch-bound demo appointments");
+        assertEquals(0L, summary.todayAppointments(),
+                "todayAppointments must stay honest: the demo fixtures are dated 2031, never the server's today");
+        assertEquals(0L, summary.admissions(),
+                "legacy null-branch admission rows must stay hidden from the branch scope until Task 12");
+        assertEquals(0L, summary.openAdmissions(),
+                "openAdmissions must stay zero while no admission is branch-owned yet");
+        assertEquals(0L, summary.emergencyVisits(),
+                "legacy null-branch emergency rows must stay hidden from the branch scope until Task 12");
+        assertEquals(0L, summary.activeEmergencyVisits(),
+                "activeEmergencyVisits must stay zero while no visit is branch-owned yet");
+        assertEquals(0L, summary.invoices(),
+                "legacy null-branch invoice rows must stay hidden from the branch scope until Task 12");
+        assertEquals(0L, summary.invoicesDraft(), "the DRAFT bucket must stay zero while the cohort is unowned");
+        assertEquals(0L, summary.invoicesIssued(), "the ISSUED bucket must stay zero while the cohort is unowned");
+        assertEquals(0L, summary.invoicesPaid(), "the PAID bucket must stay zero while the cohort is unowned");
+        assertEquals(0L, summary.invoicesVoid(), "the VOID bucket must stay zero while the cohort is unowned");
+        assertEquals(0L, summary.bedsAvailable(), "no beds are seeded, so the available bucket must stay zero");
+        assertEquals(0L, summary.bedsOccupied(), "no beds are seeded, so the occupied bucket must stay zero");
+        assertEquals(0L, summary.bedsMaintenance(), "no beds are seeded, so the maintenance bucket must stay zero");
+        assertEquals(0L, summary.bedsOutOfService(), "no beds are seeded, so the out-of-service bucket must stay zero");
     }
 
     /**

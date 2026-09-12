@@ -25,7 +25,7 @@ function ScreenBoundary({ destination }) {
   );
 }
 
-function Screen({ destination, session, onSessionExpired }) {
+function Screen({ destination, session, onSessionExpired, onNavigate }) {
   if (!destination.implemented) {
     return <ScreenBoundary destination={destination} />;
   }
@@ -50,7 +50,13 @@ function Screen({ destination, session, onSessionExpired }) {
   if (destination.id === 'audit') {
     return <AuditPage session={session} onSessionExpired={onSessionExpired} />;
   }
-  return <DashboardPage session={session} onSessionExpired={onSessionExpired} />;
+  return (
+    <DashboardPage
+      session={session}
+      onSessionExpired={onSessionExpired}
+      onNavigate={onNavigate}
+    />
+  );
 }
 
 // Branch lines come only from the server-issued session. A branch-bound
@@ -183,6 +189,7 @@ export default function AppShell({ session, onLogout, onSessionExpired, onContex
           destination={selected}
           session={session}
           onSessionExpired={onSessionExpired}
+          onNavigate={setSelectedId}
         />
       </main>
     </div>

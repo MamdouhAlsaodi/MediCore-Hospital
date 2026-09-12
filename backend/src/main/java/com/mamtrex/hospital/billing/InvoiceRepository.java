@@ -1,7 +1,10 @@
 package com.mamtrex.hospital.billing;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -39,4 +42,22 @@ public interface InvoiceRepository extends JpaRepository<Invoice, UUID> {
 
     /** Branch-scoped existence check backing the delete command. */
     boolean existsByIdAndBranchId(UUID id, UUID branchId);
+
+    /*
+     * Task 10 dashboard aggregation (docs/plan3.md §4.7): one grouped
+     * (branch, status) count restricted to an explicit branch-id set —
+     * never a whole-table read. Totals and the four simulated invoice
+     * buckets derive from the same tuples; the buckets remain a financial
+     * simulation with no money-movement semantics.
+     */
+    @Query("select i.branchId as branchId, i.status as status, count(i) as total from Invoice i "
+            + "where i.branchId in :branchIds group by i.branchId, i.status")
+    List<BranchStatusCount> countByBranchIdInGroupedByStatus(@Param("branchIds") Collection<UUID> branchIds);
+
+    /** One grouped (branch, status) count tuple of the query above. */
+    interface BranchStatusCount {
+        UUID getBranchId();
+        String getStatus();
+        long getTotal();
+    }
 }

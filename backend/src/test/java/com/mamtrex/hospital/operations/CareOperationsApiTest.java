@@ -61,7 +61,10 @@ import static org.junit.jupiter.api.Assertions.*;
  * - emergency visits now own PUT /api/emergency-visits/{id}/status with the
  *   Task 3 lifecycle WAITING -> IN_TREATMENT | CLOSED, IN_TREATMENT ->
  *   CLOSED, CLOSED terminal (the triage label stays a neutral 1-5 demo value
- *   with no clinical meaning); admissions own PUT /api/admissions/{id}/status;
+ *   with no clinical meaning); admissions own PUT /api/admissions/{id}/status
+ *   plus the Task 7 PUT /api/admissions/{id}/bed command — an optional bedId
+ *   at creation and atomic initial-assignment/transfer with the allowlisted
+ *   branchId and current-bed summary on every response;
  * - the dashboard exposes exactly the eleven Task 5 keys — the five
  *   whole-table totals plus status-aware aggregates (beds add no key);
  * - the RBAC family rules are unchanged by Tasks 2, 3, and 4: DOCTOR and NURSE
@@ -96,9 +99,16 @@ class CareOperationsApiTest {
     /** Legacy entity-shaped response contract: persistence metadata leaks. */
     private static final Set<String> METADATA_KEYS = Set.of("id", "createdAt", "updatedAt", "version");
 
-    /** Task 2 DTO contract: exactly these six fields, no persistence metadata. */
+    /**
+     * Task 2 DTO contract as extended by Task 7: exactly these eight
+     * allowlisted fields — branchId and the current-bed summary added, no
+     * persistence or assignment metadata ever.
+     */
     private static final Set<String> ADMISSION_DTO_FIELDS = Set.of(
-            "id", "patientId", "admittedAt", "dischargedAt", "reason", "status");
+            "id", "branchId", "patientId", "admittedAt", "dischargedAt", "reason", "status", "currentBed");
+
+    /** Task 7 current-bed summary contract: exactly these four fields, no bed status or branch. */
+    private static final Set<String> CURRENT_BED_FIELDS = Set.of("bedId", "ward", "room", "bedNumber");
 
     /** Task 3 DTO contract: exactly these six fields, no persistence metadata. */
     private static final Set<String> EMERGENCY_VISIT_DTO_FIELDS = Set.of(
@@ -331,6 +341,12 @@ class CareOperationsApiTest {
                 "the admission response must be exactly the DTO contract with no persistence metadata");
         assertEquals(patientId, body.get("patientId"),
                 "patientId must be the canonical UUID string of the verified patient");
+        Object patientBranch = getMap("/api/patients/" + patientId, token).getBody().get("branchId");
+        assertNotNull(patientBranch, "the patient fixture must carry its acting branch");
+        assertEquals(patientBranch, body.get("branchId"),
+                "branchId must be derived by the server from the admission's verified patient");
+        assertNull(body.get("currentBed"),
+                "an admission created without a bed must carry no current-bed summary");
         assertEquals("2031-01-01T08:15:30", body.get("admittedAt"), "admittedAt must be the canonical ISO string");
         assertEquals("synthetic normalized admission " + suffix, body.get("reason"));
         assertEquals("ADMITTED", body.get("status"), "the server must set status=ADMITTED, never a client value");
@@ -434,6 +450,8 @@ class CareOperationsApiTest {
         assertNotNull(body);
         assertEquals(ADMISSION_DTO_FIELDS, body.keySet(), "the discharge response must stay on the DTO contract");
         assertEquals("DISCHARGED", body.get("status"), "the server must set status=DISCHARGED");
+        assertNull(body.get("currentBed"),
+                "discharging an admission that holds no bed must leave no current-bed summary");
         assertNotNull(body.get("dischargedAt"), "the server must stamp the discharge time itself");
         assertEquals(patientId, body.get("patientId"), "discharge must not change the verified reference");
         assertEquals("2031-01-01T08:15:30", body.get("admittedAt"), "discharge must not change admittedAt");
@@ -493,6 +511,212 @@ class CareOperationsApiTest {
                 "deleting an unknown admission must be 404, not a silent success");
 
         assertSingleEvent(auditEvents(login(ADMIN_USER)), "Admission", admissionId, "DELETE", NURSE_USER, "deleted");
+    }
+
+    // ------------------------------------------------------------------
+    // Admission bed lifecycle contract (docs/plan3.md Task 7)
+    // ------------------------------------------------------------------
+
+    /**
+     * Task 7 bed lifecycle over real HTTP: create-with-bed occupies only an
+     * AVAILABLE bed; PUT /{id}/bed performs the initial assignment and the
+     * atomic transfer (source released and target occupied by one command);
+     * an unavailable target, a repeated target, and a bed command on a
+     * discharged admission are the shared 409 with nothing persisted and no
+     * audit event; discharge closes the assignment transactionally so the
+     * bed is immediately reusable. Every response stays on the DTO
+     * allowlist with the four-field current-bed summary, and every
+     * successful command owns exactly one existing-format audit event.
+     */
+    @Test
+    void admissionBedLifecyclePinsAssignTransferReleaseAndRollback() {
+        String adminToken = login(ADMIN_USER);
+        String token = login(NURSE_USER);
+        String patientId = createSyntheticPatient(adminToken, "bedlife");
+        Map<String, Object> bedA = createSyntheticBed(adminToken, "bedlife-a");
+        Map<String, Object> bedB = createSyntheticBed(adminToken, "bedlife-b");
+        Map<String, Object> bedC = createSyntheticBed(adminToken, "bedlife-c");
+        String bedAId = String.valueOf(bedA.get("id"));
+        String bedBId = String.valueOf(bedB.get("id"));
+        String bedCId = String.valueOf(bedC.get("id"));
+
+        // Create-with-bed: the admission is born occupying bed A.
+        Map<String, Object> payload = admissionCreatePayload("bedlife", patientId);
+        payload.put("bedId", bedAId);
+        ResponseEntity<Map<String, Object>> created = post("/api/admissions", token, payload);
+        assertEquals(HttpStatus.OK, created.getStatusCode(), "creating with an AVAILABLE bed must occupy it");
+        Map<String, Object> body = created.getBody();
+        assertNotNull(body);
+        assertEquals(ADMISSION_DTO_FIELDS, body.keySet(), "the bed contract rides the same DTO allowlist");
+        String admissionId = requireId(created);
+        assertCurrentBed(body, bedA);
+        assertEquals("OCCUPIED", bedOccupancy(adminToken, bedAId), "the created-with bed must be occupied");
+
+        // Initial assignment of a second admission through the bed command.
+        String secondAdmissionId = requireId(post("/api/admissions", token,
+                admissionCreatePayload("bedlife-2", patientId)));
+        ResponseEntity<Map<String, Object>> assigned =
+                put("/api/admissions/" + secondAdmissionId + "/bed", token, Map.of("bedId", bedBId));
+        assertEquals(HttpStatus.OK, assigned.getStatusCode(), "the initial assignment must occupy the target");
+        assertCurrentBed(assigned.getBody(), bedB);
+        assertCurrentBed(getMap("/api/admissions/" + secondAdmissionId, adminToken).getBody(), bedB);
+
+        // Transfer: admission 1 moves A -> C in one command.
+        ResponseEntity<Map<String, Object>> transferred =
+                put("/api/admissions/" + admissionId + "/bed", token, Map.of("bedId", bedCId));
+        assertEquals(HttpStatus.OK, transferred.getStatusCode(), "the atomic transfer must succeed");
+        assertCurrentBed(transferred.getBody(), bedC);
+        assertEquals("AVAILABLE", bedOccupancy(adminToken, bedAId), "the transfer must release the source bed");
+        assertEquals("OCCUPIED", bedOccupancy(adminToken, bedCId), "the transfer must occupy the target bed");
+        assertSingleEvent(auditEvents(adminToken), "Admission", admissionId, "UPDATE", NURSE_USER,
+                "bed: " + bedCId);
+
+        // Failed transfer: the target is occupied -> shared 409, full rollback, no audit event.
+        long updatesBefore = countAuditEvents(auditEvents(adminToken), "Admission", admissionId, "UPDATE");
+        ResponseEntity<Map<String, Object>> refused =
+                put("/api/admissions/" + admissionId + "/bed", token, Map.of("bedId", bedBId));
+        assertEquals(HttpStatus.CONFLICT, refused.getStatusCode(),
+                "an occupied target bed must be refused with the shared 409");
+        Map<String, Object> conflict = refused.getBody();
+        assertNotNull(conflict, "the 409 must carry the shared ApiError body");
+        assertEquals(409, ((Number) conflict.get("status")).intValue(), "ApiError.status must echo 409");
+        assertEquals("Conflict", conflict.get("error"));
+        assertCurrentBed(getMap("/api/admissions/" + admissionId, adminToken).getBody(), bedC,
+                "the failed transfer must leave the admission on its current bed");
+        assertEquals("AVAILABLE", bedOccupancy(adminToken, bedAId), "the failed transfer must not re-occupy the source");
+        assertEquals("OCCUPIED", bedOccupancy(adminToken, bedBId), "the failed transfer must not disturb the target");
+        assertEquals(updatesBefore, countAuditEvents(auditEvents(adminToken), "Admission", admissionId, "UPDATE"),
+                "the failed transfer must record no audit event");
+
+        // Repeated target: re-assigning an admission to its own bed is 409.
+        assertEquals(HttpStatus.CONFLICT,
+                put("/api/admissions/" + secondAdmissionId + "/bed", token, Map.of("bedId", bedBId)).getStatusCode(),
+                "repeating the assignment to the held bed must return the shared 409");
+
+        // Discharge closes the assignment and releases the bed in the same transaction.
+        ResponseEntity<Map<String, Object>> discharged =
+                put("/api/admissions/" + admissionId + "/status", token, Map.of("status", "DISCHARGED"));
+        assertEquals(HttpStatus.OK, discharged.getStatusCode(), "discharging must succeed");
+        assertNull(discharged.getBody().get("currentBed"), "discharge must close the current-bed summary");
+        assertEquals("AVAILABLE", bedOccupancy(adminToken, bedCId), "discharge must release the held bed");
+        assertSingleEvent(auditEvents(adminToken), "Admission", admissionId, "UPDATE", NURSE_USER,
+                "status: DISCHARGED");
+
+        // The released bed is immediately reusable by another admission.
+        assertEquals(HttpStatus.OK,
+                put("/api/admissions/" + secondAdmissionId + "/bed", token, Map.of("bedId", bedCId)).getStatusCode(),
+                "a discharged admission must release its bed for immediate reuse");
+        assertEquals("OCCUPIED", bedOccupancy(adminToken, bedCId));
+
+        // A discharged admission can never hold a bed again (illegal lifecycle, 409).
+        assertEquals(HttpStatus.CONFLICT,
+                put("/api/admissions/" + admissionId + "/bed", token, Map.of("bedId", bedAId)).getStatusCode(),
+                "a bed command on a discharged admission must return the shared 409");
+        assertEquals("AVAILABLE", bedOccupancy(adminToken, bedAId), "the refused command must not occupy the bed");
+
+        // Unknown admission on the bed command: the generic 404.
+        assertEquals(HttpStatus.NOT_FOUND,
+                put("/api/admissions/" + UUID.randomUUID() + "/bed", token, Map.of("bedId", bedAId)).getStatusCode(),
+                "a bed command on an unknown admission must be the shared 404");
+
+        // Audit totals: exactly one CREATE and one UPDATE per successful command above.
+        List<Map<String, Object>> events = auditEvents(adminToken);
+        assertSingleEvent(events, "Admission", admissionId, "CREATE", NURSE_USER, "created");
+        assertSingleEvent(events, "Admission", secondAdmissionId, "CREATE", NURSE_USER, "created");
+        assertEquals(2, countAuditEvents(events, "Admission", admissionId, "UPDATE"),
+                "exactly the transfer and the discharge may own UPDATE events");
+        assertEquals(2, countAuditEvents(events, "Admission", secondAdmissionId, "UPDATE"),
+                "exactly the initial assignment and the reuse assignment may own UPDATE events");
+    }
+
+    /**
+     * Task 7 create/command failure contracts over beds: an unknown bedId is
+     * the shared 404, a non-UUID bedId fails typed deserialization as a
+     * malformed 400, a missing bedId on the bed command is a validation 400,
+     * and a bed in any non-AVAILABLE state is the shared 409 — none of these
+     * may persist an admission, disturb a bed, or record an audit event.
+     */
+    @Test
+    void admissionBedReferencesRejectUnknownAndUnavailableTargetsWithoutPersisting() {
+        String adminToken = login(ADMIN_USER);
+        String token = login(RECEPTIONIST_USER);
+        String patientId = createSyntheticPatient(adminToken, "bedfail");
+
+        Map<String, Object> maintenanceBed = createSyntheticBed(adminToken, "bedfail-m");
+        transitionBed(adminToken, maintenanceBed, "MAINTENANCE");
+        Map<String, Object> outOfServiceBed = createSyntheticBed(adminToken, "bedfail-o");
+        transitionBed(adminToken, outOfServiceBed, "OUT_OF_SERVICE");
+        Map<String, Object> occupiedBed = createSyntheticBed(adminToken, "bedfail-x");
+        String occupierId = requireId(post("/api/admissions", adminToken,
+                createWithBed("bedfail-x", patientId, occupiedBed)));
+        String commandTargetId = requireId(post("/api/admissions", token,
+                admissionCreatePayload("bedfail-target", patientId)));
+
+        long admissionsAfterFixtures = dashboardCount("admissions", adminToken);
+        long createsIncludingFixtures = auditEvents(adminToken).stream()
+                .filter(e -> "Admission".equals(e.get("resourceType")) && "CREATE".equals(e.get("action")))
+                .count();
+
+        // Unknown bed at create: shared 404, nothing persists.
+        assertEquals(HttpStatus.NOT_FOUND,
+                post("/api/admissions", token, createWithBed("bedfail-u1", patientId, Map.of("id", UUID.randomUUID().toString()))).getStatusCode(),
+                "an unknown bed reference at creation must be the shared 404");
+
+        // Non-UUID bedId at create: malformed body 400.
+        Map<String, Object> malformed = admissionCreatePayload("bedfail-bad", patientId);
+        malformed.put("bedId", "not-a-uuid");
+        assertEquals(HttpStatus.BAD_REQUEST, post("/api/admissions", token, malformed).getStatusCode(),
+                "a non-UUID bedId fails typed deserialization as a malformed body");
+
+        // Every non-AVAILABLE state refuses occupation with the shared 409.
+        for (Map<String, Object> unavailable : List.of(maintenanceBed, outOfServiceBed, occupiedBed)) {
+            Map<String, Object> payload = admissionCreatePayload("bedfail-state", patientId);
+            payload.put("bedId", String.valueOf(unavailable.get("id")));
+            ResponseEntity<Map<String, Object>> refused = post("/api/admissions", token, payload);
+            assertEquals(HttpStatus.CONFLICT, refused.getStatusCode(),
+                    "occupying a bed in state " + unavailable.get("occupancyStatus") + " must be the shared 409");
+            assertNotNull(refused.getBody());
+            assertTrue(String.valueOf(refused.getBody().get("message")).contains("not AVAILABLE"),
+                    "the 409 message must be controlled and client-safe");
+        }
+
+        // Bed-command failures on the plain admission: unknown, malformed, missing, unavailable.
+        assertEquals(HttpStatus.NOT_FOUND,
+                put("/api/admissions/" + commandTargetId + "/bed", token,
+                        Map.of("bedId", UUID.randomUUID().toString())).getStatusCode(),
+                "an unknown bed reference on the bed command must be the shared 404");
+        Map<String, Object> malformedCommand = Map.of("bedId", "still-not-a-uuid");
+        assertEquals(HttpStatus.BAD_REQUEST,
+                put("/api/admissions/" + commandTargetId + "/bed", token, malformedCommand).getStatusCode(),
+                "a non-UUID bedId on the bed command fails as a malformed body");
+        assertEquals(HttpStatus.BAD_REQUEST,
+                put("/api/admissions/" + commandTargetId + "/bed", token, Map.of("reason", "no bedId")).getStatusCode(),
+                "a missing bedId on the bed command must be rejected by validation");
+        for (Map<String, Object> unavailable : List.of(maintenanceBed, outOfServiceBed, occupiedBed)) {
+            assertEquals(HttpStatus.CONFLICT,
+                    put("/api/admissions/" + commandTargetId + "/bed", token,
+                            Map.of("bedId", String.valueOf(unavailable.get("id")))).getStatusCode(),
+                    "a bed command onto an unavailable target must be the shared 409");
+        }
+
+        // Nothing persisted, nothing moved, nothing audited by the failures.
+        assertEquals(admissionsAfterFixtures, dashboardCount("admissions", adminToken),
+                "no rejected bed reference may persist an admission");
+        assertEquals("MAINTENANCE", bedOccupancy(adminToken, String.valueOf(maintenanceBed.get("id"))));
+        assertEquals("OUT_OF_SERVICE", bedOccupancy(adminToken, String.valueOf(outOfServiceBed.get("id"))));
+        assertEquals("OCCUPIED", bedOccupancy(adminToken, String.valueOf(occupiedBed.get("id"))));
+        List<Map<String, Object>> afterFailures = auditEvents(adminToken);
+        assertEquals(createsIncludingFixtures, afterFailures.stream()
+                        .filter(e -> "Admission".equals(e.get("resourceType")) && "CREATE".equals(e.get("action")))
+                        .count(),
+                "the failed references must record no audit event");
+        assertEquals(0, countAuditEvents(afterFailures, "Admission", commandTargetId, "UPDATE"),
+                "the failed bed commands must record no audit event");
+        assertCurrentBed(getMap("/api/admissions/" + commandTargetId, adminToken).getBody(), null,
+                "the command target must still hold no bed");
+
+        assertEquals(occupierId, requireId(getMap("/api/admissions/" + occupierId, adminToken)),
+                "the occupier fixture must stay intact");
     }
 
     // ------------------------------------------------------------------
@@ -1464,6 +1688,67 @@ class CareOperationsApiTest {
         payload.put("admittedAt", "2031-01-01T08:15:30");
         payload.put("reason", "synthetic admission " + suffix + " " + tag);
         return payload;
+    }
+
+    /** Task 7 create body variant carrying one optional bed reference (a bed DTO body or a synthetic {"id": ...}). */
+    private Map<String, Object> createWithBed(String tag, String patientId, Map<String, Object> bedRef) {
+        Map<String, Object> payload = admissionCreatePayload(tag, patientId);
+        if (bedRef != null) {
+            payload.put("bedId", String.valueOf(bedRef.get("id")));
+        }
+        return payload;
+    }
+
+    /** Creates one normalized AVAILABLE bed through the Task 6 contract and returns its DTO body. */
+    private Map<String, Object> createSyntheticBed(String token, String tag) {
+        Map<String, Object> payload = Map.of(
+                "ward", "ward-" + suffix + "-" + tag,
+                "room", "room-" + suffix + "-" + tag,
+                "bedNumber", "BED-" + suffix + "-" + tag);
+        ResponseEntity<Map<String, Object>> created = post("/api/beds", token, payload);
+        assertEquals(HttpStatus.OK, created.getStatusCode(), "the synthetic bed fixture must create cleanly");
+        return created.getBody();
+    }
+
+    /** Moves a bed through its client-manageable lifecycle; the fixture must always succeed. */
+    private void transitionBed(String token, Map<String, Object> bed, String targetStatus) {
+        ResponseEntity<Map<String, Object>> moved = put("/api/beds/" + bed.get("id") + "/status", token,
+                Map.of("status", targetStatus));
+        assertEquals(HttpStatus.OK, moved.getStatusCode(), "the bed fixture transition must succeed");
+    }
+
+    /** Reads one bed's occupancy through the Task 6 DTO contract. */
+    private String bedOccupancy(String token, String bedId) {
+        ResponseEntity<Map<String, Object>> bed = getMap("/api/beds/" + bedId, token);
+        assertEquals(HttpStatus.OK, bed.getStatusCode(), "the bed fixture must stay readable");
+        assertNotNull(bed.getBody());
+        return String.valueOf(bed.getBody().get("occupancyStatus"));
+    }
+
+    /**
+     * Task 7 summary pin: the admission's currentBed is exactly the
+     * four-field allowlist naming the expected bed, or null when expected
+     * absent — never a raw bed entity or assignment metadata.
+     */
+    private void assertCurrentBed(Map<String, Object> admission, Map<String, Object> expectedBed) {
+        assertCurrentBed(admission, expectedBed, "the current-bed summary must match the held bed");
+    }
+
+    private void assertCurrentBed(Map<String, Object> admission, Map<String, Object> expectedBed, String message) {
+        assertNotNull(admission, message);
+        Object currentBed = admission.get("currentBed");
+        if (expectedBed == null) {
+            assertNull(currentBed, message);
+            return;
+        }
+        assertNotNull(currentBed, message);
+        assertInstanceOf(Map.class, currentBed, message);
+        Map<?, ?> summary = (Map<?, ?>) currentBed;
+        assertEquals(CURRENT_BED_FIELDS, summary.keySet(), message);
+        assertEquals(String.valueOf(expectedBed.get("id")), summary.get("bedId"), message);
+        assertEquals(expectedBed.get("ward"), summary.get("ward"), message);
+        assertEquals(expectedBed.get("room"), summary.get("room"), message);
+        assertEquals(expectedBed.get("bedNumber"), summary.get("bedNumber"), message);
     }
 
     /** Registers one synthetic patient through the Task 3 Phase 1 contract and returns its id. */

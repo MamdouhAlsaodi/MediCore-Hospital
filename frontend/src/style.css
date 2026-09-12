@@ -709,6 +709,39 @@ button.appointment-cancel:focus-visible {
 .admission-save { background: var(--gold, #b8860b); color: #fff; }
 .admission-save:disabled { opacity: 0.6; cursor: not-allowed; }
 .admission-cancel { background: transparent; border: 1px solid var(--line); color: inherit; }
+/* Task 7 bed integration: the inline assign/transfer confirmation inside an
+   admission row and the held-bed cell reuse the shared vocabulary — no new
+   palette, and the touch targets stay at the same size as the discharge
+   controls. */
+.admission-bed-cell { white-space: nowrap; }
+.admission-bed-command {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 240px;
+  white-space: normal;
+}
+.admission-bed-command label { font-size: 13px; color: var(--muted); }
+.admission-bed-target {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+}
+.admission-bed-command-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.admission-bed-confirm {
+  border-color: var(--gold, #b8860b);
+  color: var(--gold, #b8860b);
+  font-weight: 600;
+}
+.admission-bed-cancel { color: var(--muted); }
+
 
 @media (max-width: 560px) {
   /* The admissions list keeps its columns readable on narrow screens: values
@@ -995,4 +1028,137 @@ button.appointment-cancel:focus-visible {
 @media (max-width: 560px) {
   .dashboard-group { margin: 16px 0; }
   .dashboard-group .cards { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
+}
+
+/* Beds screen (docs/plan3.md Task 6): the branch-scoped bed inventory
+   reuses the shared panel/notice/status-badge vocabulary. Occupied beds
+   carry no action; every action button keeps a 44px touch target and the
+   list stays readable on narrow screens. */
+.beds-boundary { margin-bottom: 12px; }
+.beds-actions { display: flex; gap: 10px; margin: 12px 0; }
+.beds-new {
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: 0;
+  cursor: pointer;
+  font-weight: 600;
+  background: var(--navy-2, #1d4ed8);
+  color: #fff;
+}
+.beds-new:disabled { opacity: 0.6; cursor: not-allowed; }
+.beds-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 12px 0;
+  max-width: 360px;
+}
+.beds-filter label { font-size: 13px; color: var(--muted); }
+.beds-filter input {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-size: 15px;
+  background: #fff;
+  color: inherit;
+}
+.beds-filter input:focus-visible {
+  outline: 2px solid var(--navy-2);
+  outline-offset: 1px;
+}
+.beds-table-wrap { overflow-x: auto; }
+.beds-table { width: 100%; border-collapse: collapse; }
+.beds-table th,
+.beds-table td {
+  text-align: left;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+.beds-table th { font-size: 13px; color: var(--muted); }
+.beds-row-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.beds-row-actions button {
+  min-height: 44px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 8px 12px;
+}
+.beds-row-actions button:first-child { margin-left: 0; }
+.beds-row-actions button:disabled { opacity: 0.6; cursor: not-allowed; }
+.beds-transition { color: inherit; }
+.beds-transition-confirm {
+  border-color: var(--navy-2, #1d4ed8);
+  color: var(--navy-2, #1d4ed8);
+  font-weight: 600;
+}
+.beds-transition-cancel { color: var(--muted); }
+
+/* Operational status badges: AVAILABLE / MAINTENANCE / OUT_OF_SERVICE /
+   OCCUPIED (admission-owned, actionless). */
+.status-badge.status-available { border-color: var(--ok, #15803d); color: var(--ok, #15803d); }
+.status-badge.status-maintenance { border-color: var(--gold, #b8860b); color: var(--gold, #b8860b); }
+.status-badge.status-out_of_service { opacity: 0.85; }
+.status-badge.status-occupied { border-color: var(--text, inherit); color: var(--text, inherit); font-weight: 600; }
+
+.beds-empty { padding: 18px; }
+.beds-form { padding: 18px; }
+.beds-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+.beds-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.beds-field label { font-size: 13px; color: var(--muted); }
+.beds-field input {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-size: 15px;
+  background: #fff;
+  color: inherit;
+}
+.beds-field input:focus-visible {
+  outline: 2px solid var(--navy-2);
+  outline-offset: 1px;
+}
+.beds-form-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+}
+.beds-save,
+.beds-cancel {
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: 0;
+  cursor: pointer;
+  font-weight: 600;
+}
+.beds-save { background: var(--gold, #b8860b); color: #fff; }
+.beds-save:disabled,
+.beds-cancel:disabled { opacity: 0.6; cursor: not-allowed; }
+.beds-cancel { background: transparent; border: 1px solid var(--line); color: inherit; }
+
+@media (max-width: 560px) {
+  /* The beds list keeps its columns readable on narrow screens: the wrap
+     scrolls horizontally and the form stacks in a single column. */
+  .beds-table th,
+  .beds-table td { padding: 8px; font-size: 13px; }
+  .beds-form-grid { grid-template-columns: 1fr; gap: 0; }
+  .beds-form-actions,
+  .beds-actions { flex-direction: column; align-items: stretch; }
+  .beds-actions .beds-new { width: 100%; }
+  .beds-filter { max-width: none; }
 }

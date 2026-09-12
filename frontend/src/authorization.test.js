@@ -16,7 +16,10 @@ import { PERMISSIONS, can } from './authorization.js';
 // meaning. plan2.md Task 4 adds the invoice resource (read/create/
 // transition), mirroring the server family rule on /api/invoices/**:
 // ADMIN and BILLING only, and the whole family is a FINANCIAL SIMULATION
-// with no real payments.
+// with no real payments. plan3.md Task 6 adds the bed resource
+// (read/create/transition), mirroring the unchanged server family rule on
+// /api/beds/**: all four clinical-administrative roles, with the
+// occupancy lifecycle admission-owned by Task 7.
 const sessionFor = (...roles) => ({ token: 'synthetic-token', username: 'testuser', roles });
 
 // Frontend capability matrix (UI hints only — convenience gating).
@@ -81,12 +84,29 @@ const INVOICE_MATRIX = {
   RECEPTIONIST: { read: false, create: false, transition: false },
 };
 
+const BED_MATRIX = {
+  // The server family rule on /api/beds/** admits all four
+  // clinical-administrative roles on every method and Task 6 changed no
+  // role policy (plan narrowing stays an owner decision), so the UI hint
+  // grants add (create) and status transitions exactly as widely as read.
+  // A direct API call from any other role is refused with 403 server-side
+  // (CareOperationsApiTest pins it). The lifecycle itself is server-owned:
+  // only AVAILABLE/MAINTENANCE/OUT_OF_SERVICE are client transitions and
+  // OCCUPIED is admission-owned (plan3.md Task 7), so no UI action can
+  // ever send it.
+  ADMIN: { read: true, create: true, transition: true },
+  DOCTOR: { read: true, create: true, transition: true },
+  NURSE: { read: true, create: true, transition: true },
+  RECEPTIONIST: { read: true, create: true, transition: true },
+};
+
 const ACTIONS_PER_RESOURCE = {
   patient: ['read', 'create', 'update', 'formView'],
   appointment: ['read', 'create'],
   admission: ['read', 'create', 'transition'],
   emergencyVisit: ['read', 'create', 'transition'],
   invoice: ['read', 'create', 'transition'],
+  bed: ['read', 'create', 'transition'],
   audit: ['read'],
 };
 
@@ -145,6 +165,17 @@ describe('authorization permission map (plan1.md Task 9 + plan2.md Tasks 2-4)', 
         expect(
           can(sessionFor(role), action, 'invoice'),
           `${role} can ${action} invoice`,
+        ).toBe(expected[action]);
+      }
+    }
+  });
+
+  it('grants bed actions exactly per the documented four-role family matrix (plan3.md Task 6)', () => {
+    for (const [role, expected] of Object.entries(BED_MATRIX)) {
+      for (const action of ACTIONS_PER_RESOURCE.bed) {
+        expect(
+          can(sessionFor(role), action, 'bed'),
+          `${role} can ${action} bed`,
         ).toBe(expected[action]);
       }
     }

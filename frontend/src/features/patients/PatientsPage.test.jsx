@@ -334,4 +334,77 @@ describe('PatientsPage', () => {
     expect(detail).toHaveTextContent('+20 100 000 0099');
     expect(screen.getByRole('status')).toHaveTextContent(/saved/i);
   });
+
+  it('refetches the branch-scoped list under the new context-bound token after a successful context switch', async () => {
+    const onSessionExpired = vi.fn();
+    const assignmentA = {
+      id: '11111111-1111-4111-8111-111111111111',
+      role: 'RECEPTIONIST',
+      scope: 'BRANCH',
+      organizationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      organizationLabel: 'Main Hospital Group',
+      branchId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      branchLabel: 'East Clinic',
+      departmentId: null,
+      departmentLabel: null,
+      enabled: true,
+    };
+    const assignmentB = { ...assignmentA, id: '22222222-2222-4222-8222-222222222222', branchId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', branchLabel: 'West Clinic' };
+    const sessionA = {
+      token: 'branch-a-token',
+      username: 'testuser',
+      roles: ['RECEPTIONIST'],
+      assignments: [assignmentA, assignmentB],
+      actingContext: {
+        username: 'testuser',
+        assignmentId: assignmentA.id,
+        role: 'RECEPTIONIST',
+        scope: 'BRANCH',
+        organizationId: assignmentA.organizationId,
+        branchId: assignmentA.branchId,
+        departmentId: null,
+      },
+    };
+    const sessionB = {
+      ...sessionA,
+      token: 'branch-b-token',
+      actingContext: { ...sessionA.actingContext, assignmentId: assignmentB.id, branchId: assignmentB.branchId },
+    };
+    const BRANCH_B_PATIENTS = [{
+      id: '44444444-4444-4444-8444-444444444444',
+      medicalRecordNumber: 'MRN-4001',
+      fullName: 'Sara Wanis',
+      dateOfBirth: '1992-02-02',
+      sex: 'female',
+      phone: '',
+      email: '',
+      nationalId: '',
+      address: '',
+      active: true,
+    }];
+    fetchMock.mockImplementation((path, options = {}) => {
+      if (options.headers.Authorization === 'Bearer branch-b-token') {
+        return Promise.resolve(jsonResponse(BRANCH_B_PATIENTS));
+      }
+      return Promise.resolve(jsonResponse(PATIENTS));
+    });
+
+    const view = render(<PatientsPage session={sessionA} onSessionExpired={onSessionExpired} />);
+    const listA = await waitForPatientList();
+    expect(within(listA).getAllByRole('button')).toHaveLength(2);
+
+    // The app swapped in the complete switched session (new context-bound
+    // token, new branch). The screen stays the single owner of its list and
+    // simply reloads it — no duplicated fetching layer.
+    view.rerender(<PatientsPage session={sessionB} onSessionExpired={onSessionExpired} />);
+
+    const listB = await waitForPatientList();
+    expect(within(listB).getAllByRole('button')).toHaveLength(1);
+    expect(within(listB).getByText('Sara Wanis')).toBeInTheDocument();
+    const calls = fetchMock.mock.calls.filter(([path]) => path === '/api/patients');
+    expect(calls).toHaveLength(2);
+    expect(calls[0][1].headers.Authorization).toBe('Bearer branch-a-token');
+    expect(calls[1][1].headers.Authorization).toBe('Bearer branch-b-token');
+    expect(onSessionExpired).not.toHaveBeenCalled();
+  });
 });

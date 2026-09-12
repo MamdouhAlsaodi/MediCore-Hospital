@@ -116,6 +116,38 @@ aside > p { opacity: 0.65; margin: 4px 0 20px; }
 .whoami-name { font-weight: 700; }
 .whoami-roles { font-size: 12px; color: rgba(255, 255, 255, 0.65); }
 
+/* Acting context lines (plan3.md Task 5): branch and optional department
+   labels come straight from the server-issued session. */
+.whoami-context { font-size: 12px; color: rgba(255, 255, 255, 0.65); }
+
+/* Branch-aware acting-context selector (plan3.md Task 5). Status and denial
+   are always carried by text, never by color alone. */
+.branch-selector { display: flex; flex-direction: column; gap: 6px; margin: 0 0 16px; }
+.branch-selector label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.75);
+}
+.branch-selector select {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 8px;
+  background: var(--navy-2);
+  color: #fff;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.branch-selector select:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+.branch-selector select:disabled { opacity: 0.7; cursor: wait; }
+.branch-selector-help { margin: 0; font-size: 12px; color: rgba(255, 255, 255, 0.65); }
+.branch-selector-status { margin: 0; font-size: 12px; font-weight: 600; color: var(--gold); }
+.branch-selector-denial { margin: 0; font-size: 12px; font-weight: 600; color: #ffd7d5; }
+.branch-selector-empty { margin: 0; font-size: 12px; color: rgba(255, 255, 255, 0.75); }
+
 aside nav { display: flex; flex-direction: column; gap: 2px; flex: 1; }
 .nav-link {
   display: block;
@@ -185,6 +217,12 @@ header span { color: var(--muted); }
   aside > p { display: none; }
   .whoami { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; margin: 0; }
   .whoami-roles { font-size: 11px; }
+  .whoami-context { font-size: 11px; }
+  /* The selector joins the top bar as one full-width row under the identity. */
+  .branch-selector { flex: 1 0 100%; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin: 0; }
+  .branch-selector select { width: auto; min-width: 220px; max-width: 100%; flex: 1 1 220px; padding: 6px 8px; }
+  .branch-selector-help, .branch-selector-empty { display: none; }
+  .branch-selector-status, .branch-selector-denial { flex: 1 0 100%; }
   button.logout { margin: 0 0 0 auto; padding: 7px 12px; }
 
   /* Navigation stays on one horizontal line with controlled overflow. */

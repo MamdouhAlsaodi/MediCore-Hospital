@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { ApiError } from '../../api.js';
+import { actingContextKey } from '../../auth.js';
 import { can } from '../../authorization.js';
 import { fetchPatients } from '../patients/patientApi.js';
 import { fetchStaff, staffDisplayName } from '../staff/staffApi.js';
@@ -26,6 +27,11 @@ export default function AppointmentsPage({ session, onSessionExpired }) {
   // Bumped after a successful schedule so the list refetches instead of
   // showing a result set that cannot contain the new appointment.
   const [listRefresh, setListRefresh] = useState(0);
+  // Identity of the acting context (assignment + bound branch). After a
+  // successful context switch the shell swaps in a complete new session;
+  // this screen stays the single owner of its list state and simply
+  // refetches it when the context (or its context-bound token) changes.
+  const contextKey = actingContextKey(session);
 
   useEffect(() => {
     let active = true;
@@ -61,7 +67,7 @@ export default function AppointmentsPage({ session, onSessionExpired }) {
         setStatus('ready');
       });
     return () => { active = false; };
-  }, [session.token, listRefresh, onSessionExpired]);
+  }, [session.token, contextKey, listRefresh, onSessionExpired]);
 
   function openForm() {
     setConfirmation('');

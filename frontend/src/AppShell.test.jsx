@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import AppShell from './AppShell.jsx';
+import { loadSession, saveSession } from './auth.js';
 
 const DASHBOARD_STATS = { patients: 12, appointmentsToday: 4 };
 
@@ -154,8 +155,109 @@ function jsonResponse(payload, status = 200) {
   });
 }
 
-function stubBackendApi() {
-  return vi.fn((path) => {
+// Server-issued assignment views (docs/plan3.md Task 3 response shape).
+const ORG_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const EAST_BRANCH_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const WEST_BRANCH_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+
+// Server-owned organization view (GET /api/organization response shape): the
+// ACTIVE branches in server order. The selector's ORGANIZATION targets and
+// the honest whoami branch label come from this allowlist and nowhere else.
+const ORGANIZATION_VIEW = {
+  id: ORG_ID,
+  code: 'MHG',
+  name: 'Main Hospital Group',
+  activeBranches: [
+    { id: EAST_BRANCH_ID, organizationId: ORG_ID, code: 'EAST', name: 'East Clinic', locationLabel: '1 East Way', active: true },
+    { id: WEST_BRANCH_ID, organizationId: ORG_ID, code: 'WEST', name: 'West Clinic', locationLabel: '9 West Way', active: true },
+  ],
+};
+const ASSIGNMENTS = {
+  DOCTOR: {
+    id: '11111111-1111-4111-8111-111111111111',
+    role: 'DOCTOR',
+    scope: 'BRANCH',
+    organizationId: ORG_ID,
+    organizationLabel: 'Main Hospital Group',
+    branchId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    branchLabel: 'East Clinic',
+    departmentId: null,
+    departmentLabel: null,
+    enabled: true,
+  },
+  NURSE: {
+    id: '22222222-2222-4222-8222-222222222222',
+    role: 'NURSE',
+    scope: 'DEPARTMENT',
+    organizationId: ORG_ID,
+    organizationLabel: 'Main Hospital Group',
+    branchId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+    branchLabel: 'West Clinic',
+    departmentId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+    departmentLabel: 'Outpatient Clinic',
+    enabled: true,
+  },
+  ADMIN: {
+    id: '33333333-3333-4333-8333-333333333333',
+    role: 'ADMIN',
+    scope: 'ORGANIZATION',
+    organizationId: ORG_ID,
+    organizationLabel: 'Main Hospital Group',
+    branchId: null,
+    branchLabel: null,
+    departmentId: null,
+    departmentLabel: null,
+    enabled: true,
+  },
+  BILLING: {
+    id: '44444444-4444-4444-8444-444444444444',
+    role: 'BILLING',
+    scope: 'BRANCH',
+    organizationId: ORG_ID,
+    organizationLabel: 'Main Hospital Group',
+    branchId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    branchLabel: 'East Clinic',
+    departmentId: null,
+    departmentLabel: null,
+    enabled: true,
+  },
+  RECEPTIONIST: {
+    id: '55555555-5555-4555-8555-555555555555',
+    role: 'RECEPTIONIST',
+    scope: 'BRANCH',
+    organizationId: ORG_ID,
+    organizationLabel: 'Main Hospital Group',
+    branchId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+    branchLabel: 'West Clinic',
+    departmentId: null,
+    departmentLabel: null,
+    enabled: true,
+  },
+};
+
+// Complete server-issued session: token, single selected role, the
+// assignment list, and the selected acting context (Task 3 response shape).
+function fullSession(role, extraAssignments = []) {
+  const assignment = ASSIGNMENTS[role];
+  return {
+    token: 'synthetic-token',
+    username: 'testuser',
+    roles: [role],
+    assignments: [assignment, ...extraAssignments],
+    actingContext: {
+      username: 'testuser',
+      assignmentId: assignment.id,
+      role: assignment.role,
+      scope: assignment.scope,
+      organizationId: assignment.organizationId,
+      branchId: assignment.branchId ?? 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      departmentId: assignment.departmentId ?? null,
+    },
+  };
+}
+
+function stubBackendApi(state = {}) {
+  return vi.fn((path, options = {}) => {
     if (path === '/api/dashboard') return Promise.resolve(jsonResponse(DASHBOARD_STATS));
     if (path === '/api/patients') return Promise.resolve(jsonResponse(PATIENTS_PAGE));
     if (path === '/api/appointments') return Promise.resolve(jsonResponse(APPOINTMENTS_PAGE));
@@ -165,18 +267,32 @@ function stubBackendApi() {
     if (path === '/api/invoices') return Promise.resolve(jsonResponse(INVOICES_PAGE));
     if (path === '/api/staff') return Promise.resolve(jsonResponse(STAFF_DIRECTORY));
     if (path === '/api/audit') return Promise.resolve(jsonResponse(AUDIT_EVENTS));
+    if (path === '/api/organization') {
+      state.organizationStatus = state.organizationStatus ?? 200;
+      state.organizationBody = state.organizationBody ?? ORGANIZATION_VIEW;
+      return Promise.resolve(jsonResponse(state.organizationBody, state.organizationStatus));
+    }
+    if (path === '/api/auth/context') {
+      state.contextCalls = state.contextCalls ?? [];
+      state.contextCalls.push({ body: JSON.parse(options.body), auth: options.headers.Authorization });
+      return Promise.resolve(jsonResponse(state.contextBody ?? { error: 'not found' }, state.contextStatus ?? 404));
+    }
     return Promise.resolve(jsonResponse({ error: 'not found' }, 404));
   });
 }
 
-function renderShell(roles) {
-  return render(
+function renderShell(roles, extraAssignments = [], sessionOverrides = {}) {
+  // Existing callers pass a single-role array; newer ones a bare role.
+  const role = Array.isArray(roles) ? roles[0] : roles;
+  const onSessionExpired = vi.fn();
+  const view = render(
     <AppShell
-      session={{ token: 'synthetic-token', username: 'testuser', roles }}
+      session={{ ...fullSession(role, extraAssignments), ...sessionOverrides }}
       onLogout={vi.fn()}
-      onSessionExpired={vi.fn()}
+      onSessionExpired={onSessionExpired}
     />
   );
+  return { onSessionExpired, view };
 }
 
 async function waitForDashboardStats() {
@@ -462,7 +578,7 @@ describe('AppShell', () => {
     const onLogout = vi.fn();
     render(
       <AppShell
-        session={{ token: 'synthetic-token', username: 'testuser', roles: ['DOCTOR'] }}
+        session={fullSession('DOCTOR')}
         onLogout={onLogout}
         onSessionExpired={vi.fn()}
       />
@@ -472,5 +588,384 @@ describe('AppShell', () => {
     await user.click(screen.getByRole('button', { name: 'Log out' }));
 
     expect(onLogout).toHaveBeenCalledTimes(1);
+  });
+
+  it('always displays the username, acting role, branch, and optional department from the session', () => {
+    renderShell('DOCTOR');
+
+    expect(screen.getByText('testuser')).toBeInTheDocument();
+    expect(screen.getByText('DOCTOR')).toBeInTheDocument();
+    expect(screen.getByText('East Clinic')).toBeInTheDocument();
+    expect(screen.queryByText(/organization-wide/)).not.toBeInTheDocument();
+  });
+
+  it('shows the department label only for a department-scoped acting context', () => {
+    renderShell('NURSE');
+
+    expect(screen.getByText('NURSE')).toBeInTheDocument();
+    expect(screen.getByText('West Clinic')).toBeInTheDocument();
+    expect(screen.getByText('Outpatient Clinic')).toBeInTheDocument();
+  });
+
+  it('names the server-issued branch of a branch-bound ORGANIZATION acting context, with a neutral loading fallback', async () => {
+    renderShell('ADMIN');
+
+    expect(screen.getByText('ADMIN')).toBeInTheDocument();
+    // While the active-branch list loads: neutral — never "organization-wide"
+    // for a token the server bound to one concrete branch.
+    expect(screen.getByText('Main Hospital Group — loading branch…')).toBeInTheDocument();
+    // Once loaded, the acting branch is named from the server allowlist.
+    expect(await screen.findByText('Main Hospital Group — East Clinic')).toBeInTheDocument();
+    expect(screen.queryByText(/organization-wide/)).not.toBeInTheDocument();
+    // The branch list came from GET /api/organization with the session token.
+    const orgCalls = fetchMock.mock.calls.filter(([path]) => path === '/api/organization');
+    expect(orgCalls).toHaveLength(1);
+    expect(orgCalls[0][1].headers.Authorization).toBe('Bearer synthetic-token');
+  });
+
+  it('shows a neutral branch-id fallback when the acting branch is absent from the active list', async () => {
+    const state = { organizationBody: { ...ORGANIZATION_VIEW, activeBranches: [] } };
+    fetchMock = stubBackendApi(state);
+    vi.stubGlobal('fetch', fetchMock);
+    renderShell('ADMIN');
+
+    expect(await screen.findByText(`Main Hospital Group — branch ${EAST_BRANCH_ID}`)).toBeInTheDocument();
+    expect(screen.queryByText(/organization-wide/)).not.toBeInTheDocument();
+  });
+
+  it('keeps the prior context and shows accessible text when the branch list cannot be loaded', async () => {
+    const state = { organizationStatus: 403, organizationBody: { error: 'Forbidden' } };
+    fetchMock = stubBackendApi(state);
+    vi.stubGlobal('fetch', fetchMock);
+    const { onSessionExpired } = renderShell('ADMIN');
+
+    // A non-ADMIN token cannot read GET /api/organization: the refusal is
+    // surfaced as text, the session/context/selection stay untouched, and no
+    // organization-wide claim is invented for the branch-bound token.
+    expect(await screen.findByRole('alert')).toHaveTextContent(/branch options could not be loaded/i);
+    expect(screen.getByText(`Main Hospital Group — branch ${EAST_BRANCH_ID}`)).toBeInTheDocument();
+    expect(screen.queryByText(/organization-wide/)).not.toBeInTheDocument();
+    expect(onSessionExpired).not.toHaveBeenCalled();
+  });
+
+  it('offers the branch selector with the server-issued (assignment, branch) pairs and a keyboard-operable native select', async () => {
+    const user = userEvent.setup();
+    renderShell('DOCTOR', [ASSIGNMENTS.ADMIN]);
+    await waitForDashboardStats();
+
+    const select = screen.getByRole('combobox', { name: 'Acting context' });
+    // The acting pair (DOCTOR fixed on East) is the current selection.
+    expect(select).toHaveValue(`${ASSIGNMENTS.DOCTOR.id}|${EAST_BRANCH_ID}`);
+    await waitFor(() => expect(select.querySelectorAll('option')).toHaveLength(3));
+    const options = [...select.querySelectorAll('option')];
+    // The fixed assignment offers exactly its branch; the ORGANIZATION
+    // assignment offers each server-issued active branch.
+    expect(options.map((option) => option.value)).toEqual([
+      `${ASSIGNMENTS.DOCTOR.id}|${EAST_BRANCH_ID}`,
+      `${ASSIGNMENTS.ADMIN.id}|${EAST_BRANCH_ID}`,
+      `${ASSIGNMENTS.ADMIN.id}|${WEST_BRANCH_ID}`,
+    ]);
+    expect(options[0]).toHaveTextContent('DOCTOR — East Clinic · Main Hospital Group');
+    expect(options[1]).toHaveTextContent('ADMIN — East Clinic · Main Hospital Group');
+    expect(options[2]).toHaveTextContent('ADMIN — West Clinic · Main Hospital Group');
+    expect(screen.getByLabelText('Acting context')).toBe(select);
+
+    // Keyboard operability: focus the labeled native control and switch.
+    select.focus();
+    expect(select).toHaveFocus();
+    await user.selectOptions(select, `${ASSIGNMENTS.ADMIN.id}|${EAST_BRANCH_ID}`);
+
+    await waitFor(() => expect(fetchMock.mock.calls.some(([path]) => path === '/api/auth/context')).toBe(true));
+    const contextCall = fetchMock.mock.calls.find(([path]) => path === '/api/auth/context');
+    expect(contextCall[1].method).toBe('POST');
+    expect(contextCall[1].headers.Authorization).toBe('Bearer synthetic-token');
+    // The ORGANIZATION target names the assignment AND the chosen branch.
+    expect(JSON.parse(contextCall[1].body)).toEqual({
+      assignmentId: ASSIGNMENTS.ADMIN.id,
+      branchId: EAST_BRANCH_ID,
+    });
+  });
+
+  it('atomically replaces the session on a successful switch and reloads the branch-scoped view with the new token', async () => {
+    const user = userEvent.setup();
+    const state = {
+      contextStatus: 200,
+      contextBody: {
+        accessToken: 'switched-context-token',
+        tokenType: 'Bearer',
+        username: 'testuser',
+        roles: ['ADMIN'],
+        assignments: [ASSIGNMENTS.DOCTOR, ASSIGNMENTS.ADMIN],
+        actingContext: {
+          username: 'testuser',
+          assignmentId: ASSIGNMENTS.ADMIN.id,
+          role: 'ADMIN',
+          scope: 'ORGANIZATION',
+          organizationId: ORG_ID,
+          branchId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+          departmentId: null,
+        },
+      },
+    };
+    fetchMock = stubBackendApi(state);
+    vi.stubGlobal('fetch', fetchMock);
+
+    sessionStorage.clear();
+    const onSessionExpired = vi.fn();
+    let view;
+    // The app-level handler: atomic storage replacement + state swap.
+    const switchAndApply = (nextSession) => {
+      saveSession(nextSession);
+      view.rerender(
+        <AppShell
+          session={nextSession}
+          onLogout={vi.fn()}
+          onSessionExpired={onSessionExpired}
+          onContextSwitch={switchAndApply}
+        />
+      );
+    };
+    view = render(
+      <AppShell
+        session={fullSession('DOCTOR', [ASSIGNMENTS.ADMIN])}
+        onLogout={vi.fn()}
+        onSessionExpired={onSessionExpired}
+        onContextSwitch={switchAndApply}
+      />
+    );
+    await waitForDashboardStats();
+
+    // Open the branch-scoped patients view under the first context.
+    await user.click(screen.getByRole('button', { name: 'Patients' }));
+    await screen.findByRole('list', { name: 'Patient results' });
+    const patientsCallsBefore = fetchMock.mock.calls.filter(([path]) => path === '/api/patients').length;
+
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Acting context' }).querySelectorAll('option')).toHaveLength(3));
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Acting context' }),
+      `${ASSIGNMENTS.ADMIN.id}|${EAST_BRANCH_ID}`,
+    );
+
+    // Whoami reflects the new acting context immediately, naming the branch
+    // the new token is bound to — never an organization-wide claim.
+    await waitFor(() => expect(screen.getByText('Main Hospital Group — East Clinic')).toBeInTheDocument());
+    expect(screen.getByText('ADMIN')).toBeInTheDocument();
+    // The selected patients view reloaded from the server under the new
+    // context-bound token — a fresh fetch owned by the same screen effect.
+    await screen.findAllByRole('list', { name: 'Patient results' });
+    const patientCalls = fetchMock.mock.calls.filter(([path]) => path === '/api/patients');
+    expect(patientCalls.length).toBeGreaterThan(patientsCallsBefore);
+    expect(patientCalls[patientCalls.length - 1][1].headers.Authorization).toBe('Bearer switched-context-token');
+    // The switch request named both the assignment and the chosen branch.
+    const contextCall = fetchMock.mock.calls.find(([path]) => path === '/api/auth/context');
+    expect(JSON.parse(contextCall[1].body)).toEqual({
+      assignmentId: ASSIGNMENTS.ADMIN.id,
+      branchId: EAST_BRANCH_ID,
+    });
+    // Storage holds exactly the complete switched session.
+    expect(JSON.parse(sessionStorage.getItem('medicore.session')).token).toBe('switched-context-token');
+    expect(onSessionExpired).not.toHaveBeenCalled();
+  });
+
+  it('switches one organization assignment from branch A to branch B and reloads the view under the new token', async () => {
+    const user = userEvent.setup();
+    const state = {
+      contextStatus: 200,
+      contextBody: {
+        accessToken: 'west-context-token',
+        tokenType: 'Bearer',
+        username: 'testuser',
+        roles: ['ADMIN'],
+        assignments: [ASSIGNMENTS.ADMIN],
+        actingContext: {
+          username: 'testuser',
+          assignmentId: ASSIGNMENTS.ADMIN.id,
+          role: 'ADMIN',
+          scope: 'ORGANIZATION',
+          organizationId: ORG_ID,
+          branchId: WEST_BRANCH_ID,
+          departmentId: null,
+        },
+      },
+    };
+    fetchMock = stubBackendApi(state);
+    vi.stubGlobal('fetch', fetchMock);
+
+    sessionStorage.clear();
+    const onSessionExpired = vi.fn();
+    let view;
+    const switchAndApply = (nextSession) => {
+      saveSession(nextSession);
+      view.rerender(
+        <AppShell
+          session={nextSession}
+          onLogout={vi.fn()}
+          onSessionExpired={onSessionExpired}
+          onContextSwitch={switchAndApply}
+        />
+      );
+    };
+    view = render(
+      <AppShell
+        session={fullSession('ADMIN')}
+        onLogout={vi.fn()}
+        onSessionExpired={onSessionExpired}
+        onContextSwitch={switchAndApply}
+      />
+    );
+    await waitForDashboardStats();
+    await waitFor(() => expect(screen.getByText('Main Hospital Group — East Clinic')).toBeInTheDocument());
+
+    // Same assignment, different branch: the pair target carries the change.
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Acting context' }),
+      `${ASSIGNMENTS.ADMIN.id}|${WEST_BRANCH_ID}`,
+    );
+
+    // Whoami and storage now reflect the West-bound context.
+    await waitFor(() => expect(screen.getByText('Main Hospital Group — West Clinic')).toBeInTheDocument());
+    const contextCall = fetchMock.mock.calls.find(([path]) => path === '/api/auth/context');
+    expect(JSON.parse(contextCall[1].body)).toEqual({
+      assignmentId: ASSIGNMENTS.ADMIN.id,
+      branchId: WEST_BRANCH_ID,
+    });
+    expect(JSON.parse(sessionStorage.getItem('medicore.session')).token).toBe('west-context-token');
+    expect(onSessionExpired).not.toHaveBeenCalled();
+    // The East branch line is gone — no stale claim survives the switch.
+    expect(screen.queryByText('Main Hospital Group — East Clinic')).not.toBeInTheDocument();
+    expect(screen.queryByText(/organization-wide/)).not.toBeInTheDocument();
+  });
+
+  it('keeps the prior login, token, and context and shows an in-place denial on a 403 switch', async () => {
+    const user = userEvent.setup();
+    const state = { contextStatus: 403, contextBody: { error: 'Forbidden' } };
+    fetchMock = stubBackendApi(state);
+    vi.stubGlobal('fetch', fetchMock);
+    // A sentinel session marks the storage boundary: the refused switch
+    // must not partially update storage.
+    sessionStorage.clear();
+    const sentinel = { token: 'sentinel-token', username: 'sentinel', roles: ['DOCTOR'] };
+    saveSession(sentinel);
+    const onSessionExpired = vi.fn();
+    render(
+      <AppShell
+        session={fullSession('DOCTOR', [ASSIGNMENTS.ADMIN])}
+        onLogout={vi.fn()}
+        onSessionExpired={onSessionExpired}
+      />
+    );
+    await waitForDashboardStats();
+
+    await user.click(screen.getByRole('button', { name: 'Patients' }));
+    await screen.findByRole('list', { name: 'Patient results' });
+    const patientCallsBefore = fetchMock.mock.calls.filter(([path]) => path === '/api/patients').length;
+
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Acting context' }).querySelectorAll('option')).toHaveLength(3));
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Acting context' }),
+      `${ASSIGNMENTS.ADMIN.id}|${EAST_BRANCH_ID}`,
+    );
+
+    // Understandable in-place denial — text, not color-only.
+    expect(await screen.findByRole('alert')).toHaveTextContent(/refused this context switch/i);
+    // Prior session fully preserved: identity, role, branch, and selection.
+    expect(screen.getByText('DOCTOR')).toBeInTheDocument();
+    expect(screen.getByText('East Clinic')).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Acting context' })).toHaveValue(
+      `${ASSIGNMENTS.DOCTOR.id}|${EAST_BRANCH_ID}`,
+    );
+    // No expiry, and the branch-scoped view was not refetched against the
+    // refused context: no partial storage or UI update.
+    expect(onSessionExpired).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.filter(([path]) => path === '/api/patients')).toHaveLength(patientCallsBefore);
+    // Storage still holds exactly the sentinel — no partial update.
+    expect(JSON.parse(sessionStorage.getItem('medicore.session'))).toEqual(sentinel);
+  });
+
+  it('clears the session on a 401 context switch through the expiry handler', async () => {
+    const user = userEvent.setup();
+    const state = { contextStatus: 401, contextBody: { error: 'expired' } };
+    fetchMock = stubBackendApi(state);
+    vi.stubGlobal('fetch', fetchMock);
+    const onSessionExpired = vi.fn();
+    render(
+      <AppShell
+        session={fullSession('DOCTOR', [ASSIGNMENTS.ADMIN])}
+        onLogout={vi.fn()}
+        onSessionExpired={onSessionExpired}
+      />
+    );
+    await waitForDashboardStats();
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Acting context' }).querySelectorAll('option')).toHaveLength(3));
+
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Acting context' }),
+      `${ASSIGNMENTS.ADMIN.id}|${WEST_BRANCH_ID}`,
+    );
+
+    await waitFor(() => expect(onSessionExpired).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  describe('session reload (auth storage boundary, plan3.md Task 5 contract §5)', () => {
+    it('restores a valid complete server-issued session through real sessionStorage', () => {
+      sessionStorage.clear();
+      const complete = fullSession('DOCTOR', [ASSIGNMENTS.ADMIN]);
+
+      saveSession(complete);
+
+      expect(loadSession()).toEqual(complete);
+    });
+
+    it('rejects a reload whose acting assignment is missing from the stored list', () => {
+      sessionStorage.clear();
+      const orphaned = fullSession('DOCTOR', [ASSIGNMENTS.ADMIN]);
+      orphaned.assignments = orphaned.assignments.filter((a) => a.id !== orphaned.actingContext.assignmentId);
+
+      saveSession(orphaned);
+
+      expect(loadSession()).toBeNull();
+    });
+
+    it('rejects stored sessions whose acting context contradicts the selected assignment', () => {
+      const contradictions = [
+        (session) => { session.actingContext.role = 'NURSE'; },
+        (session) => { session.actingContext.scope = 'ORGANIZATION'; },
+        (session) => { session.actingContext.organizationId = 'other-organization'; },
+        (session) => { session.actingContext.branchId = 'other-branch'; },
+        (session) => { session.actingContext.departmentId = 'other-department'; },
+        (session) => { session.actingContext.username = 'other-user'; },
+        (session) => { session.roles = ['NURSE']; },
+        (session) => { session.assignments[0].enabled = false; },
+      ];
+
+      for (const contradict of contradictions) {
+        sessionStorage.clear();
+        const session = JSON.parse(JSON.stringify(fullSession('DOCTOR')));
+        contradict(session);
+        saveSession(session);
+        expect(loadSession()).toBeNull();
+      }
+    });
+
+    it('never treats a stored branch id as authority without the matching context-bound token', () => {
+      sessionStorage.clear();
+      const tokenless = fullSession('DOCTOR', [ASSIGNMENTS.ADMIN]);
+      tokenless.token = '';
+
+      saveSession(tokenless);
+
+      expect(loadSession()).toBeNull();
+    });
+
+    it('rejects a reload with a malformed acting context even when a token exists', () => {
+      sessionStorage.clear();
+      const incomplete = fullSession('DOCTOR');
+      incomplete.actingContext = { branchId: incomplete.actingContext.branchId };
+
+      saveSession(incomplete);
+
+      expect(loadSession()).toBeNull();
+    });
   });
 });

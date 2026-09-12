@@ -16,13 +16,30 @@ function App() {
     setSession(newSession);
   }, []);
 
+  // Successful acting-context switch (docs/plan3.md Task 5): the complete
+  // server-issued session — new context-bound token, acting context, and
+  // assignment list — is written to storage and swapped into state in one
+  // atomic replacement. A refused switch (403) never reaches this handler,
+  // so neither storage nor UI can be partially updated.
+  const handleContextSwitch = useCallback((nextSession) => {
+    saveSession(nextSession);
+    setSession(nextSession);
+  }, []);
+
   const handleLogout = useCallback(() => {
     clearSession();
     setSession(null);
   }, []);
 
   return session
-    ? <AppShell session={session} onLogout={handleLogout} onSessionExpired={handleLogout} />
+    ? (
+      <AppShell
+        session={session}
+        onLogout={handleLogout}
+        onSessionExpired={handleLogout}
+        onContextSwitch={handleContextSwitch}
+      />
+    )
     : <LoginPage onLogin={handleLogin} />;
 }
 

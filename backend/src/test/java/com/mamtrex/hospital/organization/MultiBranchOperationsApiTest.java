@@ -6,6 +6,8 @@ import com.mamtrex.hospital.auth.AssignmentScope;
 import com.mamtrex.hospital.auth.Role;
 import com.mamtrex.hospital.appointment.Appointment;
 import com.mamtrex.hospital.appointment.AppointmentRepository;
+import com.mamtrex.hospital.bed.Bed;
+import com.mamtrex.hospital.bed.BedRepository;
 import com.mamtrex.hospital.auth.UserAccount;
 import com.mamtrex.hospital.auth.UserAccountRepository;
 import com.mamtrex.hospital.department.Department;
@@ -36,6 +38,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -54,11 +59,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * with synthetic disposable records only.
  *
  * <p>Retained Task 1 characterizations (login shape, acting-context
- * indifference, raw bed weakness, appointment overlap, whole-table
- * dashboard, context-free audit events) keep pinning today's unrelated
- * weaknesses for their later tasks. Department rows with no branch are the
- * deliberate legacy transition seam: this suite proves the normalized
- * contract never exposes or mutates them.</p>
+ * indifference, appointment overlap, whole-table dashboard, context-free
+ * audit events) keep pinning today's unrelated weaknesses for their later
+ * tasks. Department and bed rows with no branch are the deliberate legacy
+ * transition seam: this suite proves the normalized contracts never expose
+ * or mutate them. The earlier raw-bed characterization pin was replaced by
+ * the Task 6 normalized bed inventory contract below, mirroring how Task 3
+ * replaced the Task 1 login-shape pin it intentionally changed.</p>
  *
  * <p>Every test keys its synthetic records by a unique per-instance suffix
  * and asserts list outcomes scoped to that suffix, so the shared database
@@ -139,6 +146,9 @@ class MultiBranchOperationsApiTest {
 
     @Autowired
     AppointmentRepository appointments;
+
+    @Autowired
+    BedRepository beds;
 
     /** Unique synthetic suffix per test instance keeps every record disposable and scoped. */
     private final String suffix = UUID.randomUUID().toString().substring(0, 8);
@@ -786,51 +796,311 @@ class MultiBranchOperationsApiTest {
     }
 
     // ------------------------------------------------------------------
-    // 18. Retained Task 1: beds accept free-form branchless occupancy.
+    // 18. Task 6: normalized branch-owned bed inventory lifecycle.
     // ------------------------------------------------------------------
 
+    /** Exact Task 6 bed DTO allowlist. */
+    private static final Set<String> BED_DTO_KEYS =
+            Set.of("id", "branchId", "ward", "room", "bedNumber", "occupancyStatus");
+
+    /** Creates a bed through the public contract while acting on its owning branch. */
+    private Map<String, Object> createBed(String token, String ward, String room, String bedNumber) {
+        ResponseEntity<Map<String, Object>> created = postJson("/api/beds", token, Map.of(
+                "ward", ward,
+                "room", room,
+                "bedNumber", bedNumber));
+        assertTrue(created.getStatusCode().is2xxSuccessful(),
+                "a valid normalized bed create must succeed");
+        return created.getBody();
+    }
+
+    /** Synthetic normalized bed create body, unique per tag within this run. */
+    private Map<String, Object> bedCreatePayload(String tag) {
+        return Map.of(
+                "ward", "WARD-MB-" + suffix,
+                "room", "ROOM-MB-" + suffix + "-" + tag,
+                "bedNumber", "BED-MB-" + suffix + "-" + tag);
+    }
+
+    /** Persists a bed row directly as an admission would own it (Task 7 seam). */
+    private Bed persistBedWithStatus(Branch branch, String tag, String status) {
+        Bed bed = new Bed(branch, "WARD-R-" + suffix, "ROOM-R-" + suffix + "-" + tag,
+                "BED-R-" + suffix + "-" + tag);
+        if ("OCCUPIED".equals(status)) {
+            bed.markOccupiedByAdmission();
+        } else if ("AVAILABLE".equals(status)) {
+            bed.releaseByAdmission();
+        } else {
+            throw new IllegalArgumentException("This helper models admission-owned statuses only");
+        }
+        return beds.save(bed);
+    }
+
     /**
-     * Retained Task 1 characterization (Task 6 will change it): POST
-     * /api/beds accepts an arbitrary nonblank occupancy status and a
-     * nonexistent patientId, returns the raw entity without branchId, and
-     * the CREATE audit evidence stays observable without ordering
-     * dependence. Beds are intentionally NOT branch scoped in Task 2.
+     * Task 6 lifecycle contract: POST /api/beds accepts exactly the three
+     * location fields (server-set branch and AVAILABLE status — extra client
+     * fields are ignored, never stored), every response is the strict DTO
+     * allowlist with no JPA metadata and no legacy patient reference, and
+     * create/transition/delete each own exactly one existing-format audit
+     * event while OCCUPIED, unknown, and repeat targets are the shared 409
+     * with no audit event.
      */
     @Test
-    void bedsAcceptFreeFormBranchlessOccupancyWithAnUnverifiedPatientReferenceToday() {
-        String token = login(ADMIN);
-        Map<String, Object> payload = bedPayload("ghost");
+    void bedLifecycleUsesTheNormalizedDtoAndRecordsExactlyOneAuditEventPerMutation() {
+        Branch branch = createdBranch(suffix + "-bed");
+        String token = adminTokenActingOn(branch);
+
+        Map<String, Object> payload = new HashMap<>(bedCreatePayload("life"));
+        payload.put("branchId", UUID.randomUUID().toString());
+        payload.put("occupancyStatus", "OCCUPIED");
+        payload.put("patientId", UUID.randomUUID().toString());
         ResponseEntity<Map<String, Object>> created = postJson("/api/beds", token, payload);
         assertTrue(created.getStatusCode().is2xxSuccessful(),
-                "today's raw bed CRUD must accept the free-form request");
+                "the normalized create must accept the three contract fields");
         Map<String, Object> body = created.getBody();
         assertNotNull(body);
-        assertEquals(Set.of("id", "createdAt", "updatedAt", "version", "ward", "room", "bedNumber",
-                        "occupancyStatus", "patientId"),
-                body.keySet(),
-                "today's bed response is the raw entity with free-form string occupancy fields");
-        assertEquals(payload.get("occupancyStatus"), body.get("occupancyStatus"),
-                "any nonblank occupancy status string must be accepted today");
-        assertEquals(payload.get("patientId"), body.get("patientId"),
-                "an unverified nonexistent patientId must be stored as-is today");
-        assertFalse(body.containsKey("branchId"), "no branch ownership exists on today's bed record");
+        assertEquals(BED_DTO_KEYS, body.keySet(),
+                "the bed response must be exactly the DTO allowlist: no timestamps, version, or raw entity");
+        assertEquals("WARD-MB-" + suffix, body.get("ward"));
+        assertEquals("AVAILABLE", body.get("occupancyStatus"),
+                "the server alone sets the initial AVAILABLE status — a client status value is ignored");
+        assertEquals(branch.getId().toString(), String.valueOf(body.get("branchId")),
+                "ownership derives from the acting context — a client branchId is ignored");
+        assertFalse(body.containsKey("patientId"),
+                "the legacy raw patient reference must never surface in the DTO");
+        String bedId = String.valueOf(body.get("id"));
+        assertEquals(1, auditEventsFor("Bed", bedId, "CREATE"),
+                "the create must own exactly one CREATE audit event");
 
-        ResponseEntity<List<Map<String, Object>>> list = getList("/api/beds", token);
-        assertEquals(HttpStatus.OK, list.getStatusCode());
-        List<Map<String, Object>> rows = list.getBody();
-        assertNotNull(rows, "the bed list must carry a body");
-        assertTrue(rows.stream().anyMatch(row -> body.get("id").equals(row.get("id"))),
-                "the created bed must appear in the global unscoped list");
+        ResponseEntity<Map<String, Object>> fetched = getJson("/api/beds/" + bedId, token);
+        assertEquals(HttpStatus.OK, fetched.getStatusCode());
+        assertNotNull(fetched.getBody());
+        assertEquals(BED_DTO_KEYS, fetched.getBody().keySet(), "get-by-id must return the same DTO allowlist");
 
-        ResponseEntity<List<Map<String, Object>>> auditResponse = getList("/api/audit", token);
-        assertEquals(HttpStatus.OK, auditResponse.getStatusCode());
-        List<Map<String, Object>> events = auditResponse.getBody();
-        assertNotNull(events, "the audit list must carry a body");
-        assertTrue(events.stream().anyMatch(event ->
-                        "CREATE".equals(event.get("action"))
-                                && "Bed".equals(event.get("resourceType"))
-                                && String.valueOf(body.get("id")).equals(event.get("resourceId"))),
-                "the bed create must leave observable CREATE audit evidence for its resource id");
+        assertEquals(HttpStatus.NOT_FOUND, getJson("/api/beds/" + UUID.randomUUID(), token).getStatusCode(),
+                "an unknown bed id must answer the shared 404 contract");
+
+        ResponseEntity<Map<String, Object>> toMaintenance = putJson("/api/beds/" + bedId + "/status", token,
+                Map.of("status", "MAINTENANCE"));
+        assertTrue(toMaintenance.getStatusCode().is2xxSuccessful(), "AVAILABLE -> MAINTENANCE must succeed");
+        assertNotNull(toMaintenance.getBody());
+        assertEquals("MAINTENANCE", toMaintenance.getBody().get("occupancyStatus"));
+        assertEquals(1, auditEventsFor("Bed", bedId, "UPDATE"),
+                "the successful transition must own exactly one UPDATE audit event");
+
+        ResponseEntity<Map<String, Object>> backToAvailable = putJson("/api/beds/" + bedId + "/status", token,
+                Map.of("status", "AVAILABLE"));
+        assertTrue(backToAvailable.getStatusCode().is2xxSuccessful(),
+                "MAINTENANCE -> AVAILABLE must be a legal reverse transition");
+        assertEquals(2, auditEventsFor("Bed", bedId, "UPDATE"),
+                "each successful transition must own exactly one UPDATE audit event");
+
+        long updatesBefore = auditEventsFor("Bed", bedId, "UPDATE");
+        for (String refusedTarget : List.of("OCCUPIED", "ARBITRARY-STATE")) {
+            ResponseEntity<Map<String, Object>> refused = putJson("/api/beds/" + bedId + "/status", token,
+                    Map.of("status", refusedTarget));
+            assertEquals(HttpStatus.CONFLICT, refused.getStatusCode(),
+                    refusedTarget + " must be the shared 409 contract");
+            assertNotNull(refused.getBody());
+            assertEquals(API_ERROR_KEYS, refused.getBody().keySet(),
+                    "the refused transition must use the shared safe contract");
+        }
+        assertEquals(HttpStatus.CONFLICT,
+                putJson("/api/beds/" + bedId + "/status", token, Map.of("status", "AVAILABLE")).getStatusCode(),
+                "a repeat transition is not a transition and must be refused");
+        assertEquals(updatesBefore, auditEventsFor("Bed", bedId, "UPDATE"),
+                "refused transitions must record no audit event");
+
+        assertEquals(HttpStatus.OK, delete("/api/beds/" + bedId, token).getStatusCode(),
+                "an unoccupied bed must be deletable");
+        assertEquals(HttpStatus.NOT_FOUND, getJson("/api/beds/" + bedId, token).getStatusCode());
+        assertEquals(1, auditEventsFor("Bed", bedId, "DELETE"),
+                "the delete must own exactly one DELETE audit event");
+        assertEquals(1, auditEventsFor("Bed", bedId, "CREATE"),
+                "the create event must be untouched by the later operations");
+    }
+
+    /**
+     * Task 6 branch-isolation and duplicate contract: the same
+     * (ward, room, bedNumber) key on two branches is two distinct rows while
+     * a repeat inside one branch is the safe 409 with the controlled service
+     * message; every list and detail read resolves only inside the acting
+     * branch, and an unassigned legacy bed row stays invisible and
+     * untouched. Failed duplicates record no audit event.
+     */
+    @Test
+    void bedReadsAreBranchScopedAndDuplicateKeysConflictOnlyInsideOneBranch() {
+        Branch branchA = createdBranch(suffix + "-ba2");
+        Branch branchB = createdBranch(suffix + "-bb2");
+        String tokenA = adminTokenActingOn(branchA);
+        String tokenB = adminTokenActingOn(branchB);
+
+        Map<String, Object> bedA = createBed(tokenA, "WARD-SHARED-" + suffix, "ROOM-SHARED", "BED-01");
+        Map<String, Object> bedB = createBed(tokenB, "WARD-SHARED-" + suffix, "ROOM-SHARED", "BED-01");
+        assertNotNull(bedA);
+        assertNotNull(bedB);
+        assertNotEquals(bedA.get("id"), bedB.get("id"),
+                "the same natural key on two branches must be two distinct rows");
+        assertEquals(branchB.getId().toString(), String.valueOf(bedB.get("branchId")),
+                "each branch owns its own row");
+
+        List<String> idsA = listOfIds(getList("/api/beds", tokenA));
+        assertTrue(idsA.contains(String.valueOf(bedA.get("id"))), "branch A lists its own bed");
+        assertFalse(idsA.contains(String.valueOf(bedB.get("id"))), "branch A never lists branch B's bed");
+        assertFalse(listOfIds(getList("/api/beds", tokenB)).contains(String.valueOf(bedA.get("id"))),
+                "the isolation is symmetric");
+        assertEquals(HttpStatus.NOT_FOUND, getJson("/api/beds/" + bedB.get("id"), tokenA).getStatusCode(),
+                "a cross-branch bed id must be indistinguishable from a nonexistent one");
+
+        long createsBefore = auditEventCount("Bed", "CREATE");
+        ResponseEntity<Map<String, Object>> duplicate = postJson("/api/beds", tokenA, Map.of(
+                "ward", "WARD-SHARED-" + suffix,
+                "room", "ROOM-SHARED",
+                "bedNumber", "BED-01"));
+        assertEquals(HttpStatus.CONFLICT, duplicate.getStatusCode(),
+                "the same-branch natural-key repeat must be refused");
+        assertNotNull(duplicate.getBody());
+        assertEquals("Bed already exists in this branch with the same ward, room, and bed number",
+                duplicate.getBody().get("message"),
+                "the refusal must carry the controlled service message, never persistence internals");
+        assertEquals(createsBefore, auditEventCount("Bed", "CREATE"),
+                "the refused duplicate must record no audit event");
+
+        Bed legacy = beds.save(new Bed(null, "WARD-LEGACY-" + suffix, "ROOM-LEGACY", "BED-LEGACY"));
+        assertEquals(HttpStatus.NOT_FOUND, getJson("/api/beds/" + legacy.getId(), tokenA).getStatusCode(),
+                "get must not disclose an unassigned legacy bed");
+        assertFalse(listOfIds(getList("/api/beds", tokenA)).contains(legacy.getId().toString()),
+                "the list must never disclose an unassigned legacy bed");
+        Bed reloaded = beds.findById(legacy.getId()).orElseThrow();
+        assertEquals("BED-LEGACY", reloaded.getBedNumber(), "the legacy row must stay untouched");
+        assertNull(reloaded.getBranch(), "the legacy row must remain unassigned");
+    }
+
+    /**
+     * Task 6 occupancy guard: an OCCUPIED bed is admission-owned (Task 7),
+     * so every client status transition is refused and deletion is refused —
+     * all with the shared 409 and no audit events — while the same bed once
+     * unoccupied deletes normally.
+     */
+    @Test
+    void occupiedBedsRefuseClientTransitionsAndDeletionWith409WithoutAuditEvents() {
+        Branch branch = createdBranch(suffix + "-occ");
+        String token = adminTokenActingOn(branch);
+        Bed occupied = persistBedWithStatus(branch, "occ", "OCCUPIED");
+        String occupiedId = occupied.getId().toString();
+
+        long updatesBefore = auditEventCount("Bed", "UPDATE");
+        long deletesBefore = auditEventCount("Bed", "DELETE");
+        for (String target : List.of("AVAILABLE", "MAINTENANCE", "OUT_OF_SERVICE")) {
+            assertEquals(HttpStatus.CONFLICT,
+                    putJson("/api/beds/" + occupiedId + "/status", token, Map.of("status", target)).getStatusCode(),
+                    "an OCCUPIED bed must refuse the " + target + " client transition");
+        }
+        assertEquals(HttpStatus.CONFLICT, delete("/api/beds/" + occupiedId, token).getStatusCode(),
+                "an OCCUPIED bed must refuse deletion");
+        assertTrue(beds.findById(occupied.getId()).isPresent(), "the refused delete must not remove the row");
+        assertEquals(updatesBefore, auditEventCount("Bed", "UPDATE"),
+                "refused occupancy-guard transitions must record no audit event");
+        assertEquals(deletesBefore, auditEventCount("Bed", "DELETE"),
+                "the refused delete must record no audit event");
+
+        Bed released = beds.findById(occupied.getId()).orElseThrow();
+        released.releaseByAdmission();
+        beds.save(released);
+        assertEquals(HttpStatus.OK, delete("/api/beds/" + occupiedId, token).getStatusCode(),
+                "once unoccupied the same bed deletes normally");
+    }
+
+    /**
+     * Task 6 concurrency proof: duplicate creates racing on the same natural
+     * key inside one branch produce exactly one winner and only safe 409s
+     * (service pre-check plus the DB unique-constraint backstop), and racing
+     * status transitions on one bed produce exactly one winner via the
+     * existing JPA optimistic-lock mechanism — each with exactly one audit
+     * event and exactly one persisted outcome.
+     */
+    @Test
+    void concurrentBedMutationsProduceExactlyOneWinnerAndOnlySafeConflicts() throws Exception {
+        Branch branch = createdBranch(suffix + "-race");
+        String token = adminTokenActingOn(branch);
+
+        // Race A: N concurrent identical creates on the same natural key.
+        int racers = 4;
+        ExecutorService pool = Executors.newFixedThreadPool(racers);
+        try {
+            CountDownLatch start = new CountDownLatch(1);
+            List<java.util.concurrent.Future<ResponseEntity<Map<String, Object>>>> creations = new java.util.ArrayList<>();
+            for (int i = 0; i < racers; i++) {
+                creations.add(pool.submit(() -> {
+                    start.await();
+                    return postJson("/api/beds", token, Map.of(
+                            "ward", "WARD-RACE-" + suffix,
+                            "room", "ROOM-RACE",
+                            "bedNumber", "BED-RACE"));
+                }));
+            }
+            start.countDown();
+            long successes = 0;
+            String winnerId = null;
+            for (var future : creations) {
+                ResponseEntity<Map<String, Object>> outcome = future.get(30, java.util.concurrent.TimeUnit.SECONDS);
+                if (outcome.getStatusCode().is2xxSuccessful()) {
+                    successes++;
+                    winnerId = String.valueOf(outcome.getBody().get("id"));
+                } else {
+                    assertEquals(HttpStatus.CONFLICT, outcome.getStatusCode(),
+                            "a racing duplicate create must be the safe 409, never a 5xx");
+                }
+            }
+            assertEquals(1, successes, "exactly one racing create may win");
+            assertEquals(1, auditEventsFor("Bed", winnerId, "CREATE"),
+                    "the winning create alone must own exactly one CREATE audit event");
+            assertEquals(1L, beds.findByBranchId(branch.getId()).stream()
+                            .filter(bed -> ("WARD-RACE-" + suffix).equals(bed.getWard())
+                                    && "ROOM-RACE".equals(bed.getRoom())
+                                    && "BED-RACE".equals(bed.getBedNumber()))
+                            .count(),
+                    "exactly one row may persist for the raced natural key");
+            assertThrows(DataIntegrityViolationException.class,
+                    () -> beds.save(new Bed(branch, "WARD-RACE-" + suffix, "ROOM-RACE", "BED-RACE")),
+                    "the (branch, ward, room, bedNumber) DB unique constraint must backstop the pre-check");
+        } finally {
+            pool.shutdownNow();
+        }
+
+        // Race B: two concurrent transitions of one bed; exactly one wins.
+        Map<String, Object> bedBody = createBed(token, "WARD-TR-" + suffix, "ROOM-TR", "BED-TR");
+        String bedId = String.valueOf(bedBody.get("id"));
+        ExecutorService transitionPool = Executors.newFixedThreadPool(2);
+        try {
+            CountDownLatch bothReady = new CountDownLatch(2);
+            java.util.List<java.util.concurrent.Future<ResponseEntity<Map<String, Object>>>> transitions =
+                    new java.util.ArrayList<>();
+            for (int i = 0; i < 2; i++) {
+                transitions.add(transitionPool.submit(() -> {
+                    bothReady.countDown();
+                    bothReady.await();
+                    return putJson("/api/beds/" + bedId + "/status", token, Map.of("status", "MAINTENANCE"));
+                }));
+            }
+            int transitionWins = 0;
+            for (var future : transitions) {
+                ResponseEntity<Map<String, Object>> outcome = future.get(30, java.util.concurrent.TimeUnit.SECONDS);
+                if (outcome.getStatusCode().is2xxSuccessful()) {
+                    transitionWins++;
+                } else {
+                    assertEquals(HttpStatus.CONFLICT, outcome.getStatusCode(),
+                            "a losing racing transition must be the safe 409, never a 5xx");
+                }
+            }
+            assertEquals(1, transitionWins, "exactly one racing transition may win");
+            assertEquals("MAINTENANCE", getJson("/api/beds/" + bedId, token).getBody().get("occupancyStatus"),
+                    "the bed must end in exactly the single winning state");
+            assertEquals(1, auditEventsFor("Bed", bedId, "UPDATE"),
+                    "exactly one UPDATE audit event must exist for the raced transition");
+        } finally {
+            transitionPool.shutdownNow();
+        }
     }
 
     // ------------------------------------------------------------------
@@ -1162,6 +1432,7 @@ class MultiBranchOperationsApiTest {
      */
     private void wipeHierarchy() {
         appointments.deleteAll();
+        beds.deleteAll();
         staffMembers.deleteAll();
         patients.deleteAll();
         assignments.deleteAll();
@@ -1244,12 +1515,21 @@ class MultiBranchOperationsApiTest {
     }
 
     private ResponseEntity<Map<String, Object>> postJson(String path, String token, Map<String, Object> payload) {
+        return exchangeJson(path, HttpMethod.POST, token, payload);
+    }
+
+    private ResponseEntity<Map<String, Object>> putJson(String path, String token, Map<String, Object> payload) {
+        return exchangeJson(path, HttpMethod.PUT, token, payload);
+    }
+
+    private ResponseEntity<Map<String, Object>> exchangeJson(String path, HttpMethod method, String token,
+                                                             Map<String, Object> payload) {
         HttpHeaders headers = new HttpHeaders();
         if (token != null) {
             headers.setBearerAuth(token);
         }
         headers.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
-        return rest.exchange(path, HttpMethod.POST, new HttpEntity<>(payload, headers), MAP);
+        return rest.exchange(path, method, new HttpEntity<>(payload, headers), MAP);
     }
 
     private ResponseEntity<Map<String, Object>> delete(String path, String token) {

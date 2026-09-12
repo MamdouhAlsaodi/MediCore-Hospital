@@ -108,8 +108,9 @@ class CareOperationsApiTest {
     private static final Set<String> INVOICE_DTO_FIELDS = Set.of(
             "id", "patientId", "invoiceNumber", "amount", "currency", "status");
 
-    private static final Set<String> BED_ENTITY_FIELDS = Set.of(
-            "ward", "room", "bedNumber", "occupancyStatus", "patientId");
+    /** Task 6 DTO contract: branch-owned fields only, no persistence metadata or patient reference. */
+    private static final Set<String> BED_DTO_FIELDS = Set.of(
+            "id", "branchId", "ward", "room", "bedNumber", "occupancyStatus");
 
     /** Task 5 dashboard contract: totals plus status-aware aggregates, exactly these eleven keys. */
     private static final Set<String> DASHBOARD_KEYS = Set.of(
@@ -1099,33 +1100,36 @@ class CareOperationsApiTest {
     // ------------------------------------------------------------------
 
     /**
-     * Beds today: the same raw CRUD shape; occupancyStatus is a free string
-     * and patientId accepts even a non-UUID raw value, since nothing is ever
-     * resolved. /api/beds is explicitly out of plan2 scope (§3) — this pins
-     * the baseline only.
+     * Task 6 replaces raw Bed persistence exposure with a branch-owned DTO.
+     * Extra client fields are ignored at the HTTP boundary and cannot select
+     * ownership, occupancy, or a patient reference.
      */
     @Test
-    void bedCrudExposesRawEntityContractWithUnverifiedPatientReference() {
+    void bedCreateDerivesOwnershipAndReturnsOnlyNormalizedDtoFields() {
         String token = login(RECEPTIONIST_USER);
+        String forgedBranchId = UUID.randomUUID().toString();
         Map<String, Object> payload = Map.of(
-                "ward", "ward-raw-" + suffix,
-                "room", "room-not-validated",
-                "bedNumber", "BED-RAW-01",
-                "occupancyStatus", "OCCUPIED-BY-NOTHING",
+                "ward", "ward-normalized-" + suffix,
+                "room", "room-01",
+                "bedNumber", "BED-01",
+                "branchId", forgedBranchId,
+                "occupancyStatus", "OCCUPIED",
                 "patientId", "not-even-a-uuid");
-        Set<String> entityContract = union(METADATA_KEYS, BED_ENTITY_FIELDS);
 
         ResponseEntity<Map<String, Object>> created = post("/api/beds", token, payload);
-        assertEquals(HttpStatus.OK, created.getStatusCode(),
-                "a non-UUID patientId and arbitrary raw strings must currently be accepted on beds");
+        assertEquals(HttpStatus.OK, created.getStatusCode());
         Map<String, Object> body = created.getBody();
         assertNotNull(body);
-        assertEquals(entityContract, body.keySet(),
-                "the bed response must currently be the raw entity incl. persistence metadata");
-        assertEquals("not-even-a-uuid", body.get("patientId"), "bed patientId must be stored verbatim");
+        assertEquals(BED_DTO_FIELDS, body.keySet());
+        assertEquals("AVAILABLE", body.get("occupancyStatus"));
+        assertNotNull(body.get("branchId"));
+        assertNotEquals(forgedBranchId, body.get("branchId").toString());
         String bedId = requireId(created);
 
-        assertEquals(HttpStatus.OK, getMap("/api/beds/" + bedId, token).getStatusCode());
+        ResponseEntity<Map<String, Object>> fetched = getMap("/api/beds/" + bedId, token);
+        assertEquals(HttpStatus.OK, fetched.getStatusCode());
+        assertNotNull(fetched.getBody());
+        assertEquals(body, fetched.getBody());
         assertEquals(HttpStatus.OK, delete("/api/beds/" + bedId, token).getStatusCode());
         assertEquals(HttpStatus.NOT_FOUND, getStatus("/api/beds/" + bedId, token).getStatusCode());
     }

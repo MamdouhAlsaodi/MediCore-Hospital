@@ -86,6 +86,28 @@ const EMERGENCY_VISITS_PAGE = [
   },
 ];
 
+// Beds list over GET /api/beds (docs/plan3.md Task 6 DTO contract):
+// id/branchId/ward/room/bedNumber/occupancyStatus — no persistence metadata
+// and no legacy patient reference anywhere. OCCUPIED is admission-owned.
+const BEDS_PAGE = [
+  {
+    id: '99999999-9999-4999-8999-999999999801',
+    branchId: '44444444-4444-4444-8444-444444444444',
+    ward: 'Ward A',
+    room: '101',
+    bedNumber: 'A-01',
+    occupancyStatus: 'AVAILABLE',
+  },
+  {
+    id: '99999999-9999-4999-8999-999999999802',
+    branchId: '44444444-4444-4444-8444-444444444444',
+    ward: 'Ward A',
+    room: '102',
+    bedNumber: 'A-02',
+    occupancyStatus: 'MAINTENANCE',
+  },
+];
+
 // Invoices list over GET /api/invoices (docs/plan2.md Task 4 DTO contract):
 // id/patientId/invoiceNumber/amount/currency/status — no persistence
 // metadata. The whole family is a FINANCIAL SIMULATION: no real payments.
@@ -139,6 +161,7 @@ function stubBackendApi() {
     if (path === '/api/appointments') return Promise.resolve(jsonResponse(APPOINTMENTS_PAGE));
     if (path === '/api/admissions') return Promise.resolve(jsonResponse(ADMISSIONS_PAGE));
     if (path === '/api/emergency-visits') return Promise.resolve(jsonResponse(EMERGENCY_VISITS_PAGE));
+    if (path === '/api/beds') return Promise.resolve(jsonResponse(BEDS_PAGE));
     if (path === '/api/invoices') return Promise.resolve(jsonResponse(INVOICES_PAGE));
     if (path === '/api/staff') return Promise.resolve(jsonResponse(STAFF_DIRECTORY));
     if (path === '/api/audit') return Promise.resolve(jsonResponse(AUDIT_EVENTS));
@@ -179,13 +202,14 @@ describe('AppShell', () => {
   it('lists only the destinations the session roles permit and never offers unimplemented modules', async () => {
     renderShell(['DOCTOR']);
 
-    // plan2.md Tasks 2-3: Admissions and Emergency Visits join the four
-    // clinical-administrative destinations (server family rules on
-    // /api/admissions/** and /api/emergency-visits/**).
+    // plan2.md Tasks 2-3 and plan3.md Task 6: Admissions, Emergency
+    // Visits, and Beds join the four clinical-administrative destinations
+    // (server family rules on /api/admissions/**, /api/emergency-visits/**,
+    // and /api/beds/**).
     expect(navigationItems()).toEqual(
-      ['Dashboard', 'Patients', 'Appointments', 'Admissions', 'Emergency Visits'],
+      ['Dashboard', 'Patients', 'Appointments', 'Admissions', 'Emergency Visits', 'Beds'],
     );
-    for (const unimplemented of ['Laboratory', 'Pharmacy', 'Beds']) {
+    for (const unimplemented of ['Laboratory', 'Pharmacy']) {
       expect(screen.queryByRole('button', { name: unimplemented })).not.toBeInTheDocument();
     }
     // The audit evidence screen is implemented but ADMIN-only (plan1.md
@@ -302,7 +326,7 @@ describe('AppShell', () => {
     await waitForDashboardStats();
 
     expect(navigationItems()).toEqual(
-      ['Dashboard', 'Patients', 'Appointments', 'Admissions', 'Emergency Visits'],
+      ['Dashboard', 'Patients', 'Appointments', 'Admissions', 'Emergency Visits', 'Beds'],
     );
     await user.click(screen.getByRole('button', { name: 'Admissions' }));
 
@@ -371,12 +395,46 @@ describe('AppShell', () => {
     expect(screen.getByRole('heading', { name: 'Appointments' })).toBeInTheDocument();
   });
 
+  it('opens the beds screen for a clinical-administrative role and loads its list once', async () => {
+    const user = userEvent.setup();
+    renderShell(['NURSE']);
+    await waitForDashboardStats();
+
+    expect(navigationItems()).toEqual(
+      ['Dashboard', 'Patients', 'Appointments', 'Admissions', 'Emergency Visits', 'Beds'],
+    );
+    await user.click(screen.getByRole('button', { name: 'Beds' }));
+
+    expect(screen.getByRole('button', { name: 'Beds' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('heading', { name: 'Beds' })).toBeInTheDocument();
+    const bedsScreen = screen.getByRole('region', { name: 'Beds screen' });
+    const table = await within(bedsScreen).findByRole('table', { name: 'Registered beds' });
+    expect(within(table).getAllByRole('row')).toHaveLength(3); // header + two records
+    // Status badges render and every legal transition button exists for an
+    // actionable role.
+    expect(within(table).getByText('AVAILABLE')).toBeInTheDocument();
+    expect(within(table).getByText('MAINTENANCE')).toBeInTheDocument();
+    expect(
+      within(bedsScreen).getByRole('button', { name: 'Add bed' })
+    ).toBeInTheDocument();
+    expect(
+      within(bedsScreen).getByRole('button', { name: 'Start maintenance' })
+    ).toBeInTheDocument();
+    // The branch-scoping boundary is demonstrably labeled in the UI.
+    expect(bedsScreen).toHaveTextContent(/branch you are acting on/i);
+
+    const bedCalls = fetchMock.mock.calls.filter(([path]) => path === '/api/beds');
+    expect(bedCalls).toHaveLength(1);
+    expect(bedCalls[0][1].method).toBe('GET');
+    expect(bedCalls[0][1].headers.Authorization).toBe('Bearer synthetic-token');
+  });
+
   it('offers the audit evidence screen to ADMIN only and loads real events from /api/audit', async () => {
     const user = userEvent.setup();
     renderShell(['ADMIN']);
 
     expect(navigationItems()).toEqual(
-      ['Dashboard', 'Patients', 'Appointments', 'Admissions', 'Emergency Visits', 'Invoices', 'Audit'],
+      ['Dashboard', 'Patients', 'Appointments', 'Admissions', 'Emergency Visits', 'Beds', 'Invoices', 'Audit'],
     );
     await waitForDashboardStats();
 

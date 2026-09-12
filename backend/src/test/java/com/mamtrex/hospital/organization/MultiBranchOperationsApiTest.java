@@ -12,6 +12,7 @@ import com.mamtrex.hospital.appointment.Appointment;
 import com.mamtrex.hospital.appointment.AppointmentRepository;
 import com.mamtrex.hospital.bed.Bed;
 import com.mamtrex.hospital.bed.BedRepository;
+import com.mamtrex.hospital.audit.AuditService;
 import com.mamtrex.hospital.auth.UserAccount;
 import com.mamtrex.hospital.auth.UserAccountRepository;
 import com.mamtrex.hospital.billing.Invoice;
@@ -37,9 +38,11 @@ import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.util.ArrayList;
@@ -69,11 +72,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * with synthetic disposable records only.
  *
  * <p>Retained Task 1 characterizations (login shape, acting-context
- * indifference, whole-table dashboard, context-free audit events) keep
- * pinning today's unrelated weaknesses for their later tasks. The Task 1
- * appointment-overlap pin was replaced by the Task 9 scheduling contract
- * (docs/plan3.md), mirroring how earlier tasks replaced the pins they
- * intentionally changed. Department and bed rows with no branch are the deliberate legacy
+ * indifference, whole-table dashboard) keep pinning today's unrelated
+ * weaknesses for their later tasks. The Task 1 appointment-overlap pin was
+ * replaced by the Task 9 scheduling contract (docs/plan3.md), mirroring how
+ * earlier tasks replaced the pins they intentionally changed; the Task 1
+ * context-free audit characterization was replaced by the Task 11 contract
+ * below, which enriches every success event with the acting context, one
+ * bounded correlation id echoed in the X-Correlation-Id response header,
+ * and the scope-aware filtered audit read. Department and bed rows with no branch are the deliberate legacy
  * transition seam: this suite proves the normalized contracts never expose
  * or mutate them. The earlier raw-bed characterization pin was replaced by
  * the Task 6 normalized bed inventory contract below, mirroring how Task 3
@@ -156,6 +162,10 @@ class MultiBranchOperationsApiTest {
 
     @Autowired
     BranchRepository branches;
+
+    /** Direct seam for fabricating legacy/unassigned events exactly as unauthenticated bootstrap code does. */
+    @Autowired
+    AuditService auditService;
 
     @Autowired
     DepartmentRepository departments;
@@ -2144,53 +2154,6 @@ class MultiBranchOperationsApiTest {
     }
 
     // ------------------------------------------------------------------
-    // 21. Retained Task 1: audit events lack organizational context.
-    // ------------------------------------------------------------------
-
-    /**
-     * Retained Task 1 characterization (Task 11 will change it): a
-     * successful department mutation emits one event carrying only the
-     * actor/action/resource/details/time contract — no assignment, branch,
-     * organization, role, or correlation fields. The event is located by
-     * its resource id, not by ordering; the create runs through the new
-     * Task 2 contract (verified branch) while the event shape pin remains
-     * today's.
-     */
-    @Test
-    void auditEventsCarryNoOrganizationalContextToday() {
-        String token = login(ADMIN);
-        String branchId = String.valueOf(createBranch(token, suffix + "-auditshape").get("id"));
-        Map<String, Object> created = postJson("/api/departments", token, departmentPayload("auditshape", branchId)).getBody();
-        assertNotNull(created);
-        String resourceId = String.valueOf(created.get("id"));
-
-        ResponseEntity<List<Map<String, Object>>> auditResponse = getList("/api/audit", token);
-        assertEquals(HttpStatus.OK, auditResponse.getStatusCode());
-        List<Map<String, Object>> events = auditResponse.getBody();
-        assertNotNull(events, "the audit list must carry a body");
-        Map<String, Object> event = events.stream()
-                .filter(candidate -> "Department".equals(candidate.get("resourceType"))
-                        && resourceId.equals(candidate.get("resourceId")))
-                .findFirst()
-                .orElse(null);
-        assertNotNull(event, "the department create must have produced one observable audit event");
-        assertEquals(Set.of("id", "createdAt", "updatedAt", "version", "actor", "action",
-                        "resourceType", "resourceId", "details", "occurredAt"),
-                event.keySet(),
-                "today's audit event carries only actor/action/resource/details/time plus persistence metadata");
-        assertEquals(ADMIN, event.get("actor"));
-        assertEquals("CREATE", event.get("action"));
-        assertEquals("Department", event.get("resourceType"));
-        assertNotNull(event.get("occurredAt"), "the event must carry its occurred-at time");
-        assertTrue(event.keySet().stream().noneMatch(key -> {
-            String lowered = key.toLowerCase();
-            return lowered.contains("assignment") || lowered.contains("branch")
-                    || lowered.contains("organization") || lowered.contains("department")
-                    || lowered.contains("role") || lowered.contains("correlation");
-        }), "no organizational-context field may exist on today's audit event");
-    }
-
-    // ------------------------------------------------------------------
     // 22. Task 4: patients, staff, and appointments are branch-owned.
     // ------------------------------------------------------------------
 
@@ -2661,5 +2624,138 @@ class MultiBranchOperationsApiTest {
         assertTrue(created.getStatusCode().is2xxSuccessful(), "synthetic staff creation must succeed");
         assertNotNull(created.getBody());
         return String.valueOf(created.getBody().get("id"));
+    }
+
+    // ------------------------------------------------------------------
+    // 20. Task 11: audit context, correlation ids, scope-aware filtering.
+    // ------------------------------------------------------------------
+
+    /** POST JSON with one optional correlation-id header, keeping the response headers reachable. */
+    private ResponseEntity<Map<String, Object>> postWithCorrelation(
+            String path, String token, String correlationId, Map<String, Object> payload) {
+        HttpHeaders headers = new HttpHeaders();
+        if (token != null) {
+            headers.setBearerAuth(token);
+        }
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        if (correlationId != null) {
+            headers.set("X-Correlation-Id", correlationId);
+        }
+        return rest.exchange(path, HttpMethod.POST, new HttpEntity<>(payload, headers), MAP);
+    }
+
+    /**
+     * Task 11 contract (replaces the Task 1 context-free audit
+     * characterization): every success event carries the acting context and
+     * exactly the bounded correlation id echoed in the X-Correlation-Id
+     * response header; the organization-scoped ADMIN filters the audit by
+     * branch, resource type, actor, and correlation id; a branch-scoped
+     * ADMIN is confined to its own branch server-side (a foreign branch
+     * filter answers the empty set, never a widening); and legacy/unassigned
+     * events stay hidden from every scoped view, shown to the organization
+     * ADMIN marked {@code legacy/unassigned} — ownership is never guessed.
+     */
+    @Test
+    void auditEvidenceCarriesBranchContextAndTheReadIsScopeAwareAndFilterable() {
+        Branch branchA = createdBranch(suffix + "-aua");
+        Branch branchB = createdBranch(suffix + "-aub");
+        String tokenA = adminTokenActingOn(branchA);
+        String tokenB = adminTokenActingOn(branchB);
+
+        // One sensitive command per branch, each with its own correlation id.
+        String correlationA = "mb-evidence-a-" + suffix;
+        String correlationB = "mb-evidence-b-" + suffix;
+        ResponseEntity<Map<String, Object>> createdA = postWithCorrelation("/api/patients", tokenA, correlationA,
+                patientCreatePayload("aua"));
+        assertTrue(createdA.getStatusCode().is2xxSuccessful(), "the branch A create must succeed");
+        assertEquals(correlationA, createdA.getHeaders().getFirst("X-Correlation-Id"),
+                "the response header must echo the validated client correlation id");
+        Map<String, Object> patientA = createdA.getBody();
+        Map<String, Object> patientB = postWithCorrelation("/api/patients", tokenB, correlationB,
+                patientCreatePayload("aub")).getBody();
+        assertNotNull(patientA);
+        assertNotNull(patientB);
+
+        String idA = String.valueOf(patientA.get("id"));
+        String idB = String.valueOf(patientB.get("id"));
+
+        // The success events carry the acting branch and the echoed correlation id.
+        List<Map<String, Object>> orgView = getList("/api/audit", login(ADMIN)).getBody();
+        assertNotNull(orgView, "the audit list must carry a body");
+        Map<String, Object> eventA = orgView.stream()
+                .filter(e -> "Patient".equals(e.get("resourceType")) && idA.equals(e.get("resourceId")))
+                .findFirst().orElseThrow();
+        assertEquals(branchA.getId().toString(), eventA.get("branchId"),
+                "the event must carry the acting branch of the command");
+        assertEquals(correlationA, eventA.get("correlationId"));
+        assertNotNull(eventA.get("assignmentId"), "the event must carry the acting assignment");
+        assertEquals("ADMIN", eventA.get("role"));
+        // Task 3 context model (ActingContextService.resolveContext): an
+        // ORGANIZATION-scope assignment switched onto a selected branch keeps
+        // the ORGANIZATION scope with the branch bound — the acting scope is
+        // never re-labeled BRANCH. The switched branch itself is proven by the
+        // branchId assertion above, which is what distinguishes the switched
+        // context from the login default.
+        assertEquals("ORGANIZATION", eventA.get("scope"), "the acting scope of the command is recorded");
+        assertNull(eventA.get("branchAttribution"), "attributed events never carry the legacy mark");
+
+        // Organization-scoped ADMIN: the four filters resolve inside the organization.
+        List<Map<String, Object>> byBranchA =
+                getList("/api/audit?branchId=" + branchA.getId(), login(ADMIN)).getBody();
+        assertNotNull(byBranchA);
+        assertTrue(byBranchA.stream().allMatch(e -> branchA.getId().toString().equals(e.get("branchId"))));
+        assertTrue(byBranchA.stream().anyMatch(e -> idA.equals(e.get("resourceId"))));
+        assertTrue(byBranchA.stream().noneMatch(e -> idB.equals(e.get("resourceId"))),
+                "the branch filter must exclude the other branch's event");
+
+        List<Map<String, Object>> byCorrelation =
+                getList("/api/audit?correlationId=" + correlationA, login(ADMIN)).getBody();
+        assertNotNull(byCorrelation);
+        assertTrue(byCorrelation.stream().allMatch(e -> correlationA.equals(e.get("correlationId"))));
+        assertTrue(byCorrelation.stream().anyMatch(e -> idA.equals(e.get("resourceId"))),
+                "the correlation filter finds exactly the command it evidences");
+        assertTrue(byCorrelation.stream().noneMatch(e -> idB.equals(e.get("resourceId"))));
+
+        List<Map<String, Object>> byTypeAndActor =
+                getList("/api/audit?resourceType=Patient&actor=" + ADMIN, login(ADMIN)).getBody();
+        assertNotNull(byTypeAndActor);
+        assertFalse(byTypeAndActor.isEmpty());
+        assertTrue(byTypeAndActor.stream().allMatch(e ->
+                "Patient".equals(e.get("resourceType")) && ADMIN.equals(e.get("actor"))));
+
+        // Branch-scoped ADMIN: confined server-side to its own branch.
+        UserAccount branchAdmin = accounts.save(new UserAccount(
+                "audit-branch-admin-" + suffix, encoder.encode(TEST_ACCOUNT_PASSWORD), Set.of(Role.ADMIN)));
+        assignments.save(ActingAssignment.branch(branchAdmin,
+                organizations.findByCode(TEST_ORG_CODE).orElseThrow(), Role.ADMIN, branchA));
+        String branchToken = login(branchAdmin.getUsername());
+        List<Map<String, Object>> branchView = getList("/api/audit", branchToken).getBody();
+        assertNotNull(branchView);
+        assertTrue(branchView.stream().anyMatch(e -> idA.equals(e.get("resourceId"))),
+                "the branch ADMIN sees its own branch's evidence");
+        assertTrue(branchView.stream().noneMatch(e -> idB.equals(e.get("resourceId"))),
+                "the branch ADMIN never sees the other branch's evidence");
+        assertTrue(branchView.stream().allMatch(e -> branchA.getId().toString().equals(e.get("branchId"))),
+                "every row of the branch view belongs to the acting branch");
+        List<Map<String, Object>> widened =
+                getList("/api/audit?branchId=" + branchB.getId(), branchToken).getBody();
+        assertNotNull(widened);
+        assertTrue(widened.isEmpty(), "a foreign branch filter answers the empty set — no server-side widening");
+
+        // Legacy/unassigned evidence: hidden from the scoped view, marked for the organization ADMIN.
+        SecurityContextHolder.clearContext();
+        auditService.record("CREATE", "LegacyAuditFixture", UUID.randomUUID().toString(),
+                "system-seeded legacy evidence " + suffix);
+        assertTrue(getList("/api/audit", branchToken).getBody().stream()
+                        .noneMatch(e -> "LegacyAuditFixture".equals(e.get("resourceType"))),
+                "legacy/unassigned events stay hidden from branch-scoped views");
+        List<Map<String, Object>> legacyRows = getList("/api/audit", login(ADMIN)).getBody().stream()
+                .filter(e -> "LegacyAuditFixture".equals(e.get("resourceType")))
+                .toList();
+        assertEquals(1, legacyRows.size(), "exactly the fabricated legacy fixture is visible to the organization ADMIN");
+        assertEquals("legacy/unassigned", legacyRows.get(0).get("branchAttribution"),
+                "the organization ADMIN sees the legacy event marked, never guessed into a branch");
+        assertNull(legacyRows.get(0).get("branchId"));
+        assertNull(legacyRows.get(0).get("assignmentId"));
     }
 }

@@ -262,6 +262,30 @@ describe('authorization permission map (plan1.md Task 9 + plan2.md Tasks 2-4)', 
     expect(can(sessionFor('ADMIN'), 'nonexistent-action', 'patient')).toBe(false);
   });
 
+  it('keeps the Task 11 role policy unchanged: audit read stays ADMIN-only and no family matrix widens', () => {
+    // plan3.md Task 11 enriches the audit evidence with the acting context
+    // and one bounded correlation id and makes the read scope-aware on the
+    // server; it changes no role policy. The audit hint stays exactly the
+    // one ADMIN-only read (no new audit actions are invented), and the
+    // bed/admission owner decision (plan3 §8) was not made, so those
+    // matrices remain exactly as the server family rules admit them.
+    expect(PERMISSIONS.audit).toEqual({ read: ['ADMIN'] });
+    expect(can(sessionFor('ADMIN'), 'read', 'audit')).toBe(true);
+    for (const role of ['DOCTOR', 'NURSE', 'RECEPTIONIST', 'BILLING', ...DENY_BY_DEFAULT_ROLES]) {
+      expect(can(sessionFor(role), 'read', 'audit'), `${role} can read audit`).toBe(false);
+    }
+    expect(PERMISSIONS.bed).toEqual({
+      read: ['ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST'],
+      create: ['ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST'],
+      transition: ['ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST'],
+    });
+    expect(PERMISSIONS.admission).toEqual({
+      read: ['ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST'],
+      create: ['ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST'],
+      transition: ['ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST'],
+    });
+  });
+
   it('keeps the read sets exactly on the four backend-admitted roles', () => {
     // These role sets feed the shell navigation too; widening them would hint
     // at screens the server refuses with 403.

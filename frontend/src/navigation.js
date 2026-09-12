@@ -13,7 +13,12 @@
 //   - /api/emergency-visits/** -> ADMIN, DOCTOR, NURSE, RECEPTIONIST (plan2.md Task 3)
 //   - /api/beds/**          -> ADMIN, DOCTOR, NURSE, RECEPTIONIST (plan3.md Task 6)
 //   - /api/invoices/**      -> ADMIN, BILLING (plan2.md Task 4; financial simulation)
-//   - /api/audit/**         -> ADMIN
+//   - /api/audit/**         -> ADMIN (plan3.md Task 11: within ADMIN the
+//                             visible audit slice is enforced server-side
+//                             from the acting context — organization-wide,
+//                             own branch, or own department — so navigating
+//                             as ADMIN never sees more than the server
+//                             returns for that scope)
 import { PERMISSIONS } from './authorization.js';
 
 const DESTINATIONS = [

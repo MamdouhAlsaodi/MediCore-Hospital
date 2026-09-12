@@ -81,6 +81,19 @@ export const PERMISSIONS = {
     create: ['ADMIN', 'BILLING'],
     transition: ['ADMIN', 'BILLING'],
   },
+  // Beds (plan3.md Task 6): the server family rule on /api/beds/** admits
+  // all four clinical-administrative roles on every method and Task 6
+  // changed no role policy (plan §8 narrowing stays an owner decision), so
+  // add and status-transition hints exactly mirror read. The lifecycle
+  // itself is server-owned: AVAILABLE/MAINTENANCE/OUT_OF_SERVICE are the
+  // only client transitions and OCCUPIED is admission-owned (plan3.md
+  // Task 7), so no UI action can ever send it. UI mirroring only;
+  // SecurityConfig stays authoritative.
+  bed: {
+    read: ['ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST'],
+    create: ['ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST'],
+    transition: ['ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST'],
+  },
   // Audit evidence stays ADMIN-only, mirroring the SecurityConfig rule
   // ("hasRole(\"ADMIN\")" on /api/audit/**) — no role may widen it.
   audit: {

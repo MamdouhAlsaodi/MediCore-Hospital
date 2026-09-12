@@ -14,8 +14,12 @@ import com.mamtrex.hospital.bed.Bed;
 import com.mamtrex.hospital.bed.BedRepository;
 import com.mamtrex.hospital.auth.UserAccount;
 import com.mamtrex.hospital.auth.UserAccountRepository;
+import com.mamtrex.hospital.billing.Invoice;
+import com.mamtrex.hospital.billing.InvoiceRepository;
 import com.mamtrex.hospital.department.Department;
 import com.mamtrex.hospital.department.DepartmentRepository;
+import com.mamtrex.hospital.emergency.EmergencyVisit;
+import com.mamtrex.hospital.emergency.EmergencyVisitRepository;
 import com.mamtrex.hospital.patient.Patient;
 import com.mamtrex.hospital.patient.PatientRepository;
 import com.mamtrex.hospital.staff.StaffMember;
@@ -159,6 +163,12 @@ class MultiBranchOperationsApiTest {
 
     @Autowired
     AdmissionBedAssignmentRepository bedAssignments;
+
+    @Autowired
+    EmergencyVisitRepository emergencyVisits;
+
+    @Autowired
+    InvoiceRepository invoices;
 
     /** Unique synthetic suffix per test instance keeps every record disposable and scoped. */
     private final String suffix = UUID.randomUUID().toString().substring(0, 8);
@@ -1457,6 +1467,290 @@ class MultiBranchOperationsApiTest {
         Admission reloadedLegacy = admissions.findById(legacy.getId()).orElseThrow();
         assertEquals("ADMITTED", reloadedLegacy.getStatus(), "the legacy row must stay untouched");
         assertNull(reloadedLegacy.getDischargedAt(), "the legacy row must keep no discharge time");
+        assertNull(reloadedLegacy.getBranchId(), "the legacy row must remain unowned");
+    }
+
+    // ------------------------------------------------------------------
+    // 18d. Task 8: emergency visits are branch-scoped.
+    // ------------------------------------------------------------------
+
+    /** Exact Task 8 emergency-visit DTO allowlist (branchId added, no persistence metadata). */
+    private static final Set<String> EMERGENCY_VISIT_DTO_KEYS =
+            Set.of("id", "branchId", "patientId", "arrivalAt", "triageLevel", "chiefComplaint", "status");
+
+    /** Exact Task 8 invoice DTO allowlist (branchId added, no persistence metadata). */
+    private static final Set<String> INVOICE_DTO_KEYS =
+            Set.of("id", "branchId", "patientId", "invoiceNumber", "amount", "currency", "status");
+
+    /** Synthetic CreateEmergencyVisitRequest body over one verified patient reference. */
+    private Map<String, Object> emergencyCreatePayload(String tag, String patientId) {
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("patientId", patientId);
+        payload.put("arrivalAt", "2031-06-01T09:15:00");
+        payload.put("triageLevel", "3");
+        payload.put("chiefComplaint", "synthetic emergency complaint " + suffix + " " + tag);
+        return payload;
+    }
+
+    /**
+     * Synthetic CreateInvoiceRequest body over one verified patient
+     * reference — a FINANCIAL SIMULATION with demo amount/currency only.
+     */
+    private Map<String, Object> invoiceCreatePayload(String tag, String patientId) {
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("patientId", patientId);
+        payload.put("invoiceNumber", "INV-T8-" + suffix + "-" + tag);
+        payload.put("amount", "10.00");
+        payload.put("currency", "USD");
+        return payload;
+    }
+
+    /**
+     * Task 8 branch-isolation regression for emergency visits: a branch
+     * token cannot list, detail, transition, or delete another branch's
+     * visit — every denial is the generic 404, indistinguishable from a
+     * nonexistent row — and after the whole denial sweep the other branch's
+     * persisted row, status, and audit success counts are unchanged. A
+     * cross-branch patient reference at creation answers the same 404 and
+     * persists nothing, ownership is server-stamped from the acting branch
+     * (a stray client branchId is ignored), and a legacy null-ownership
+     * visit stays invisible and untouchable while its row remains untouched
+     * in the store.
+     */
+    @Test
+    void emergencyVisitsAreOwnedByTheActingBranchAndEveryReadAndCommandIsBranchScoped() {
+        Branch branchA = createdBranch(suffix + "-emga");
+        Branch branchB = createdBranch(suffix + "-emgb");
+        String tokenA = adminTokenActingOn(branchA);
+        String tokenB = adminTokenActingOn(branchB);
+        String patientA = createVerifiedPatientId(tokenA, "emga");
+        String patientB = createVerifiedPatientId(tokenB, "emgb");
+        long visitsBefore = emergencyVisits.count();
+        long createsBefore = auditEventCount("EmergencyVisit", "CREATE");
+
+        // Ownership is server-stamped from the acting branch; a stray client
+        // branchId is ignored, and the response carries the exact DTO
+        // allowlist with no persistence metadata.
+        Map<String, Object> hijack = emergencyCreatePayload("hijack", patientA);
+        hijack.put("branchId", branchB.getId().toString());
+        ResponseEntity<Map<String, Object>> createdA = postJson("/api/emergency-visits", tokenA, hijack);
+        assertTrue(createdA.getStatusCode().is2xxSuccessful(), "the branch-A create must succeed");
+        assertNotNull(createdA.getBody());
+        assertEquals(EMERGENCY_VISIT_DTO_KEYS, createdA.getBody().keySet(),
+                "the visit response must be exactly the DTO allowlist");
+        assertEquals(branchA.getId().toString(), String.valueOf(createdA.getBody().get("branchId")),
+                "ownership is server-stamped from the acting branch; a client branchId is ignored");
+        String visitA = String.valueOf(createdA.getBody().get("id"));
+
+        // The same request shape binds to branch B's acting context.
+        ResponseEntity<Map<String, Object>> createdB = postJson("/api/emergency-visits", tokenB,
+                emergencyCreatePayload("emgb", patientB));
+        assertTrue(createdB.getStatusCode().is2xxSuccessful(), "the branch-B create must succeed");
+        assertNotNull(createdB.getBody());
+        assertEquals(branchB.getId().toString(), String.valueOf(createdB.getBody().get("branchId")),
+                "the same request shape must bind to the other acting branch, proving context derivation");
+        String visitB = String.valueOf(createdB.getBody().get("id"));
+        assertEquals(visitsBefore + 2, emergencyVisits.count(), "exactly the two creates may persist");
+
+        // Cross-branch patient reference: the generic 404, nothing persists,
+        // no audit event.
+        assertEquals(HttpStatus.NOT_FOUND, postJson("/api/emergency-visits", tokenA,
+                        emergencyCreatePayload("xpat", patientB)).getStatusCode(),
+                "a cross-branch patient reference must be indistinguishable from a nonexistent one");
+        assertEquals(visitsBefore + 2, emergencyVisits.count(), "the refused create must persist nothing");
+        assertEquals(createsBefore + 2, auditEventCount("EmergencyVisit", "CREATE"),
+                "exactly the two successful creates own CREATE audit events; the refusal records none");
+
+        // List: each branch sees exactly its own visits, never the other's.
+        List<String> idsA = listOfIds(getList("/api/emergency-visits", tokenA));
+        assertTrue(idsA.contains(visitA), "branch A lists its own visit");
+        assertFalse(idsA.contains(visitB), "branch A must never list branch B's visit");
+        List<String> idsB = listOfIds(getList("/api/emergency-visits", tokenB));
+        assertTrue(idsB.contains(visitB), "branch B lists its own visit");
+        assertFalse(idsB.contains(visitA), "the isolation is symmetric");
+
+        // Frozen baseline before the denial sweep.
+        long updatesB = auditEventsFor("EmergencyVisit", visitB, "UPDATE");
+        long deletesB = auditEventsFor("EmergencyVisit", visitB, "DELETE");
+
+        // Detail/transition/delete denials from branch A: the generic 404.
+        assertEquals(HttpStatus.NOT_FOUND, getJson("/api/emergency-visits/" + visitB, tokenA).getStatusCode(),
+                "a cross-branch detail read must be the generic 404");
+        assertEquals(HttpStatus.NOT_FOUND,
+                putJson("/api/emergency-visits/" + visitB + "/status", tokenA,
+                        Map.of("status", "IN_TREATMENT")).getStatusCode(),
+                "a cross-branch transition must be the generic 404");
+        assertEquals(HttpStatus.NOT_FOUND, delete("/api/emergency-visits/" + visitB, tokenA).getStatusCode(),
+                "a cross-branch delete must be the generic 404");
+
+        // Nothing moved: the branch-B row, its status, and audit success
+        // counts are unchanged.
+        EmergencyVisit persistedB = emergencyVisits.findById(UUID.fromString(visitB)).orElseThrow();
+        assertEquals("WAITING", persistedB.getStatus(), "the denied transition must not change the status");
+        assertEquals(branchB.getId(), persistedB.getBranchId(), "ownership must stay with branch B");
+        assertEquals(updatesB, auditEventsFor("EmergencyVisit", visitB, "UPDATE"),
+                "the denied commands must record no UPDATE audit event");
+        assertEquals(deletesB, auditEventsFor("EmergencyVisit", visitB, "DELETE"),
+                "the denied commands must record no DELETE audit event");
+
+        // Positive control: branch B keeps full authority over its own row.
+        assertEquals(HttpStatus.OK,
+                putJson("/api/emergency-visits/" + visitB + "/status", tokenB,
+                        Map.of("status", "IN_TREATMENT")).getStatusCode(),
+                "branch B still transitions its own visit");
+        assertEquals(updatesB + 1, auditEventsFor("EmergencyVisit", visitB, "UPDATE"),
+                "exactly the branch-B success may own an UPDATE audit event");
+
+        // Legacy null-ownership visit: invisible and untouchable from every
+        // branch, and the row itself stays untouched in the store.
+        EmergencyVisit legacy = emergencyVisits.save(new EmergencyVisit(patientA,
+                "2031-06-02T10:00", "2", "synthetic legacy visit " + suffix, "WAITING"));
+        assertFalse(listOfIds(getList("/api/emergency-visits", tokenA)).contains(legacy.getId().toString()),
+                "the list must never disclose a null-ownership legacy visit");
+        assertFalse(listOfIds(getList("/api/emergency-visits", tokenB)).contains(legacy.getId().toString()),
+                "no other branch discloses it either");
+        assertEquals(HttpStatus.NOT_FOUND, getJson("/api/emergency-visits/" + legacy.getId(), tokenA).getStatusCode(),
+                "get must not disclose a null-ownership legacy visit");
+        assertEquals(HttpStatus.NOT_FOUND,
+                putJson("/api/emergency-visits/" + legacy.getId() + "/status", tokenA,
+                        Map.of("status", "CLOSED")).getStatusCode(),
+                "transition must not touch a null-ownership legacy visit");
+        assertEquals(HttpStatus.NOT_FOUND, delete("/api/emergency-visits/" + legacy.getId(), tokenA).getStatusCode(),
+                "delete must not remove a null-ownership legacy visit");
+        EmergencyVisit reloadedLegacy = emergencyVisits.findById(legacy.getId()).orElseThrow();
+        assertEquals("WAITING", reloadedLegacy.getStatus(), "the legacy row must stay untouched");
+        assertNull(reloadedLegacy.getBranchId(), "the legacy row must remain unowned");
+    }
+
+    // ------------------------------------------------------------------
+    // 18e. Task 8: invoices are branch-scoped.
+    // ------------------------------------------------------------------
+
+    /**
+     * Task 8 branch-isolation regression for invoices (a FINANCIAL
+     * SIMULATION — demo amounts and currency labels only): a branch token
+     * cannot list, detail, transition, or delete another branch's invoice —
+     * every denial is the generic 404, indistinguishable from a nonexistent
+     * row — and after the whole denial sweep the other branch's persisted
+     * row, lifecycle state, and audit success counts are unchanged. A
+     * cross-branch patient reference at creation answers the same 404 and
+     * persists nothing, ownership is server-stamped from the acting branch
+     * (a stray client branchId is ignored), invoice-number uniqueness stays
+     * global under branch scoping, and a legacy null-ownership invoice stays
+     * invisible and untouchable while its row remains untouched in the
+     * store.
+     */
+    @Test
+    void invoicesAreOwnedByTheActingBranchAndEveryReadAndCommandIsBranchScoped() {
+        Branch branchA = createdBranch(suffix + "-inva");
+        Branch branchB = createdBranch(suffix + "-invb");
+        String tokenA = adminTokenActingOn(branchA);
+        String tokenB = adminTokenActingOn(branchB);
+        String patientA = createVerifiedPatientId(tokenA, "inva");
+        String patientB = createVerifiedPatientId(tokenB, "invb");
+        long invoicesBefore = invoices.count();
+        long createsBefore = auditEventCount("Invoice", "CREATE");
+
+        // Ownership is server-stamped from the acting branch; a stray client
+        // branchId is ignored, and the response carries the exact DTO
+        // allowlist with no persistence metadata.
+        Map<String, Object> hijack = invoiceCreatePayload("hijack", patientA);
+        hijack.put("branchId", branchB.getId().toString());
+        ResponseEntity<Map<String, Object>> createdA = postJson("/api/invoices", tokenA, hijack);
+        assertTrue(createdA.getStatusCode().is2xxSuccessful(), "the branch-A create must succeed");
+        assertNotNull(createdA.getBody());
+        assertEquals(INVOICE_DTO_KEYS, createdA.getBody().keySet(),
+                "the invoice response must be exactly the DTO allowlist");
+        assertEquals(branchA.getId().toString(), String.valueOf(createdA.getBody().get("branchId")),
+                "ownership is server-stamped from the acting branch; a client branchId is ignored");
+        String invoiceA = String.valueOf(createdA.getBody().get("id"));
+        String numberA = String.valueOf(createdA.getBody().get("invoiceNumber"));
+
+        // The same request shape binds to branch B's acting context.
+        ResponseEntity<Map<String, Object>> createdB = postJson("/api/invoices", tokenB,
+                invoiceCreatePayload("invb", patientB));
+        assertTrue(createdB.getStatusCode().is2xxSuccessful(), "the branch-B create must succeed");
+        assertNotNull(createdB.getBody());
+        assertEquals(branchB.getId().toString(), String.valueOf(createdB.getBody().get("branchId")),
+                "the same request shape must bind to the other acting branch, proving context derivation");
+        String invoiceB = String.valueOf(createdB.getBody().get("id"));
+        assertEquals(invoicesBefore + 2, invoices.count(), "exactly the two creates may persist");
+
+        // Cross-branch patient reference: the generic 404, nothing persists,
+        // no audit event.
+        assertEquals(HttpStatus.NOT_FOUND, postJson("/api/invoices", tokenA,
+                        invoiceCreatePayload("xpat", patientB)).getStatusCode(),
+                "a cross-branch patient reference must be indistinguishable from a nonexistent one");
+        assertEquals(invoicesBefore + 2, invoices.count(), "the refused create must persist nothing");
+
+        // Invoice-number uniqueness stays global under branch scoping:
+        // reusing branch A's number from branch B is the shared conflict.
+        Map<String, Object> duplicate = invoiceCreatePayload("dup", patientB);
+        duplicate.put("invoiceNumber", numberA);
+        assertEquals(HttpStatus.CONFLICT, postJson("/api/invoices", tokenB, duplicate).getStatusCode(),
+                "invoice-number uniqueness stays global — a cross-branch duplicate is still the shared conflict");
+        assertEquals(invoicesBefore + 2, invoices.count(), "the refused duplicate must persist nothing");
+        assertEquals(createsBefore + 2, auditEventCount("Invoice", "CREATE"),
+                "exactly the two successful creates own CREATE audit events; both refusals record none");
+
+        // List: each branch sees exactly its own invoices, never the other's.
+        List<String> idsA = listOfIds(getList("/api/invoices", tokenA));
+        assertTrue(idsA.contains(invoiceA), "branch A lists its own invoice");
+        assertFalse(idsA.contains(invoiceB), "branch A must never list branch B's invoice");
+        List<String> idsB = listOfIds(getList("/api/invoices", tokenB));
+        assertTrue(idsB.contains(invoiceB), "branch B lists its own invoice");
+        assertFalse(idsB.contains(invoiceA), "the isolation is symmetric");
+
+        // Frozen baseline before the denial sweep.
+        long updatesB = auditEventsFor("Invoice", invoiceB, "UPDATE");
+        long deletesB = auditEventsFor("Invoice", invoiceB, "DELETE");
+
+        // Detail/transition/delete denials from branch A: the generic 404.
+        assertEquals(HttpStatus.NOT_FOUND, getJson("/api/invoices/" + invoiceB, tokenA).getStatusCode(),
+                "a cross-branch detail read must be the generic 404");
+        assertEquals(HttpStatus.NOT_FOUND,
+                putJson("/api/invoices/" + invoiceB + "/status", tokenA,
+                        Map.of("status", "ISSUED")).getStatusCode(),
+                "a cross-branch transition must be the generic 404");
+        assertEquals(HttpStatus.NOT_FOUND, delete("/api/invoices/" + invoiceB, tokenA).getStatusCode(),
+                "a cross-branch delete must be the generic 404");
+
+        // Nothing moved: the branch-B row, its lifecycle state, and audit
+        // success counts are unchanged.
+        Invoice persistedB = invoices.findById(UUID.fromString(invoiceB)).orElseThrow();
+        assertEquals("DRAFT", persistedB.getStatus(), "the denied transition must not change the status");
+        assertEquals(branchB.getId(), persistedB.getBranchId(), "ownership must stay with branch B");
+        assertEquals(updatesB, auditEventsFor("Invoice", invoiceB, "UPDATE"),
+                "the denied commands must record no UPDATE audit event");
+        assertEquals(deletesB, auditEventsFor("Invoice", invoiceB, "DELETE"),
+                "the denied commands must record no DELETE audit event");
+
+        // Positive control: branch B keeps full authority over its own row.
+        assertEquals(HttpStatus.OK,
+                putJson("/api/invoices/" + invoiceB + "/status", tokenB,
+                        Map.of("status", "ISSUED")).getStatusCode(),
+                "branch B still transitions its own invoice");
+        assertEquals(updatesB + 1, auditEventsFor("Invoice", invoiceB, "UPDATE"),
+                "exactly the branch-B success may own an UPDATE audit event");
+
+        // Legacy null-ownership invoice: invisible and untouchable from
+        // every branch, and the row itself stays untouched in the store.
+        Invoice legacy = invoices.save(new Invoice(patientA, "INV-T8-LEGACY-" + suffix,
+                "30.00", "USD", "DRAFT"));
+        assertFalse(listOfIds(getList("/api/invoices", tokenA)).contains(legacy.getId().toString()),
+                "the list must never disclose a null-ownership legacy invoice");
+        assertFalse(listOfIds(getList("/api/invoices", tokenB)).contains(legacy.getId().toString()),
+                "no other branch discloses it either");
+        assertEquals(HttpStatus.NOT_FOUND, getJson("/api/invoices/" + legacy.getId(), tokenA).getStatusCode(),
+                "get must not disclose a null-ownership legacy invoice");
+        assertEquals(HttpStatus.NOT_FOUND,
+                putJson("/api/invoices/" + legacy.getId() + "/status", tokenA,
+                        Map.of("status", "ISSUED")).getStatusCode(),
+                "transition must not touch a null-ownership legacy invoice");
+        assertEquals(HttpStatus.NOT_FOUND, delete("/api/invoices/" + legacy.getId(), tokenA).getStatusCode(),
+                "delete must not remove a null-ownership legacy invoice");
+        Invoice reloadedLegacy = invoices.findById(legacy.getId()).orElseThrow();
+        assertEquals("DRAFT", reloadedLegacy.getStatus(), "the legacy row must stay untouched");
         assertNull(reloadedLegacy.getBranchId(), "the legacy row must remain unowned");
     }
 

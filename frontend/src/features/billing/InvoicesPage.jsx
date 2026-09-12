@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { ApiError } from '../../api.js';
+import { actingContextKey } from '../../auth.js';
 import { can } from '../../authorization.js';
 import { fetchPatients } from '../patients/patientApi.js';
 import { createInvoice, fetchInvoices, transitionInvoice } from './invoiceApi.js';
@@ -12,6 +13,24 @@ const SIMULATION_HINT =
   'Financial simulation — no real payments. Amounts and currency labels are demo values with no conversion, FX, or tax meaning.';
 const AMOUNT_HINT = 'A demo amount: up to 12 digits with up to 2 decimals, 0 or more — never real money.';
 const CURRENCY_HINT = 'A 3-letter uppercase demo label (e.g. USD) with no conversion or FX.';
+
+// Pure render-phase selector (Task 8 review repair): decides exactly what
+// this screen may display for the current acting context. Branch-owned data
+// is tagged with the actingContextKey it resolved under (loaded.contextKey)
+// and is exposed only while that tag still equals the current contextKey.
+// While the tags differ — i.e. from the moment the shell swaps in a new
+// session until the new context's data publishes — the loading state is
+// returned instead: never the previous branch's rows, and never a misleading
+// empty-state result. The component's render calls this on every pass, so the
+// gate holds during the render itself rather than depending on when an
+// effect happens to run. Exported as the deterministic seam that lets tests
+// pin the render contract. This is display isolation only; the server's
+// scope for each context-bound token stays the sole authority over what data
+// exists.
+export function invoiceDisplayState({ contextKey, loaded }) {
+  if (loaded.contextKey === contextKey) return loaded;
+  return { contextKey, status: 'loading', loadError: '', patients: [], invoices: [] };
+}
 
 // The transitions each status legally admits (docs/plan2.md Task 4). This
 // mirrors the server map for the UI hint only; the server still validates
@@ -172,6 +191,12 @@ export function InvoiceForm({ session, patients, onCreated, onCancel, onSessionE
   );
 }
 
+// The branch-owned data this screen owns, tagged with the acting context it
+// resolved under. rows/patients/status/loadError always publish together with
+// their tag in a single state update, so the tag and the data it describes
+// can never drift apart.
+const UNLOADED = { contextKey: null, status: 'loading', loadError: '', patients: [], invoices: [] };
+
 // Invoices screen (docs/plan2.md Task 4): the invoice list over
 // GET /api/invoices, the create flow over POST /api/invoices, and the
 // guarded transitions over PUT /api/invoices/{id}/status (DRAFT ->
@@ -183,10 +208,9 @@ export function InvoiceForm({ session, patients, onCreated, onCancel, onSessionE
 // button is clicked. All transport goes through the feature adapter —
 // components never call fetch directly.
 export default function InvoicesPage({ session, onSessionExpired }) {
-  const [patients, setPatients] = useState([]);
-  const [invoices, setInvoices] = useState([]);
-  const [status, setStatus] = useState('loading');
-  const [loadError, setLoadError] = useState('');
+  // Single tagged state for everything the load produces; see UNLOADED and
+  // invoiceDisplayState above.
+  const [loaded, setLoaded] = useState(UNLOADED);
   // 'list' | 'form'
   const [view, setView] = useState('list');
   const [confirmation, setConfirmation] = useState('');
@@ -198,11 +222,19 @@ export default function InvoicesPage({ session, onSessionExpired }) {
   // The {id, target} whose transition request is in flight, or null.
   const [transitioning, setTransitioning] = useState(null);
   const [transitionError, setTransitionError] = useState('');
+  // Identity of the acting context (assignment + bound branch). After a
+  // successful context switch the shell swaps in a complete new session;
+  // this screen stays the single owner of its list state and simply
+  // refetches it when the context (or its context-bound token) changes.
+  const contextKey = actingContextKey(session);
 
   useEffect(() => {
     let active = true;
-    setStatus('loading');
-    setLoadError('');
+    // Fresh load attempt for this context. The previous context's rows stay
+    // tagged in state until this context's data publishes; the render-phase
+    // selector already refuses to display them, so the screen shows loading
+    // from the first render of the switch — no effect timing required.
+    setLoaded({ contextKey, status: 'loading', loadError: '', patients: [], invoices: [] });
     const loadPatients = fetchPatients({
       token: session.token,
       onUnauthorized: onSessionExpired,
@@ -214,20 +246,33 @@ export default function InvoicesPage({ session, onSessionExpired }) {
     Promise.all([loadPatients, loadInvoices])
       .then(([loadedPatients, loadedInvoices]) => {
         if (!active) return;
-        setPatients(Array.isArray(loadedPatients) ? loadedPatients : []);
-        setInvoices(Array.isArray(loadedInvoices) ? loadedInvoices : []);
-        setStatus('ready');
+        // Publish rows tagged with the context they resolved under, so the
+        // selector can never show them under a different acting context.
+        setLoaded({
+          contextKey,
+          status: 'ready',
+          loadError: '',
+          patients: Array.isArray(loadedPatients) ? loadedPatients : [],
+          invoices: Array.isArray(loadedInvoices) ? loadedInvoices : [],
+        });
       })
       .catch((error) => {
         if (!active) return;
         // 401 is ownership of the shell: the session-expiry callback returns
         // the app to Login, so no local error is raised on top of it.
         if (error instanceof ApiError && error.status === 401) return;
-        setLoadError(error instanceof ApiError ? error.message : 'Invoices could not be loaded.');
-        setStatus('ready');
+        // The load attempt for this context concluded with an error; tag the
+        // error to this context so it is shown here and nowhere else.
+        setLoaded({
+          contextKey,
+          status: 'ready',
+          loadError: error instanceof ApiError ? error.message : 'Invoices could not be loaded.',
+          patients: [],
+          invoices: [],
+        });
       });
     return () => { active = false; };
-  }, [session.token, listRefresh, onSessionExpired]);
+  }, [session.token, contextKey, listRefresh, onSessionExpired]);
 
   function openForm() {
     setConfirmation('');
@@ -284,6 +329,11 @@ export default function InvoicesPage({ session, onSessionExpired }) {
       setTransitioning(null);
     }
   }
+
+  // Render-phase display gate: rows, patient options, status, and load error
+  // are only ever taken from data whose context tag matches the current
+  // acting context (see invoiceDisplayState).
+  const { status, loadError, patients, invoices } = invoiceDisplayState({ contextKey, loaded });
 
   // UI convenience hints from the shared permission map; backend stays
   // authoritative for every request (the server refuses with 403 and the

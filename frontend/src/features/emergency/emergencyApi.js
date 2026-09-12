@@ -3,8 +3,8 @@ import { apiFetch } from '../../api.js';
 // The only emergency-visit transport adapter (docs/plan2.md Task 3). Bodies
 // mirror EmergencyVisitDtos exactly:
 //   - list:       GET /api/emergency-visits -> EmergencyVisitResponse[]
-//                 (id, patientId, arrivalAt, triageLevel, chiefComplaint,
-//                 status)
+//                 (id, branchId, patientId, arrivalAt, triageLevel,
+//                 chiefComplaint, status)
 //   - register:   POST /api/emergency-visits with CreateEmergencyVisitRequest
 //                 { patientId: UUID, arrivalAt: ISO LocalDateTime,
 //                 triageLevel: '1'..'5', chiefComplaint } — the server sets
@@ -14,9 +14,14 @@ import { apiFetch } from '../../api.js';
 //                 legal only along WAITING -> IN_TREATMENT | CLOSED and
 //                 IN_TREATMENT -> CLOSED; a repeat, backward move, or
 //                 unknown target is refused with a safe 409.
-// patientId is a typed UUID reference validated server-side; unknown
-// references are rejected with 404 and malformed bodies with 400 by the
-// shared GlobalExceptionHandler. triageLevel is a NEUTRAL demo label with no
+// patientId is a typed UUID reference validated server-side inside the
+// acting branch (docs/plan3.md Task 8): unknown and cross-branch references
+// are rejected with 404 and malformed bodies with 400 by the shared
+// GlobalExceptionHandler. Every list/detail/transition resolves only inside
+// the branch bound to the context-bound token — scope is always
+// server-derived from the token, never a client-selected value, so the
+// adapters carry no branch input of any kind. branchId on each row is the
+// server-stamped owning branch. triageLevel is a NEUTRAL demo label with no
 // clinical meaning — not a triage protocol of any kind. All transport goes
 // through the shared apiFetch (Bearer token, JSON, ApiError, onUnauthorized);
 // components never call fetch directly.

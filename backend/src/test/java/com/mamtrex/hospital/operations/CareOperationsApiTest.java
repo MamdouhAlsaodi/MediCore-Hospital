@@ -110,13 +110,13 @@ class CareOperationsApiTest {
     /** Task 7 current-bed summary contract: exactly these four fields, no bed status or branch. */
     private static final Set<String> CURRENT_BED_FIELDS = Set.of("bedId", "ward", "room", "bedNumber");
 
-    /** Task 3 DTO contract: exactly these six fields, no persistence metadata. */
+    /** Task 3 DTO contract as extended by Task 8: exactly these seven fields — the server-stamped branchId added, no persistence metadata. */
     private static final Set<String> EMERGENCY_VISIT_DTO_FIELDS = Set.of(
-            "id", "patientId", "arrivalAt", "triageLevel", "chiefComplaint", "status");
+            "id", "branchId", "patientId", "arrivalAt", "triageLevel", "chiefComplaint", "status");
 
-    /** Task 4 DTO contract: exactly these six fields, no persistence metadata. */
+    /** Task 4 DTO contract as extended by Task 8: exactly these seven fields — the server-stamped branchId added, no persistence metadata. */
     private static final Set<String> INVOICE_DTO_FIELDS = Set.of(
-            "id", "patientId", "invoiceNumber", "amount", "currency", "status");
+            "id", "branchId", "patientId", "invoiceNumber", "amount", "currency", "status");
 
     /** Task 6 DTO contract: branch-owned fields only, no persistence metadata or patient reference. */
     private static final Set<String> BED_DTO_FIELDS = Set.of(
@@ -746,6 +746,9 @@ class CareOperationsApiTest {
         // Not part of the create contract: the server owns the lifecycle, so
         // this client value must be ignored, never stored.
         payload.put("status", "WHENEVER-RAW");
+        // Branch ownership is likewise never client input: this forged value
+        // must be ignored in favor of the server-stamped acting branch.
+        payload.put("branchId", UUID.randomUUID().toString());
 
         ResponseEntity<Map<String, Object>> created = post("/api/emergency-visits", token, payload);
         assertEquals(HttpStatus.OK, created.getStatusCode(), "a verified patient must register a visit successfully");
@@ -759,6 +762,10 @@ class CareOperationsApiTest {
         assertEquals("3", body.get("triageLevel"), "triageLevel must be the neutral demo label, stored canonically");
         assertEquals("synthetic normalized complaint " + suffix, body.get("chiefComplaint"));
         assertEquals("WAITING", body.get("status"), "the server must set status=WAITING, never a client value");
+        Object patientBranch = getMap("/api/patients/" + patientId, token).getBody().get("branchId");
+        assertNotNull(patientBranch, "the patient fixture must carry its acting branch");
+        assertEquals(patientBranch, body.get("branchId"),
+                "branchId must derive from the acting context, never the client-sent value");
         String visitId = requireId(created);
 
         ResponseEntity<Map<String, Object>> detail = getMap("/api/emergency-visits/" + visitId, token);
@@ -989,6 +996,9 @@ class CareOperationsApiTest {
         // Not part of the create contract: the server owns the lifecycle, so
         // this client value must be ignored, never stored.
         payload.put("status", "IMAGINED-RAW");
+        // Branch ownership is likewise never client input: this forged value
+        // must be ignored in favor of the server-stamped acting branch.
+        payload.put("branchId", UUID.randomUUID().toString());
 
         ResponseEntity<Map<String, Object>> created = post("/api/invoices", token, payload);
         assertEquals(HttpStatus.OK, created.getStatusCode(), "a verified patient must allow the invoice create");
@@ -1003,6 +1013,10 @@ class CareOperationsApiTest {
         assertEquals("1234.5", body.get("amount"), "amount must be the canonical plain string, never exponent form");
         assertEquals("USD", body.get("currency"), "currency is a demo label stored verbatim");
         assertEquals("DRAFT", body.get("status"), "the server must set status=DRAFT, never a client value");
+        Object patientBranch = getMap("/api/patients/" + patientId, login(ADMIN_USER)).getBody().get("branchId");
+        assertNotNull(patientBranch, "the patient fixture must carry its acting branch");
+        assertEquals(patientBranch, body.get("branchId"),
+                "branchId must derive from the acting context, never the client-sent value");
         String invoiceId = requireId(created);
 
         ResponseEntity<Map<String, Object>> detail = getMap("/api/invoices/" + invoiceId, token);

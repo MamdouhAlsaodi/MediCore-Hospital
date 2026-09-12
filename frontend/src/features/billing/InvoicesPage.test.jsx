@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import InvoicesPage from './InvoicesPage.jsx';
+import InvoicesPage, { invoiceDisplayState } from './InvoicesPage.jsx';
 
 const PATIENT_A = {
   id: '11111111-1111-4111-8111-111111111111',
@@ -94,6 +94,47 @@ const NEW_INVOICE = {
 
 const INVOICES_AFTER_CREATE = [...INVOICES_INITIAL, NEW_INVOICE];
 
+// Task 8 branch fixtures: two acting contexts bound to different branches.
+// The branch-B invoice carries its own unique number so a stale branch-A
+// row can never be confused with branch-B content.
+const INVOICE_BRANCH_B = {
+  id: '99999999-9999-4999-8999-999999999921',
+  patientId: PATIENT_B.id,
+  invoiceNumber: 'INV-WEST-9001',
+  amount: '60',
+  currency: 'USD',
+  status: 'DRAFT',
+};
+
+function actingSessionFor(token, assignmentId, branchId) {
+  return {
+    token,
+    username: 'testuser',
+    roles: ['BILLING'],
+    assignments: [{
+      id: assignmentId,
+      role: 'BILLING',
+      scope: 'ORGANIZATION',
+      organizationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      organizationLabel: 'Main Hospital Group',
+      branchId,
+      branchLabel: branchId === 'branch-b' ? 'West Clinic' : 'East Clinic',
+      departmentId: null,
+      departmentLabel: null,
+      enabled: true,
+    }],
+    actingContext: {
+      username: 'testuser',
+      assignmentId,
+      role: 'BILLING',
+      scope: 'ORGANIZATION',
+      organizationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      branchId,
+      departmentId: null,
+    },
+  };
+}
+
 function jsonResponse(payload, status = 200) {
   return new Response(JSON.stringify(payload), {
     status,
@@ -142,6 +183,20 @@ function stubBackend(fetchMock, state) {
     }
     return Promise.resolve(jsonResponse({}, 404));
   });
+}
+
+// Records the text content of every committed render pass, in commit order,
+// into `frames`. The inline ref is invoked by React during each commit phase
+// — before passive effects run — so whatever the screen painted for a given
+// commit is captured exactly as the browser would have received it. This is
+// what makes the render-phase boundary observable in integration without
+// touching React internals.
+function CommitLog({ frames, children }) {
+  return (
+    <div ref={(node) => { if (node) frames.push(node.textContent); }}>
+      {children}
+    </div>
+  );
 }
 
 function invoicesTable() {
@@ -401,6 +456,51 @@ describe('InvoicesPage', () => {
     expect(within(voidRow).queryByRole('button')).not.toBeInTheDocument();
   });
 
+  it('reloads the branch-scoped list under the new context-bound token after a context switch and never renders the previous branch\'s rows', async () => {
+    let resolveBranchBInvoices;
+    fetchMock.mockImplementation((path, options = {}) => {
+      const token = options.headers?.Authorization;
+      if (path === '/api/patients') return Promise.resolve(jsonResponse(PATIENTS));
+      if (path === '/api/invoices' && (options.method ?? 'GET') === 'GET') {
+        if (token === 'Bearer branch-b-token') {
+          return new Promise((resolve) => { resolveBranchBInvoices = resolve; });
+        }
+        return Promise.resolve(jsonResponse([INVOICE_DRAFT]));
+      }
+      return Promise.resolve(jsonResponse({}, 404));
+    });
+    const onSessionExpired = vi.fn();
+    const sessionA = actingSessionFor('branch-a-token', 'assign-a', 'branch-a');
+    const sessionB = actingSessionFor('branch-b-token', 'assign-b', 'branch-b');
+
+    const view = render(<InvoicesPage session={sessionA} onSessionExpired={onSessionExpired} />);
+    const tableA = await screen.findByRole('table', { name: 'Registered invoices' });
+    expect(within(tableA).getByText('INV-1001')).toBeInTheDocument();
+
+    // The shell swapped in the complete switched session (new context-bound
+    // token, new branch). The screen reloads for the acting context and
+    // drops the previous branch's rows: while the new request is pending no
+    // stale branch-A row may remain, and after it resolves only branch-B
+    // content is shown.
+    view.rerender(<InvoicesPage session={sessionB} onSessionExpired={onSessionExpired} />);
+
+    expect(screen.queryByRole('table', { name: 'Registered invoices' })).not.toBeInTheDocument();
+    expect(screen.queryByText('INV-1001')).not.toBeInTheDocument();
+
+    resolveBranchBInvoices(jsonResponse([INVOICE_BRANCH_B]));
+    const tableB = await screen.findByRole('table', { name: 'Registered invoices' });
+    expect(within(tableB).getByText('INV-WEST-9001')).toBeInTheDocument();
+    expect(tableB).not.toHaveTextContent('INV-1001');
+
+    const invoiceGets = fetchMock.mock.calls.filter(
+      ([path, options]) => path === '/api/invoices' && (options?.method ?? 'GET') === 'GET'
+    );
+    expect(invoiceGets).toHaveLength(2);
+    expect(invoiceGets[0][1].headers.Authorization).toBe('Bearer branch-a-token');
+    expect(invoiceGets[1][1].headers.Authorization).toBe('Bearer branch-b-token');
+    expect(onSessionExpired).not.toHaveBeenCalled();
+  });
+
   it('hands a 401 to the shell during create and renders no local error on top of it', async () => {
     const user = userEvent.setup();
     const state = {
@@ -424,5 +524,179 @@ describe('InvoicesPage', () => {
     await waitFor(() => expect(onSessionExpired).toHaveBeenCalledTimes(1));
     expect(state.postCalls).toHaveLength(1);
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  // ---- Task 8 review repair (MEDICORE-PLAN3-TASK8-REVIEW-REPAIR-065) ----
+  // Render-phase contract. Loaded branch-owned data is tagged with the
+  // actingContextKey it resolved under, and invoiceDisplayState — the pure
+  // selector the page's render calls on every pass — exposes it only while
+  // that tag equals the current contextKey. The selector pins are
+  // deterministic by construction (they prove the decision made during
+  // render, independent of effect timing); the commit-log integration test
+  // below proves the same boundary on actually committed DOM frames.
+  describe('invoiceDisplayState render contract', () => {
+    const KEY_A = 'assign-a:branch-a';
+    const KEY_B = 'assign-b:branch-b';
+    const loadedUnderA = {
+      contextKey: KEY_A,
+      status: 'ready',
+      loadError: '',
+      patients: [PATIENT_A],
+      invoices: [INVOICE_DRAFT],
+    };
+
+    it('exposes data loaded under context A while A is the current context', () => {
+      const display = invoiceDisplayState({ contextKey: KEY_A, loaded: loadedUnderA });
+      expect(display).toBe(loadedUnderA);
+      expect(display.status).toBe('ready');
+      expect(display.patients).toEqual([PATIENT_A]);
+      expect(display.invoices).toEqual([INVOICE_DRAFT]);
+    });
+
+    it('stops exposing that same data the moment the current context becomes B', () => {
+      const display = invoiceDisplayState({ contextKey: KEY_B, loaded: loadedUnderA });
+      expect(display).not.toBe(loadedUnderA);
+      expect(display.patients).toEqual([]);
+      expect(display.invoices).toEqual([]);
+    });
+
+    it('shows the loading state for B — never the old rows and never a misleading empty state', () => {
+      const display = invoiceDisplayState({ contextKey: KEY_B, loaded: loadedUnderA });
+      // status 'loading' is what keeps the empty-state panel unrenderable:
+      // that branch requires status 'ready'.
+      expect(display.status).toBe('loading');
+      expect(display.loadError).toBe('');
+    });
+
+    it('exposes only B rows once B has resolved under tag B', () => {
+      const loadedUnderB = {
+        contextKey: KEY_B,
+        status: 'ready',
+        loadError: '',
+        patients: [PATIENT_B],
+        invoices: [INVOICE_BRANCH_B],
+      };
+      const display = invoiceDisplayState({ contextKey: KEY_B, loaded: loadedUnderB });
+      expect(display.status).toBe('ready');
+      expect(display.patients).toEqual([PATIENT_B]);
+      expect(display.invoices).toEqual([INVOICE_BRANCH_B]);
+    });
+
+    it('refuses a late A-tagged publication while B is current', () => {
+      const lateA = {
+        contextKey: KEY_A,
+        status: 'ready',
+        loadError: '',
+        patients: [PATIENT_A],
+        invoices: [INVOICE_DRAFT],
+      };
+      const display = invoiceDisplayState({ contextKey: KEY_B, loaded: lateA });
+      expect(display.invoices).toEqual([]);
+      expect(display.patients).toEqual([]);
+      expect(display.status).toBe('loading');
+    });
+
+    it('does not carry a load error across a context boundary', () => {
+      const failedA = {
+        contextKey: KEY_A,
+        status: 'ready',
+        loadError: 'Invoices could not be loaded.',
+        patients: [],
+        invoices: [],
+      };
+      const display = invoiceDisplayState({ contextKey: KEY_B, loaded: failedA });
+      expect(display.loadError).toBe('');
+      expect(display.status).toBe('loading');
+    });
+  });
+
+  it('never commits the previous branch\'s rows to the DOM while the new context is pending', async () => {
+    let resolveBranchBInvoices;
+    fetchMock.mockImplementation((path, options = {}) => {
+      const token = options.headers?.Authorization;
+      if (path === '/api/patients') return Promise.resolve(jsonResponse(PATIENTS));
+      if (path === '/api/invoices' && (options.method ?? 'GET') === 'GET') {
+        if (token === 'Bearer branch-b-token') {
+          return new Promise((resolve) => { resolveBranchBInvoices = resolve; });
+        }
+        return Promise.resolve(jsonResponse([INVOICE_DRAFT]));
+      }
+      return Promise.resolve(jsonResponse({}, 404));
+    });
+    const onSessionExpired = vi.fn();
+    const sessionA = actingSessionFor('branch-a-token', 'assign-a', 'branch-a');
+    const sessionB = actingSessionFor('branch-b-token', 'assign-b', 'branch-b');
+    const frames = [];
+
+    const view = render(
+      <CommitLog frames={frames}>
+        <InvoicesPage session={sessionA} onSessionExpired={onSessionExpired} />
+      </CommitLog>
+    );
+    const tableA = await screen.findByRole('table', { name: 'Registered invoices' });
+    expect(within(tableA).getByText('INV-1001')).toBeInTheDocument();
+    const commitsBeforeSwitch = frames.length;
+
+    // The shell swaps in the switched session while branch B's request is
+    // still pending. Every commit this rerender produces — including the
+    // first one, which happens BEFORE the effect can run — must show the
+    // loading state and must not contain branch-A rows. A rerender-time
+    // assertion alone cannot see that first frame; the commit log can.
+    view.rerender(
+      <CommitLog frames={frames}>
+        <InvoicesPage session={sessionB} onSessionExpired={onSessionExpired} />
+      </CommitLog>
+    );
+
+    const framesAfterSwitch = frames.slice(commitsBeforeSwitch);
+    expect(framesAfterSwitch.length).toBeGreaterThan(0);
+    for (const frame of framesAfterSwitch) {
+      expect(frame).toContain('Loading invoices');
+      expect(frame).not.toContain('INV-1001');
+    }
+    expect(screen.queryByRole('table', { name: 'Registered invoices' })).not.toBeInTheDocument();
+
+    // Only branch-B content appears once branch B resolves.
+    resolveBranchBInvoices(jsonResponse([INVOICE_BRANCH_B]));
+    const tableB = await screen.findByRole('table', { name: 'Registered invoices' });
+    expect(within(tableB).getByText('INV-WEST-9001')).toBeInTheDocument();
+    expect(screen.queryByText('INV-1001')).not.toBeInTheDocument();
+    expect(onSessionExpired).not.toHaveBeenCalled();
+  });
+
+  it('drops a context-A response that resolves late, after the switch to B', async () => {
+    let resolveBranchAInvoices;
+    fetchMock.mockImplementation((path, options = {}) => {
+      const token = options.headers?.Authorization;
+      if (path === '/api/patients') return Promise.resolve(jsonResponse(PATIENTS));
+      if (path === '/api/invoices' && (options.method ?? 'GET') === 'GET') {
+        if (token === 'Bearer branch-a-token') {
+          return new Promise((resolve) => { resolveBranchAInvoices = resolve; });
+        }
+        return Promise.resolve(jsonResponse([INVOICE_BRANCH_B]));
+      }
+      return Promise.resolve(jsonResponse({}, 404));
+    });
+    const onSessionExpired = vi.fn();
+    const sessionA = actingSessionFor('branch-a-token', 'assign-a', 'branch-a');
+    const sessionB = actingSessionFor('branch-b-token', 'assign-b', 'branch-b');
+
+    const view = render(<InvoicesPage session={sessionA} onSessionExpired={onSessionExpired} />);
+    expect(screen.getByRole('status')).toHaveTextContent(/loading invoices/i);
+
+    // The switch happens while A is still in flight: the effect cleanup
+    // cancels the pending A load. Its response then arrives late and must
+    // never publish — not over B, and not at all.
+    view.rerender(<InvoicesPage session={sessionB} onSessionExpired={onSessionExpired} />);
+    resolveBranchAInvoices(jsonResponse([INVOICE_DRAFT]));
+
+    const tableB = await screen.findByRole('table', { name: 'Registered invoices' });
+    expect(within(tableB).getByText('INV-WEST-9001')).toBeInTheDocument();
+    // By the time B's table is visible every pending microtask has flushed:
+    // exactly one data row (branch B's — the name matcher ignores the
+    // header row), and no branch-A content anywhere.
+    expect(within(tableB).getAllByRole('row', { name: /INV-WEST-9001/ })).toHaveLength(1);
+    expect(screen.queryByText('INV-1001')).not.toBeInTheDocument();
+    expect(onSessionExpired).not.toHaveBeenCalled();
   });
 });

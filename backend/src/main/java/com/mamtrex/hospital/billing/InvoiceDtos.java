@@ -10,39 +10,45 @@ import java.math.BigDecimal;
 import java.util.UUID;
 
 /**
- * Public invoice contract for /api/invoices (docs/plan2.md Task 4) — a
- * FINANCIAL SIMULATION ONLY: demo amounts and currency labels with no
- * payments, collection, charges, external gateways, taxes, currency
- * conversion, FX, real money, or financial advice of any kind.
+ * Public invoice contract for /api/invoices (docs/plan2.md Task 4, branch
+ * scope added by docs/plan3.md Task 8) — a FINANCIAL SIMULATION ONLY: demo
+ * amounts and currency labels with no payments, collection, charges,
+ * external gateways, taxes, currency conversion, FX, real money, or
+ * financial advice of any kind.
  *
  * patientId is a typed UUID reference resolved by {@link InvoiceService}
- * against the patient repository; a malformed non-UUID body value fails
- * deserialization with 400 via the shared GlobalExceptionHandler malformed-
- * body mapping, and an unresolvable reference returns the shared 404.
- * amount is a typed non-negative BigDecimal validated to 12 integer digits
- * and 2 fraction digits, stored as its canonical plain string for the legacy
- * String column (no column migration), so exponent forms never reach storage
- * or responses. The create request deliberately carries NO status field:
- * the server owns the lifecycle and sets status=DRAFT, so any client status
+ * against the patient repository inside the acting branch; a malformed
+ * non-UUID body value fails deserialization with 400 via the shared
+ * GlobalExceptionHandler malformed-body mapping, and an unresolvable or
+ * cross-branch reference returns the shared 404. amount is a typed
+ * non-negative BigDecimal validated to 12 integer digits and 2 fraction
+ * digits, stored as its canonical plain string for the legacy String column
+ * (no column migration), so exponent forms never reach storage or
+ * responses. The create request deliberately carries NO status field: the
+ * server owns the lifecycle and sets status=DRAFT, so any client status
  * value in the JSON body is ignored by this allowlist and never persisted.
- * The transition request carries the single requested target; anything the
- * lifecycle cannot accept is refused by the service with the shared 409.
+ * It deliberately carries NO branch field either: ownership is stamped by
+ * the server from the authenticated acting context and is never client
+ * input. The transition request carries the single requested target;
+ * anything the lifecycle cannot accept is refused by the service with the
+ * shared 409.
  */
 public final class InvoiceDtos {
 
     private InvoiceDtos() {}
 
     /**
-     * Stable public invoice representation: exactly these six fields, no
-     * persistence metadata. amount is the stored canonical plain string,
-     * currency is a demo label stored verbatim, and status is the
-     * server-owned lifecycle state DRAFT | ISSUED | PAID | VOID.
+     * Stable public invoice representation: exactly these seven fields, no
+     * persistence metadata. branchId is the server-stamped owning branch,
+     * amount is the stored canonical plain string, currency is a demo label
+     * stored verbatim, and status is the server-owned lifecycle state
+     * DRAFT | ISSUED | PAID | VOID.
      */
-    public record InvoiceResponse(UUID id, String patientId, String invoiceNumber,
+    public record InvoiceResponse(UUID id, UUID branchId, String patientId, String invoiceNumber,
                                   String amount, String currency, String status) {
 
         public static InvoiceResponse from(Invoice invoice) {
-            return new InvoiceResponse(invoice.getId(), invoice.getPatientId(),
+            return new InvoiceResponse(invoice.getId(), invoice.getBranchId(), invoice.getPatientId(),
                     invoice.getInvoiceNumber(), invoice.getAmount(),
                     invoice.getCurrency(), invoice.getStatus());
         }

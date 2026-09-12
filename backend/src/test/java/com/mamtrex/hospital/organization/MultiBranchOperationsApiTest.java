@@ -42,6 +42,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -117,11 +118,24 @@ class MultiBranchOperationsApiTest {
     /** Shared safe ApiError contract key set (404/409 bodies). */
     private static final Set<String> API_ERROR_KEYS = Set.of("timestamp", "status", "error", "message", "path");
 
-    /** Today's exact flat dashboard key set; no branch/network structure exists. */
-    private static final Set<String> DASHBOARD_KEYS = Set.of(
+    /** Exact Task 10 typed branch-summary key contract, in JSON declaration order. */
+    private static final List<String> BRANCH_SUMMARY_KEY_ORDER = List.of(
+            "branchId", "branchCode", "branchName",
             "patients", "appointments", "admissions", "emergencyVisits", "invoices",
             "openAdmissions", "activeEmergencyVisits",
+            "bedsAvailable", "bedsOccupied", "bedsMaintenance", "bedsOutOfService",
+            "todayAppointments",
             "invoicesDraft", "invoicesIssued", "invoicesPaid", "invoicesVoid");
+
+    /** Exact Task 10 typed network-summary key contract, in JSON declaration order. */
+    private static final List<String> NETWORK_SUMMARY_KEY_ORDER = List.of(
+            "organizationId", "organizationName",
+            "patients", "appointments", "admissions", "emergencyVisits", "invoices",
+            "openAdmissions", "activeEmergencyVisits",
+            "bedsAvailable", "bedsOccupied", "bedsMaintenance", "bedsOutOfService",
+            "todayAppointments",
+            "invoicesDraft", "invoicesIssued", "invoicesPaid", "invoicesVoid",
+            "branches");
 
     private static final ParameterizedTypeReference<Map<String, Object>> MAP =
             new ParameterizedTypeReference<Map<String, Object>>() {};
@@ -2033,34 +2047,100 @@ class MultiBranchOperationsApiTest {
     }
 
     // ------------------------------------------------------------------
-    // 20. Retained Task 1: dashboard is whole-table and branchless.
+    // 20. Task 10: the alias is a branch-scoped summary; the network view is
+    // organization-scoped ADMIN only.
     // ------------------------------------------------------------------
 
     /**
-     * Retained Task 1 characterization (Task 10 will change it): the
-     * dashboard exposes exactly the eleven flat numeric keys and newly
-     * created synthetic rows move the whole-table totals. Increments are
-     * asserted relative to a baseline read so the test stays independent of
-     * suite ordering. Departments intentionally do not appear here in
-     * Task 2.
+     * Task 10 contract (docs/plan3.md §4.7): the retained /api/dashboard path
+     * is a deprecated compatibility alias of the branch summary only. On two
+     * freshly created synthetic branches it must answer with the exact typed
+     * branch DTO in declaration order, name the acting branch from the
+     * verified context, report an honest all-zero summary, move when the
+     * acting branch gains a row, and stay unmoved when a different branch
+     * gains one — proof that it never falls back to whole-table counts. The
+     * alias body must equal the /api/dashboard/branch body for the same
+     * acting context.
      */
     @Test
-    void dashboardIsAWholeTableBranchlessFlatCountMapToday() {
+    void dashboardAliasIsABranchScopedSummaryAndNeverWholeTable() {
+        Branch branchA = createdBranch("MBOPS-ALIAS-A-" + suffix);
+        Branch branchB = createdBranch("MBOPS-ALIAS-B-" + suffix);
+        String tokenA = adminTokenActingOn(branchA);
+
+        Map<String, Object> alias = readDashboard(tokenA);
+        assertEquals(BRANCH_SUMMARY_KEY_ORDER, new ArrayList<>(alias.keySet()),
+                "the alias must expose exactly the Task 10 typed branch-summary keys in declaration order");
+        assertEquals(branchA.getId().toString(), alias.get("branchId"),
+                "the alias must summarize the acting branch derived from the verified acting context");
+        assertEquals(branchA.getCode(), alias.get("branchCode"),
+                "the branch code must come from the server-owned branch record");
+        assertEquals(branchA.getName(), alias.get("branchName"),
+                "the branch name must come from the server-owned branch record");
+        assertEquals(0L, count(alias, "patients"), "a freshly created branch must report an honest zero total");
+
+        ResponseEntity<Map<String, Object>> branchEndpoint = getJson("/api/dashboard/branch", tokenA);
+        assertEquals(HttpStatus.OK, branchEndpoint.getStatusCode());
+        assertEquals(alias, branchEndpoint.getBody(),
+                "the alias must be exactly the branch summary for the same acting context");
+
+        createVerifiedPatientId(tokenA, "aliasa");
+        assertEquals(1L, count(readDashboard(tokenA), "patients"),
+                "the alias total must move when the acting branch gains a row");
+
+        String tokenB = adminTokenActingOn(branchB);
+        createVerifiedPatientId(tokenB, "aliasb");
+        assertEquals(1L, count(readDashboard(tokenA), "patients"),
+                "the alias must never fall back to whole-table counts: another branch's row stays invisible");
+        assertEquals(1L, count(readDashboard(tokenB), "patients"),
+                "branch B must see exactly its own row");
+    }
+
+    /**
+     * Task 10 network contract (docs/plan3.md §4.7): GET /api/dashboard/network
+     * answers only to enabled organization-scoped ADMIN contexts — a
+     * branch-scoped role receives the ordinary shared denial — and returns
+     * organization totals that equal the sum over the deterministic
+     * per-branch summaries, which appear in code order and never hide a
+     * branch without records.
+     */
+    @Test
+    void networkDashboardAuthorizesOnlyOrganizationScopedAdmins() {
+        assertEquals(HttpStatus.FORBIDDEN, getJson("/api/dashboard/network", login(NURSE)).getStatusCode(),
+                "a branch-scoped non-ADMIN context must receive the ordinary denial");
+
         String token = login(ADMIN);
-        Map<String, Object> before = readDashboard(token);
-        assertEquals(DASHBOARD_KEYS, before.keySet(),
-                "today's dashboard is exactly the eleven flat keys with no branch/network keys");
+        Map<String, Object> before = readNetwork(token);
+        assertEquals(NETWORK_SUMMARY_KEY_ORDER, new ArrayList<>(before.keySet()),
+                "the network summary must expose exactly the Task 10 typed keys in declaration order");
+        List<Map<String, Object>> branchesBefore = branchList(before.get("branches"));
+        assertFalse(branchesBefore.isEmpty(), "the organization's active branches must be listed");
+        List<String> codes = branchesBefore.stream()
+                .map(branch -> String.valueOf(branch.get("branchCode"))).toList();
+        assertEquals(codes.stream().sorted().toList(), codes,
+                "the per-branch summaries must appear in deterministic code order");
+        for (Map<String, Object> branch : branchesBefore) {
+            assertEquals(BRANCH_SUMMARY_KEY_ORDER, new ArrayList<>(branch.keySet()),
+                    "every per-branch summary must carry the exact typed branch keys");
+        }
+        UUID actingBranchId = actingBranchIdOf(ADMIN);
+        assertTrue(containsBranch(branchesBefore, actingBranchId),
+                "the acting branch must appear in the network summary even without records");
+        long baselinePatients = branchCount(branchesBefore, actingBranchId, "patients");
 
-        String patientId = createVerifiedPatientId(token, "dash");
-        String professionalId = createVerifiedSchedulableStaffId(token, "dash");
-        postJson("/api/appointments", token, appointmentPayload(patientId, professionalId));
-
-        Map<String, Object> after = readDashboard(token);
-        assertEquals(DASHBOARD_KEYS, after.keySet(), "the dashboard must keep the same flat key set");
+        createVerifiedPatientId(token, "network");
+        Map<String, Object> after = readNetwork(token);
         assertEquals(count(before, "patients") + 1, count(after, "patients"),
-                "the whole-table patient total must include the newly created synthetic row");
-        assertEquals(count(before, "appointments") + 1, count(after, "appointments"),
-                "the whole-table appointment total must include the newly created synthetic row");
+                "the organization total must move with the acting branch");
+        assertEquals(baselinePatients + 1,
+                branchCount(branchList(after.get("branches")), actingBranchId, "patients"),
+                "only the acting branch's summary must move; every other branch stays untouched");
+        assertEquals(count(after, "patients"),
+                sumBranches(branchList(after.get("branches")), "patients"),
+                "the organization total must equal the sum over the returned branch summaries");
+        assertEquals(sumBranches(branchList(after.get("branches")), "appointments"),
+                count(after, "appointments"),
+                "every organization total is the sum of its branch summaries — never client or whole-table aggregation");
     }
 
     // ------------------------------------------------------------------
@@ -2455,6 +2535,44 @@ class MultiBranchOperationsApiTest {
         Map<String, Object> body = response.getBody();
         assertNotNull(body, "the dashboard response must carry a body");
         return body;
+    }
+
+    private Map<String, Object> readNetwork(String token) {
+        ResponseEntity<Map<String, Object>> response = getJson("/api/dashboard/network", token);
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        Map<String, Object> body = response.getBody();
+        assertNotNull(body, "the network response must carry a body");
+        return body;
+    }
+
+    /** The acting branch a fresh server-issued login binds, from the server-issued context only. */
+    @SuppressWarnings("unchecked")
+    private UUID actingBranchIdOf(String username) {
+        ResponseEntity<Map<String, Object>> response = postJson("/api/auth/login", null, Map.of(
+                "username", username,
+                "password", TEST_ACCOUNT_PASSWORD));
+        assertEquals(HttpStatus.OK, response.getStatusCode(), "the synthetic account must log in");
+        assertNotNull(response.getBody());
+        Map<String, Object> context = (Map<String, Object>) response.getBody().get("actingContext");
+        assertNotNull(context, "the login response must carry the acting context");
+        return UUID.fromString(String.valueOf(context.get("branchId")));
+    }
+
+    private boolean containsBranch(List<Map<String, Object>> branches, UUID branchId) {
+        return branches.stream().anyMatch(branch -> String.valueOf(branch.get("branchId")).equals(branchId.toString()));
+    }
+
+    /** The metric of one branch summary; the entry must exist — zero summaries are listed, never dropped. */
+    private long branchCount(List<Map<String, Object>> branches, UUID branchId, String key) {
+        return branches.stream()
+                .filter(branch -> String.valueOf(branch.get("branchId")).equals(branchId.toString()))
+                .findFirst()
+                .map(branch -> count(branch, key))
+                .orElseThrow(() -> new AssertionError("the network summary must list branch " + branchId));
+    }
+
+    private long sumBranches(List<Map<String, Object>> branches, String key) {
+        return branches.stream().mapToLong(branch -> count(branch, key)).sum();
     }
 
     private long count(Map<String, Object> body, String key) {

@@ -1198,3 +1198,63 @@ button.availability-retry:focus-visible {
   .beds-actions .beds-new { width: 100%; }
   .beds-filter { max-width: none; }
 }
+
+/* ------------------------------------------------------------------
+   Command-center dashboards (docs/plan3.md Task 10): the branch summary
+   and the organization network comparison. Drill-down actions are real
+   buttons with a visible keyboard focus; branch rows and card groups
+   stack into a single column on narrow screens.
+   ------------------------------------------------------------------ */
+.dashboard-branch-line {
+  color: var(--muted, #5a6572);
+  margin: 4px 0 0;
+}
+
+.stat-card-link {
+  margin-top: 12px;
+  padding: 7px 12px;
+  border: 1px solid var(--line, #d8dde3);
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.stat-card-link:hover { background: var(--navy-2, #eef1f4); }
+.stat-card-link:focus-visible {
+  outline: 2px solid var(--gold, #b8860b);
+  outline-offset: 2px;
+}
+
+.network-group .cards { margin: 16px 0; }
+.network-branches {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+.network-branches li {
+  background: #fff;
+  border: 1px solid var(--line, #d8dde3);
+  border-radius: 14px;
+  padding: 16px 20px;
+}
+.network-branches h3 {
+  margin: 0 0 6px;
+  font-size: 16px;
+}
+.network-branches small {
+  display: block;
+  color: var(--muted, #5a6572);
+  margin-top: 4px;
+}
+
+@media (max-width: 560px) {
+  /* Narrow layout: one card per row and compact branch rows keep every
+     summary legible without horizontal scrolling. */
+  .dashboard-group .cards { grid-template-columns: 1fr 1fr; }
+  .stat-card-link { width: 100%; }
+  .network-branches li { padding: 12px; }
+}

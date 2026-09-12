@@ -1,7 +1,10 @@
 package com.mamtrex.hospital.emergency;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -30,4 +33,22 @@ public interface EmergencyVisitRepository extends JpaRepository<EmergencyVisit, 
 
     /** Branch-scoped existence check backing the delete command. */
     boolean existsByIdAndBranchId(UUID id, UUID branchId);
+
+    /*
+     * Task 10 dashboard aggregation (docs/plan3.md §4.7): one grouped
+     * (branch, status) count restricted to an explicit branch-id set —
+     * never a whole-table read. Totals and the active bucket (WAITING +
+     * IN_TREATMENT) derive from the same tuples, so any other persisted
+     * status still counts honestly toward the total.
+     */
+    @Query("select e.branchId as branchId, e.status as status, count(e) as total from EmergencyVisit e "
+            + "where e.branchId in :branchIds group by e.branchId, e.status")
+    List<BranchStatusCount> countByBranchIdInGroupedByStatus(@Param("branchIds") Collection<UUID> branchIds);
+
+    /** One grouped (branch, status) count tuple of the query above. */
+    interface BranchStatusCount {
+        UUID getBranchId();
+        String getStatus();
+        long getTotal();
+    }
 }

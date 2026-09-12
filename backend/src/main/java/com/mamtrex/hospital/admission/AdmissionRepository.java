@@ -1,7 +1,10 @@
 package com.mamtrex.hospital.admission;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -30,4 +33,22 @@ public interface AdmissionRepository extends JpaRepository<Admission, UUID> {
 
     /** Branch-scoped existence check backing the delete command. */
     boolean existsByIdAndBranchId(UUID id, UUID branchId);
+
+    /*
+     * Task 10 dashboard aggregation (docs/plan3.md §4.7): one grouped
+     * (branch, status) count restricted to an explicit branch-id set —
+     * never a whole-table read. Totals and the open bucket derive from the
+     * same tuples, so a status outside the canonical lifecycle still counts
+     * honestly toward the total.
+     */
+    @Query("select a.branchId as branchId, a.status as status, count(a) as total from Admission a "
+            + "where a.branchId in :branchIds group by a.branchId, a.status")
+    List<BranchStatusCount> countByBranchIdInGroupedByStatus(@Param("branchIds") Collection<UUID> branchIds);
+
+    /** One grouped (branch, status) count tuple of the query above. */
+    interface BranchStatusCount {
+        UUID getBranchId();
+        String getStatus();
+        long getTotal();
+    }
 }

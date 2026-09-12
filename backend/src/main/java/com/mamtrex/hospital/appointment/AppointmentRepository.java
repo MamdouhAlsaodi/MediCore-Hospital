@@ -4,6 +4,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -41,4 +42,30 @@ public interface AppointmentRepository extends JpaRepository<Appointment, UUID> 
                           @Param("professionalId") String professionalId,
                           @Param("start") String start,
                           @Param("end") String end);
+
+    /*
+     * Task 10 dashboard aggregation (docs/plan3.md §4.7): grouped counts
+     * restricted to an explicit branch-id set — never a whole-table read.
+     * The today window compares the same canonical LocalDateTime.toString()
+     * representation the service writes (the established Task 9 range
+     * pattern), with the start inclusive and the end exclusive; rows
+     * without a parseable canonical value are the legacy seam and stay
+     * honestly outside the window instead of being reinterpreted.
+     */
+    @Query("select a.branch.id as branchId, count(a) as total from Appointment a "
+            + "where a.branch.id in :branchIds group by a.branch.id")
+    List<BranchMetric> countByBranchIdInGrouped(@Param("branchIds") Collection<UUID> branchIds);
+
+    @Query("select a.branch.id as branchId, count(a) as total from Appointment a "
+            + "where a.branch.id in :branchIds and a.scheduledAt >= :windowStart and a.scheduledAt < :windowEnd "
+            + "group by a.branch.id")
+    List<BranchMetric> countByBranchIdAndScheduledAtRangeGrouped(@Param("branchIds") Collection<UUID> branchIds,
+                                                                 @Param("windowStart") String windowStart,
+                                                                 @Param("windowEnd") String windowEnd);
+
+    /** One grouped-count tuple shared by the two queries above. */
+    interface BranchMetric {
+        UUID getBranchId();
+        long getTotal();
+    }
 }

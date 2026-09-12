@@ -77,9 +77,14 @@ class PatientJourneyApiTest {
             "id", "branchId", "medicalRecordNumber", "fullName", "dateOfBirth", "sex",
             "phone", "email", "nationalId", "address", "active");
 
-    /** Stable public Appointment DTO contract (plan3 Task 4 adds branchId); references are verified UUIDs. */
+    /**
+     * Stable public Appointment DTO contract (plan3 Task 4 adds branchId;
+     * Task 9 adds the required durationMinutes and the server-computed
+     * half-open endsAt); references are verified UUIDs.
+     */
     private static final Set<String> APPOINTMENT_CONTRACT_FIELDS = Set.of(
-            "id", "branchId", "patientId", "professionalId", "scheduledAt", "type", "status");
+            "id", "branchId", "patientId", "professionalId", "scheduledAt",
+            "durationMinutes", "endsAt", "type", "status");
 
     @Autowired
     TestRestTemplate rest;
@@ -408,6 +413,7 @@ class PatientJourneyApiTest {
                 "patientId", UUID.randomUUID().toString(),
                 "professionalId", UUID.randomUUID().toString(),
                 "scheduledAt", "2031-04-04T14:00:00",
+                "durationMinutes", 60,
                 "type", "consultation",
                 "status", "scheduled")).getStatusCode(),
                 "a valid random UUID for an unknown patient must return 404");
@@ -422,6 +428,7 @@ class PatientJourneyApiTest {
                 "patientId", patientId,
                 "professionalId", UUID.randomUUID().toString(),
                 "scheduledAt", "2031-04-04T14:00:00",
+                "durationMinutes", 60,
                 "type", "consultation",
                 "status", "scheduled")).getStatusCode(),
                 "a valid random UUID for an unknown professional must return 404");
@@ -438,14 +445,16 @@ class PatientJourneyApiTest {
         String token = login(RECEPTIONIST);
         String patientId = createVerifiedPatientId(token, "-VER");
         String professionalId = createVerifiedStaffId("-VER");
+        createDayAvailability(professionalId, "2031-04-04");
         ResponseEntity<Map<String, Object>> created = post("/api/appointments", token, Map.of(
                 "patientId", patientId,
                 "professionalId", professionalId,
                 "scheduledAt", "2031-04-04T14:00:00",
+                "durationMinutes", 60,
                 "type", "consultation",
                 "status", "scheduled"));
         assertEquals(HttpStatus.OK, created.getStatusCode(),
-                "existing patient and professional must allow appointment creation");
+                "existing patient and professional with a containing availability interval must allow the create");
         Map<String, Object> body = created.getBody();
         assertNotNull(body);
         assertEquals(APPOINTMENT_CONTRACT_FIELDS, body.keySet(),
@@ -456,6 +465,10 @@ class PatientJourneyApiTest {
                 "scheduledAt must persist as the validated typed value, not the raw request string");
         assertEquals("consultation", body.get("type"));
         assertEquals("scheduled", body.get("status"), "the valid lowercase scheduled status stays accepted");
+        assertEquals(60, ((Number) body.get("durationMinutes")).intValue(),
+                "the response must echo the required bounded durationMinutes");
+        assertEquals("2031-04-04T15:00", body.get("endsAt"),
+                "endsAt must be the server-computed half-open window end (scheduledAt + durationMinutes)");
 
         String appointmentId = String.valueOf(body.get("id"));
         ResponseEntity<Map<String, Object>> detail = getMap("/api/appointments/" + appointmentId, token);
@@ -485,6 +498,7 @@ class PatientJourneyApiTest {
                 "patientId", missingPatientId,
                 "professionalId", UUID.randomUUID().toString(),
                 "scheduledAt", "2031-05-05T09:00:00",
+                "durationMinutes", 60,
                 "type", "consultation",
                 "status", "scheduled")).getStatusCode(),
                 "an unknown patient reference must return 404");
@@ -492,6 +506,7 @@ class PatientJourneyApiTest {
                 "patientId", "not-a-uuid-" + suffix,
                 "professionalId", UUID.randomUUID().toString(),
                 "scheduledAt", "2031-05-05T09:00:00",
+                "durationMinutes", 60,
                 "type", "consultation",
                 "status", "scheduled")).getStatusCode(),
                 "a malformed patient reference must return 400");
@@ -507,10 +522,12 @@ class PatientJourneyApiTest {
 
         String patientId = createVerifiedPatientId(token, "-AUD2");
         String professionalId = createVerifiedStaffId("-AUD2");
+        createDayAvailability(professionalId, "2031-06-06");
         ResponseEntity<Map<String, Object>> created = post("/api/appointments", token, Map.of(
                 "patientId", patientId,
                 "professionalId", professionalId,
                 "scheduledAt", "2031-06-06T08:15:00",
+                "durationMinutes", 60,
                 "type", "consultation",
                 "status", "scheduled"));
         assertEquals(HttpStatus.OK, created.getStatusCode());
@@ -538,10 +555,12 @@ class PatientJourneyApiTest {
         String token = login(RECEPTIONIST);
         String patientId = createVerifiedPatientId(token, "-LIST");
         String professionalId = createVerifiedStaffId("-LIST");
+        createDayAvailability(professionalId, "2031-02-02");
         ResponseEntity<Map<String, Object>> created = post("/api/appointments", token, Map.of(
                 "patientId", patientId,
                 "professionalId", professionalId,
                 "scheduledAt", "2031-02-02T10:30:00",
+                "durationMinutes", 60,
                 "type", "follow-up",
                 "status", "scheduled"));
         assertEquals(HttpStatus.OK, created.getStatusCode());
@@ -565,6 +584,250 @@ class PatientJourneyApiTest {
             assertEquals(APPOINTMENT_CONTRACT_FIELDS, item.keySet(),
                     "every appointment list item must match the stable DTO contract exactly");
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Task 9 (docs/plan3.md): duration boundaries, containing
+    // availability, half-open overlap, and cancelled-only exclusion.
+    // durationMinutes is a bounded engineering validation range for the
+    // synthetic demo only — never clinical, care, or staffing policy.
+    // ------------------------------------------------------------------
+
+    /**
+     * Duration contract: 5 and 480 (inclusive) are accepted with the
+     * server-computed endsAt; 4, 481, a missing value, and an
+     * overflow-safe oversized value are rejected with 400 and no row.
+     * An extreme but parseable timestamp is likewise rejected so the
+     * server-computed end can never overflow.
+     */
+    @Test
+    void appointmentDurationBoundariesAreValidatedOnTheServer() {
+        String token = login(RECEPTIONIST);
+        String patientId = createVerifiedPatientId(token, "-DUR");
+        String professionalId = createVerifiedStaffId("-DUR");
+        createDayAvailability(professionalId, "2031-07-07");
+
+        ResponseEntity<Map<String, Object>> minDuration = post("/api/appointments", token, Map.of(
+                "patientId", patientId,
+                "professionalId", professionalId,
+                "scheduledAt", "2031-07-07T08:00:00",
+                "durationMinutes", 5,
+                "type", "consultation",
+                "status", "scheduled"));
+        assertEquals(HttpStatus.OK, minDuration.getStatusCode(), "the inclusive minimum duration 5 must be accepted");
+        assertEquals("2031-07-07T08:05", minDuration.getBody().get("endsAt"),
+                "the server must compute endsAt = scheduledAt + durationMinutes");
+
+        ResponseEntity<Map<String, Object>> maxDuration = post("/api/appointments", token, Map.of(
+                "patientId", patientId,
+                "professionalId", professionalId,
+                "scheduledAt", "2031-07-07T09:00:00",
+                "durationMinutes", 480,
+                "type", "consultation",
+                "status", "scheduled"));
+        assertEquals(HttpStatus.OK, maxDuration.getStatusCode(), "the inclusive maximum duration 480 must be accepted");
+        assertEquals("2031-07-07T17:00", maxDuration.getBody().get("endsAt"),
+                "the 480-minute window must end inside the containing availability interval");
+
+        for (Object invalidDuration : List.of(4, 481, 10000000000L)) {
+            assertEquals(HttpStatus.BAD_REQUEST, post("/api/appointments", token, Map.of(
+                    "patientId", patientId,
+                    "professionalId", professionalId,
+                    "scheduledAt", "2031-07-07T18:00:00",
+                    "durationMinutes", invalidDuration,
+                    "type", "consultation",
+                    "status", "scheduled")).getStatusCode(),
+                    "duration " + invalidDuration + " is outside the inclusive 5-480 bound and must return 400");
+        }
+        Map<String, Object> missingDuration = new LinkedHashMap<>(Map.of(
+                "patientId", patientId,
+                "professionalId", professionalId,
+                "scheduledAt", "2031-07-07T18:00:00",
+                "type", "consultation",
+                "status", "scheduled"));
+        assertTrue(!missingDuration.containsKey("durationMinutes"), "the payload must omit durationMinutes");
+        assertEquals(HttpStatus.BAD_REQUEST, post("/api/appointments", token, missingDuration).getStatusCode(),
+                "a missing durationMinutes must return 400");
+
+        assertEquals(HttpStatus.BAD_REQUEST, post("/api/appointments", token, Map.of(
+                "patientId", patientId,
+                "professionalId", professionalId,
+                "scheduledAt", "+999999999-12-31T23:50:00",
+                "durationMinutes", 5,
+                "type", "consultation",
+                "status", "scheduled")).getStatusCode(),
+                "a timestamp whose computed end would overflow must be rejected as a client error, never a 500");
+
+        ResponseEntity<List<Map<String, Object>>> list = getList("/api/appointments", token);
+        assertNotNull(list.getBody());
+        assertEquals(2, list.getBody().stream()
+                        .filter(a -> professionalId.equals(a.get("professionalId")))
+                        .count(),
+                "only the two in-bound appointments may persist");
+    }
+
+    /**
+     * Containment contract: an appointment must sit fully inside ONE
+     * modeled availability interval for that professional (half-open).
+     * Before the interval, beyond its end, and a span crossing two
+     * intervals are each the shared 409 with no persisted row and no
+     * Appointment CREATE audit event; a window ending exactly at the
+     * interval end is contained and succeeds.
+     */
+    @Test
+    void appointmentOutsideContainingAvailabilityReturns409WithoutRowOrAudit() {
+        String adminToken = login(ADMIN_USER);
+        long createEventsBefore = countAppointmentCreateEvents(adminToken);
+        String token = login(RECEPTIONIST);
+        String patientId = createVerifiedPatientId(token, "-OUT");
+        String professionalId = createVerifiedStaffId("-OUT");
+        createAvailability(professionalId, "2031-09-01T10:00", "2031-09-01T12:00");
+
+        String token2 = login(ADMIN_USER);
+        String patient2 = createVerifiedPatientId(token2, "-OUT2");
+        String professional2 = createVerifiedStaffId("-OUT2");
+        createAvailability(professional2, "2031-09-05T08:00", "2031-09-05T09:00");
+        createAvailability(professional2, "2031-09-05T11:00", "2031-09-05T12:00");
+
+        for (Map<String, Object> outside : List.of(
+                Map.<String, Object>of("patientId", patientId, "professionalId", professionalId,
+                        "scheduledAt", "2031-09-01T09:00:00", "durationMinutes", 60,
+                        "type", "consultation", "status", "scheduled"),
+                Map.<String, Object>of("patientId", patientId, "professionalId", professionalId,
+                        "scheduledAt", "2031-09-01T11:30:00", "durationMinutes", 60,
+                        "type", "consultation", "status", "scheduled"),
+                Map.<String, Object>of("patientId", patient2, "professionalId", professional2,
+                        "scheduledAt", "2031-09-05T08:30:00", "durationMinutes", 180,
+                        "type", "consultation", "status", "scheduled"))) {
+            ResponseEntity<Map<String, Object>> conflict = post("/api/appointments", token2, outside);
+            assertEquals(HttpStatus.CONFLICT, conflict.getStatusCode(),
+                    "an appointment without one fully containing availability interval must return 409: " + outside);
+            assertNotNull(conflict.getBody());
+            assertEquals(Set.of("timestamp", "status", "error", "message", "path"), conflict.getBody().keySet(),
+                    "the 409 must carry the shared safe ApiError shape");
+            assertEquals(409, ((Number) conflict.getBody().get("status")).intValue());
+        }
+
+        assertEquals(createEventsBefore, countAppointmentCreateEvents(adminToken),
+                "refused outside-availability creates must record no Appointment CREATE audit event");
+        ResponseEntity<List<Map<String, Object>>> list = getList("/api/appointments", token);
+        assertNotNull(list.getBody());
+        assertTrue(list.getBody().stream()
+                        .filter(a -> professionalId.equals(a.get("professionalId"))
+                                || professional2.equals(a.get("professionalId")))
+                        .toList().isEmpty(),
+                "no refused appointment may persist");
+
+        Map<String, Object> touchingEnd = Map.<String, Object>of(
+                "patientId", patientId,
+                "professionalId", professionalId,
+                "scheduledAt", "2031-09-01T11:00:00",
+                "durationMinutes", 60,
+                "type", "consultation",
+                "status", "scheduled");
+        assertEquals(HttpStatus.OK, post("/api/appointments", token, touchingEnd).getStatusCode(),
+                "a half-open window ending exactly at the interval end is contained and must succeed");
+    }
+
+    /**
+     * Half-open overlap contract in both directions: an existing
+     * 09:00-10:00 appointment conflicts with a later start (09:30), an
+     * earlier start (08:30), an enclosing span (08:00-11:00), and an
+     * identical span, while exactly-adjacent spans (08:00-09:00 and
+     * 10:00-11:00) are allowed. Every refused create records no audit
+     * event and persists no row.
+     */
+    @Test
+    void appointmentOverlapIsRefusedInBothDirectionsWhileAdjacencyIsAllowed() {
+        String adminToken = login(ADMIN_USER);
+        long createEventsBefore = countAppointmentCreateEvents(adminToken);
+        String token = login(RECEPTIONIST);
+        String patientId = createVerifiedPatientId(token, "-OVR");
+        String professionalId = createVerifiedStaffId("-OVR");
+        createAvailability(professionalId, "2031-10-02T08:00", "2031-10-02T18:00");
+
+        Map<String, Object> existing = Map.of(
+                "patientId", patientId, "professionalId", professionalId,
+                "scheduledAt", "2031-10-02T09:00:00", "durationMinutes", 60,
+                "type", "consultation", "status", "scheduled");
+        assertEquals(HttpStatus.OK, post("/api/appointments", token, existing).getStatusCode(),
+                "the seed appointment inside availability must succeed");
+
+        for (Map.Entry<String, Map<String, Object>> overlapping : Map.of(
+                "later-start", Map.<String, Object>of("patientId", patientId, "professionalId", professionalId,
+                        "scheduledAt", "2031-10-02T09:30:00", "durationMinutes", 60,
+                        "type", "consultation", "status", "scheduled"),
+                "earlier-start", Map.<String, Object>of("patientId", patientId, "professionalId", professionalId,
+                        "scheduledAt", "2031-10-02T08:30:00", "durationMinutes", 60,
+                        "type", "consultation", "status", "scheduled"),
+                "enclosing", Map.<String, Object>of("patientId", patientId, "professionalId", professionalId,
+                        "scheduledAt", "2031-10-02T08:00:00", "durationMinutes", 180,
+                        "type", "consultation", "status", "scheduled"),
+                "identical", Map.<String, Object>of("patientId", patientId, "professionalId", professionalId,
+                        "scheduledAt", "2031-10-02T09:00:00", "durationMinutes", 60,
+                        "type", "consultation", "status", "scheduled")).entrySet()) {
+            assertEquals(HttpStatus.CONFLICT,
+                    post("/api/appointments", token, overlapping.getValue()).getStatusCode(),
+                    "the " + overlapping.getKey() + " span must conflict with the existing appointment");
+        }
+        assertEquals(createEventsBefore + 1, countAppointmentCreateEvents(adminToken),
+                "only the one seed create may have recorded an audit event");
+
+        assertEquals(HttpStatus.OK, post("/api/appointments", token, Map.of(
+                "patientId", patientId, "professionalId", professionalId,
+                "scheduledAt", "2031-10-02T08:00:00", "durationMinutes", 60,
+                "type", "consultation", "status", "scheduled")).getStatusCode(),
+                "an exactly-adjacent earlier appointment (ends when the existing starts) must be allowed");
+        assertEquals(HttpStatus.OK, post("/api/appointments", token, Map.of(
+                "patientId", patientId, "professionalId", professionalId,
+                "scheduledAt", "2031-10-02T10:00:00", "durationMinutes", 60,
+                "type", "consultation", "status", "scheduled")).getStatusCode(),
+                "an exactly-adjacent later appointment (starts when the existing ends) must be allowed");
+    }
+
+    /**
+     * Cancelled-only exclusion: the already-defined lowercase contract
+     * scheduled|confirmed|completed|cancelled contains exactly one
+     * explicitly-cancelled value, so only that value stays out of conflict
+     * detection — no cancellation lifecycle is invented and no other
+     * status is silently excluded.
+     */
+    @Test
+    void onlyTheAlreadyDefinedCancelledStatusIsExcludedFromConflictDetection() {
+        String token = login(RECEPTIONIST);
+        String patientId = createVerifiedPatientId(token, "-ST");
+        String professionalId = createVerifiedStaffId("-ST");
+        createAvailability(professionalId, "2031-11-03T08:00", "2031-11-03T18:00");
+
+        Map<String, Object> base = Map.of(
+                "patientId", patientId, "professionalId", professionalId,
+                "scheduledAt", "2031-11-03T09:00:00", "durationMinutes", 60,
+                "type", "consultation", "status", "scheduled");
+        assertEquals(HttpStatus.OK, post("/api/appointments", token, base).getStatusCode(),
+                "the seed appointment must succeed");
+
+        for (String participating : List.of("completed", "confirmed")) {
+            assertEquals(HttpStatus.CONFLICT, post("/api/appointments", token, Map.of(
+                    "patientId", patientId, "professionalId", professionalId,
+                    "scheduledAt", "2031-11-03T09:00:00", "durationMinutes", 60,
+                    "type", "consultation", "status", participating)).getStatusCode(),
+                    "'" + participating + "' participates in conflict detection — only 'cancelled' is excluded");
+        }
+        assertEquals(HttpStatus.OK, post("/api/appointments", token, Map.of(
+                "patientId", patientId, "professionalId", professionalId,
+                "scheduledAt", "2031-11-03T09:00:00", "durationMinutes", 60,
+                "type", "consultation", "status", "cancelled")).getStatusCode(),
+                "the explicitly-cancelled status stays accepted and out of conflict detection");
+        assertEquals(HttpStatus.CONFLICT, post("/api/appointments", token, Map.of(
+                "patientId", patientId, "professionalId", professionalId,
+                "scheduledAt", "2031-11-03T09:00:00", "durationMinutes", 60,
+                "type", "consultation", "status", "scheduled")).getStatusCode(),
+                "the cancelled row must not shield the original scheduled appointment's conflict");
+        assertEquals(HttpStatus.OK, post("/api/appointments", token, Map.of(
+                "patientId", patientId, "professionalId", professionalId,
+                "scheduledAt", "2031-11-03T09:00:00", "durationMinutes", 60,
+                "type", "consultation", "status", "cancelled")).getStatusCode(),
+                "a second cancelled row is likewise out of conflict detection");
     }
 
     @Test
@@ -650,10 +913,12 @@ class PatientJourneyApiTest {
                 "patient ownership must derive from the actor's acting branch, never from client input");
 
         String professionalId = createVerifiedStaffId("-BRANCH");
+        createDayAvailability(professionalId, "2031-08-08");
         ResponseEntity<Map<String, Object>> created = post("/api/appointments", token, Map.of(
                 "patientId", patientId,
                 "professionalId", professionalId,
                 "scheduledAt", "2031-08-08T09:30:00",
+                "durationMinutes", 60,
                 "type", "consultation",
                 "status", "scheduled"));
         assertEquals(HttpStatus.OK, created.getStatusCode(),
@@ -709,9 +974,22 @@ class PatientJourneyApiTest {
         payload.put("patientId", UUID.randomUUID().toString());
         payload.put("professionalId", UUID.randomUUID().toString());
         payload.put("scheduledAt", "2031-04-04T14:00:00");
+        payload.put("durationMinutes", 60);
         payload.put("type", "consultation");
         payload.put("status", "scheduled");
         return payload;
+    }
+
+    /** Creates one modeled availability interval for the professional through the ADMIN/HR write route. */
+    private void createAvailability(String professionalId, String startsAt, String endsAt) {
+        ResponseEntity<Map<String, Object>> created = post("/api/staff/" + professionalId + "/availability",
+                login(ADMIN_USER), Map.of("startsAt", startsAt, "endsAt", endsAt));
+        assertEquals(HttpStatus.OK, created.getStatusCode(), "synthetic availability creation must succeed");
+    }
+
+    /** Creates one full-day modeled availability interval for the professional. */
+    private void createDayAvailability(String professionalId, String day) {
+        createAvailability(professionalId, day + "T00:00", day + "T23:59");
     }
 
     /** Counts Appointment CREATE audit events through the ADMIN audit route. */

@@ -7,20 +7,41 @@ import { fetchStaff, staffDisplayName } from '../staff/staffApi.js';
 import { fetchAppointments } from './appointmentApi.js';
 import AppointmentForm from './AppointmentForm.jsx';
 
-// Appointments screen (plan1.md Task 8): the existing appointment list over
-// GET /api/appointments plus the scheduling flow over POST /api/appointments.
-// The list resolves patient/professional names against the loaded records
-// and renders honest "Unknown record" placeholders for references it cannot
-// resolve (e.g. pre-Task-4 rows with raw stored values) — raw reference
-// values are never displayed. The professional directory is best-effort here
-// (name resolution only); its failure never blocks the list. All transport
-// goes through the feature adapters — components never call fetch directly.
+// Pure render-phase selector (the accepted Task 8 render-tag invariant):
+// decides exactly what this screen may display for the current acting
+// context. Branch-owned data is tagged with the actingContextKey it
+// resolved under (loaded.contextKey) and is exposed only while that tag
+// still equals the current contextKey. While the tags differ — i.e. from
+// the moment the shell swaps in a new session until the new context's data
+// publishes — the loading state is returned instead: never the previous
+// branch's rows, and never a misleading empty-state result. The component
+// renders through this selector on every pass, so the gate holds during the
+// render itself rather than depending on when an effect happens to run.
+// Exported as the deterministic seam that lets tests pin the render
+// contract. This is display isolation only; the server's scope for each
+// context-bound token stays the sole authority over what data exists.
+export function appointmentsDisplayState({ contextKey, loaded }) {
+  if (loaded.contextKey === contextKey) return loaded;
+  return { contextKey, status: 'loading', loadError: '', patients: [], staff: [], appointments: [] };
+}
+
+// Everything one load produces, tagged with its context in a single state
+// update so the tag and the data it describes can never drift apart.
+const UNLOADED = { contextKey: null, status: 'loading', loadError: '', patients: [], staff: [], appointments: [] };
+
+// Appointments screen (plan1.md Task 8, docs/plan3.md Tasks 5 and 9): the
+// existing appointment list over GET /api/appointments plus the scheduling
+// flow over POST /api/appointments. The list resolves patient/professional
+// names against the loaded records and renders honest "Unknown record"
+// placeholders for references it cannot resolve (e.g. pre-Task-4 rows with
+// raw stored values) — raw reference values are never displayed. The
+// professional directory is best-effort here (name resolution only); its
+// failure never blocks the list. All transport goes through the feature
+// adapters — components never call fetch directly.
 export default function AppointmentsPage({ session, onSessionExpired }) {
-  const [patients, setPatients] = useState([]);
-  const [staff, setStaff] = useState([]);
-  const [appointments, setAppointments] = useState([]);
-  const [status, setStatus] = useState('loading');
-  const [loadError, setLoadError] = useState('');
+  // Single tagged state for everything the load produces; see UNLOADED and
+  // appointmentsDisplayState above.
+  const [loaded, setLoaded] = useState(UNLOADED);
   // 'list' | 'form'
   const [view, setView] = useState('list');
   const [confirmation, setConfirmation] = useState('');
@@ -35,8 +56,11 @@ export default function AppointmentsPage({ session, onSessionExpired }) {
 
   useEffect(() => {
     let active = true;
-    setStatus('loading');
-    setLoadError('');
+    // Fresh load attempt for this context. The previous context's rows stay
+    // tagged in state until this context's data publishes; the render-phase
+    // selector already refuses to display them, so the screen shows loading
+    // from the first render of the switch — no effect timing required.
+    setLoaded({ contextKey, status: 'loading', loadError: '', patients: [], staff: [], appointments: [] });
     const loadPatients = fetchPatients({
       token: session.token,
       onUnauthorized: onSessionExpired,
@@ -53,18 +77,32 @@ export default function AppointmentsPage({ session, onSessionExpired }) {
     Promise.all([loadPatients, loadAppointments, loadStaff])
       .then(([loadedPatients, loadedAppointments, loadedStaff]) => {
         if (!active) return;
-        setPatients(Array.isArray(loadedPatients) ? loadedPatients : []);
-        setAppointments(Array.isArray(loadedAppointments) ? loadedAppointments : []);
-        setStaff(Array.isArray(loadedStaff) ? loadedStaff : []);
-        setStatus('ready');
+        // Publish rows tagged with the context they resolved under, so the
+        // selector can never show them under a different acting context.
+        setLoaded({
+          contextKey,
+          status: 'ready',
+          loadError: '',
+          patients: Array.isArray(loadedPatients) ? loadedPatients : [],
+          appointments: Array.isArray(loadedAppointments) ? loadedAppointments : [],
+          staff: Array.isArray(loadedStaff) ? loadedStaff : [],
+        });
       })
       .catch((error) => {
         if (!active) return;
         // 401 is ownership of the shell: the session-expiry callback returns
         // the app to Login, so no local error is raised on top of it.
         if (error instanceof ApiError && error.status === 401) return;
-        setLoadError(error instanceof ApiError ? error.message : 'Appointments could not be loaded.');
-        setStatus('ready');
+        // The load attempt for this context concluded with an error; tag the
+        // error to this context so it is shown here and nowhere else.
+        setLoaded({
+          contextKey,
+          status: 'ready',
+          loadError: error instanceof ApiError ? error.message : 'Appointments could not be loaded.',
+          patients: [],
+          staff: [],
+          appointments: [],
+        });
       });
     return () => { active = false; };
   }, [session.token, contextKey, listRefresh, onSessionExpired]);
@@ -86,6 +124,12 @@ export default function AppointmentsPage({ session, onSessionExpired }) {
     // Server-side search results cannot be honestly patched locally: refetch.
     setListRefresh((n) => n + 1);
   }
+
+  // Render-phase display gate: rows, options, status, and load error are
+  // only ever taken from data whose context tag matches the current acting
+  // context (see appointmentsDisplayState).
+  const { status, loadError, patients, staff, appointments } =
+    appointmentsDisplayState({ contextKey, loaded });
 
   // UI convenience hint from the shared permission map; backend stays
   // authoritative for every request (the server refuses with 403 and the

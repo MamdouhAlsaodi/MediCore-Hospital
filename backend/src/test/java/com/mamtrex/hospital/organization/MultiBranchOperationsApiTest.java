@@ -22,6 +22,7 @@ import com.mamtrex.hospital.emergency.EmergencyVisit;
 import com.mamtrex.hospital.emergency.EmergencyVisitRepository;
 import com.mamtrex.hospital.patient.Patient;
 import com.mamtrex.hospital.patient.PatientRepository;
+import com.mamtrex.hospital.staff.StaffAvailabilityRepository;
 import com.mamtrex.hospital.staff.StaffMember;
 import com.mamtrex.hospital.staff.StaffMemberRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -67,9 +68,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * with synthetic disposable records only.
  *
  * <p>Retained Task 1 characterizations (login shape, acting-context
- * indifference, appointment overlap, whole-table dashboard, context-free
- * audit events) keep pinning today's unrelated weaknesses for their later
- * tasks. Department and bed rows with no branch are the deliberate legacy
+ * indifference, whole-table dashboard, context-free audit events) keep
+ * pinning today's unrelated weaknesses for their later tasks. The Task 1
+ * appointment-overlap pin was replaced by the Task 9 scheduling contract
+ * (docs/plan3.md), mirroring how earlier tasks replaced the pins they
+ * intentionally changed. Department and bed rows with no branch are the deliberate legacy
  * transition seam: this suite proves the normalized contracts never expose
  * or mutate them. The earlier raw-bed characterization pin was replaced by
  * the Task 6 normalized bed inventory contract below, mirroring how Task 3
@@ -154,6 +157,9 @@ class MultiBranchOperationsApiTest {
 
     @Autowired
     AppointmentRepository appointments;
+
+    @Autowired
+    StaffAvailabilityRepository staffAvailability;
 
     @Autowired
     BedRepository beds;
@@ -1759,34 +1765,271 @@ class MultiBranchOperationsApiTest {
     // ------------------------------------------------------------------
 
     /**
-     * Retained Task 1 characterization (Task 9 will change it): two
-     * appointments for the same verified professional at exactly the same
-     * timestamp both succeed today — no overlap rejection exists. Proven
-     * through observable records and distinct ids.
+     * Task 9 contract (docs/plan3.md §4.6), replacing the Task 1
+     * overlap-tolerated characterization: scheduling succeeds only inside a
+     * containing modeled availability interval, a second identical-slot
+     * create is the safe 409 with no second row and no second audit event,
+     * an outside-availability slot is likewise 409, and the lone success
+     * keeps its stable DTO contract.
      */
     @Test
-    void appointmentsAcceptOverlappingTimesForTheSameProfessionalToday() {
+    void schedulingRequiresContainingAvailabilityAndRejectsOverlapAndOutsideSlots() {
         String token = login(ADMIN);
         String patientId = createVerifiedPatientId(token, "ovl");
-        String professionalId = createVerifiedStaffId(token, "ovl");
+        String professionalId = createVerifiedSchedulableStaffId(token, "ovl");
+        long createEventsBefore = auditEventCount("Appointment", "CREATE");
         Map<String, Object> payload = appointmentPayload(patientId, professionalId);
 
         ResponseEntity<Map<String, Object>> firstResponse = postJson("/api/appointments", token, payload);
-        ResponseEntity<Map<String, Object>> secondResponse = postJson("/api/appointments", token, payload);
-        assertTrue(firstResponse.getStatusCode().is2xxSuccessful(), "the first overlapping create must succeed today");
-        assertTrue(secondResponse.getStatusCode().is2xxSuccessful(),
-                "the second identical-slot create must also succeed today — no overlap check exists");
+        assertTrue(firstResponse.getStatusCode().is2xxSuccessful(),
+                "an appointment fully inside one availability interval must succeed");
         Map<String, Object> first = firstResponse.getBody();
-        Map<String, Object> second = secondResponse.getBody();
         assertNotNull(first);
-        assertNotNull(second);
-        assertNotEquals(first.get("id"), second.get("id"),
-                "the two overlapping appointments must be two distinct persisted records");
-        assertEquals(professionalId, String.valueOf(first.get("professionalId")));
-        assertEquals(professionalId, String.valueOf(second.get("professionalId")));
-        assertNotNull(first.get("scheduledAt"));
-        assertEquals(first.get("scheduledAt"), second.get("scheduledAt"),
-                "both appointments must carry the exact same scheduled time");
+        assertEquals(60, ((Number) first.get("durationMinutes")).intValue(),
+                "the response must echo the required bounded durationMinutes");
+        assertEquals("2036-07-08T11:30", first.get("endsAt"),
+                "endsAt must be the server-computed half-open window end");
+        assertEquals(Set.of("id", "branchId", "patientId", "professionalId", "scheduledAt",
+                        "durationMinutes", "endsAt", "type", "status"),
+                first.keySet(), "the stable appointment DTO contract must hold exactly");
+
+        ResponseEntity<Map<String, Object>> secondResponse = postJson("/api/appointments", token, payload);
+        assertEquals(HttpStatus.CONFLICT, secondResponse.getStatusCode(),
+                "the second identical-slot create must be the shared conflict");
+        assertNotNull(secondResponse.getBody());
+        assertEquals(API_ERROR_KEYS, secondResponse.getBody().keySet(),
+                "the conflict must carry the shared safe ApiError shape");
+        assertEquals(409, ((Number) secondResponse.getBody().get("status")).intValue());
+
+        Map<String, Object> outside = new HashMap<>(payload);
+        outside.put("scheduledAt", "2036-07-09T10:30:00");
+        assertEquals(HttpStatus.CONFLICT, postJson("/api/appointments", token, outside).getStatusCode(),
+                "a slot without any containing availability interval must conflict");
+
+        assertEquals(createEventsBefore + 1, auditEventCount("Appointment", "CREATE"),
+                "exactly one Appointment CREATE audit event may follow — the refused creates record none");
+        List<String> persistedIds = listOfIds(getList("/api/appointments", token));
+        assertEquals(1, persistedIds.stream().filter(id -> id.equals(String.valueOf(first.get("id")))).count(),
+                "exactly the winning appointment may persist for this professional");
+    }
+
+    /**
+     * Task 9 independence: the same timestamp stays schedulable for
+     * another professional in the same branch and for a professional in
+     * another branch, while the original professional/time pair still
+     * conflicts on a repeat.
+     */
+    @Test
+    void sameTimestampRemainsIndependentAcrossProfessionalsAndBranches() {
+        Branch branchA = createdBranch(suffix + "-inda");
+        Branch branchB = createdBranch(suffix + "-indb");
+        String tokenA = adminTokenActingOn(branchA);
+        String tokenB = adminTokenActingOn(branchB);
+        String patientA = createVerifiedPatientId(tokenA, "inda");
+        String patientB = createVerifiedPatientId(tokenB, "indb");
+        String professionalA1 = createVerifiedSchedulableStaffId(tokenA, "inda1");
+        String professionalA2 = createVerifiedSchedulableStaffId(tokenA, "inda2");
+        String professionalB1 = createVerifiedSchedulableStaffId(tokenB, "indb1");
+
+        assertTrue(postJson("/api/appointments", tokenA, appointmentPayload(patientA, professionalA1))
+                .getStatusCode().is2xxSuccessful(), "the first professional/time pair must schedule");
+        assertTrue(postJson("/api/appointments", tokenA, appointmentPayload(patientA, professionalA2))
+                .getStatusCode().is2xxSuccessful(),
+                "the same timestamp for another professional in the same branch must schedule");
+        assertTrue(postJson("/api/appointments", tokenB, appointmentPayload(patientB, professionalB1))
+                .getStatusCode().is2xxSuccessful(),
+                "the same timestamp in another branch must schedule independently");
+        assertEquals(HttpStatus.CONFLICT,
+                postJson("/api/appointments", tokenA, appointmentPayload(patientA, professionalA1)).getStatusCode(),
+                "the original professional/time pair must still conflict on a repeat");
+    }
+
+    /**
+     * Task 9 legacy honesty: a pre-Task-9 branch-owned row carries no
+     * computable window (no duration/computed end), so it is excluded from
+     * conflict candidates instead of being silently compared with an
+     * invented duration.
+     */
+    @Test
+    void legacyAppointmentsWithoutComputedWindowsStayOutOfConflictCandidates() {
+        Branch branch = createdBranch(suffix + "-legacy-ovl");
+        String token = adminTokenActingOn(branch);
+        String patientId = createVerifiedPatientId(token, "legacy-ovl");
+        String professionalId = createVerifiedSchedulableStaffId(token, "legacy-ovl");
+        appointments.save(new Appointment(branch, patientId, professionalId,
+                "2036-07-08T10:30", "consultation", "scheduled"));
+        assertTrue(postJson("/api/appointments", token, appointmentPayload(patientId, professionalId))
+                        .getStatusCode().is2xxSuccessful(),
+                "the legacy row without a computed window must not block the new create");
+    }
+
+    /**
+     * Task 9 concurrency: two same-time creates racing for one
+     * professional's availability serialize on the database-backed
+     * transactional defense — exactly one success and one safe 409, one
+     * persisted appointment, and one success audit event.
+     */
+    @Test
+    void concurrentSameTimeAppointmentCreatesProduceExactlyOneWinnerAndOneConflict() throws Exception {
+        Branch branch = createdBranch(suffix + "-appt-race");
+        String token = adminTokenActingOn(branch);
+        String patientId = createVerifiedPatientId(token, "appt-race");
+        String professionalId = createVerifiedSchedulableStaffId(token, "appt-race");
+        long createsBefore = auditEventCount("Appointment", "CREATE");
+        Map<String, Object> payload = appointmentPayload(patientId, professionalId);
+
+        int racers = 2;
+        ExecutorService pool = Executors.newFixedThreadPool(racers);
+        try {
+            CountDownLatch start = new CountDownLatch(1);
+            java.util.List<java.util.concurrent.Future<ResponseEntity<Map<String, Object>>>> posts =
+                    new java.util.ArrayList<>();
+            for (int i = 0; i < racers; i++) {
+                posts.add(pool.submit(() -> {
+                    start.await();
+                    return postJson("/api/appointments", token, payload);
+                }));
+            }
+            start.countDown();
+            int wins = 0;
+            for (var future : posts) {
+                ResponseEntity<Map<String, Object>> outcome = future.get(30, java.util.concurrent.TimeUnit.SECONDS);
+                if (outcome.getStatusCode().is2xxSuccessful()) {
+                    wins++;
+                } else {
+                    assertEquals(HttpStatus.CONFLICT, outcome.getStatusCode(),
+                            "a losing racing create must be the safe 409, never a 5xx");
+                    assertNotNull(outcome.getBody());
+                    assertEquals(API_ERROR_KEYS, outcome.getBody().keySet(),
+                            "the losing create must carry the shared safe contract");
+                }
+            }
+            assertEquals(1, wins, "exactly one racing create may win");
+        } finally {
+            pool.shutdownNow();
+        }
+
+        List<Map<String, Object>> persisted = getList("/api/appointments", token).getBody();
+        assertNotNull(persisted);
+        assertEquals(1, persisted.stream()
+                        .filter(row -> professionalId.equals(String.valueOf(row.get("professionalId"))))
+                        .count(),
+                "exactly one racing appointment may persist for the professional");
+        assertEquals(createsBefore + 1, auditEventCount("Appointment", "CREATE"),
+                "exactly one success audit event may follow the race");
+    }
+
+    // ------------------------------------------------------------------
+    // 19b. Task 9: the availability surface contract.
+    // ------------------------------------------------------------------
+
+    /**
+     * Task 9 availability contract over real HTTP: ADMIN creates dated
+     * intervals in its acting branch; invalid intervals (equal/before
+     * bounds, missing or unparseable values) are 400; an overlapping
+     * interval for the same professional is the safe 409; exactly-adjacent
+     * intervals are allowed; a cross-branch professional answers the shared
+     * 404; the read is windowed, allowlisted, and deterministic; and the
+     * role boundary keeps writes ADMIN/HR-only with the GET /api/staff/**
+     * read family (NURSE denied on both).
+     */
+    @Test
+    void availabilityIntervalsEnforceTheTask9ContractEndToEnd() {
+        Branch branchA = createdBranch(suffix + "-avla");
+        Branch branchB = createdBranch(suffix + "-avlb");
+        String tokenA = adminTokenActingOn(branchA);
+        String tokenB = adminTokenActingOn(branchB);
+        String professionalA = createVerifiedStaffId(tokenA, "avla");
+        String professionalB = createVerifiedStaffId(tokenB, "avlb");
+        String pathA = "/api/staff/" + professionalA + "/availability";
+        String pathB = "/api/staff/" + professionalB + "/availability";
+
+        long availabilityCreatesBefore = auditEventCount("StaffAvailability", "CREATE");
+        assertTrue(postJson(pathA, tokenA, Map.of(
+                        "startsAt", "2037-01-04T09:00", "endsAt", "2037-01-04T12:00")).getStatusCode().is2xxSuccessful(),
+                "the seed interval must be creatable by the ADMIN acting in the professional's branch");
+        assertEquals(availabilityCreatesBefore + 1, auditEventCount("StaffAvailability", "CREATE"),
+                "exactly one StaffAvailability CREATE audit event must follow the successful create");
+
+        assertEquals(HttpStatus.BAD_REQUEST, postJson(pathA, tokenA, Map.of(
+                "startsAt", "2037-01-04T13:00", "endsAt", "2037-01-04T13:00")).getStatusCode(),
+                "an interval whose bounds are equal must be rejected with 400");
+        assertEquals(HttpStatus.BAD_REQUEST, postJson(pathA, tokenA, Map.of(
+                "startsAt", "2037-01-04T15:00", "endsAt", "2037-01-04T14:00")).getStatusCode(),
+                "an interval ending before it starts must be rejected with 400");
+        assertEquals(HttpStatus.BAD_REQUEST, postJson(pathA, tokenA, Map.of(
+                "startsAt", "2037-01-04T16:00")).getStatusCode(),
+                "a missing endsAt must be rejected with 400");
+        assertEquals(HttpStatus.BAD_REQUEST, postJson(pathA, tokenA, Map.of(
+                "startsAt", "not-a-date-time", "endsAt", "2037-01-04T17:00")).getStatusCode(),
+                "an unparseable startsAt must be rejected with 400");
+
+        ResponseEntity<Map<String, Object>> overlap = postJson(pathA, tokenA, Map.of(
+                "startsAt", "2037-01-04T10:00", "endsAt", "2037-01-04T13:00"));
+        assertEquals(HttpStatus.CONFLICT, overlap.getStatusCode(),
+                "an overlapping interval for the same professional must conflict");
+        assertNotNull(overlap.getBody());
+        assertEquals(API_ERROR_KEYS, overlap.getBody().keySet(), "the overlap conflict must carry the safe shape");
+
+        assertTrue(postJson(pathA, tokenA, Map.of(
+                        "startsAt", "2037-01-04T12:00", "endsAt", "2037-01-04T14:00")).getStatusCode().is2xxSuccessful(),
+                "an exactly-adjacent half-open interval must be allowed");
+
+        assertEquals(HttpStatus.NOT_FOUND, postJson(pathB, tokenA, Map.of(
+                        "startsAt", "2037-01-04T09:00", "endsAt", "2037-01-04T10:00")).getStatusCode(),
+                "a professional of another branch must answer the shared 404");
+        assertEquals(HttpStatus.NOT_FOUND, postJson("/api/staff/" + UUID.randomUUID() + "/availability", tokenA, Map.of(
+                        "startsAt", "2037-01-04T09:00", "endsAt", "2037-01-04T10:00")).getStatusCode(),
+                "an unknown professional must answer the same shared 404");
+
+        assertEquals(HttpStatus.FORBIDDEN, postJson(pathA, login(NURSE), Map.of(
+                        "startsAt", "2037-01-05T09:00", "endsAt", "2037-01-05T10:00")).getStatusCode(),
+                "availability management must stay out of NURSE's reach");
+        assertEquals(HttpStatus.FORBIDDEN,
+                getJson(pathA + "?from=2037-01-04T00:00&to=2037-01-05T00:00", login(NURSE)).getStatusCode(),
+                "the availability read keeps the GET /api/staff/** family rule");
+
+        ResponseEntity<List<Map<String, Object>>> window = getList(
+                pathA + "?from=2037-01-04T08:00&to=2037-01-04T13:00", tokenA);
+        assertEquals(HttpStatus.OK, window.getStatusCode());
+        List<Map<String, Object>> intervals = window.getBody();
+        assertNotNull(intervals, "the windowed read must carry a body");
+        assertEquals(List.of("2037-01-04T09:00", "2037-01-04T12:00"),
+                intervals.stream().map(row -> String.valueOf(row.get("startsAt"))).toList(),
+                "the window returns exactly the intersecting intervals in chronological order");
+        for (Map<String, Object> interval : intervals) {
+            assertEquals(Set.of("id", "branchId", "staffMemberId", "startsAt", "endsAt"), interval.keySet(),
+                    "the availability read must expose exactly the allowlisted DTO");
+            assertEquals(branchA.getId().toString(), String.valueOf(interval.get("branchId")),
+                    "the interval must carry its owning branch");
+        }
+        ResponseEntity<List<Map<String, Object>>> reread = getList(
+                pathA + "?from=2037-01-04T08:00&to=2037-01-04T13:00", tokenA);
+        assertNotNull(reread.getBody());
+        assertEquals(intervals.stream().map(row -> String.valueOf(row.get("id"))).toList(),
+                reread.getBody().stream().map(row -> String.valueOf(row.get("id"))).toList(),
+                "the windowed read must be deterministic across reads");
+
+        assertEquals(List.of(), listOfIds(getList(pathA + "?from=2037-01-04T00:00&to=2037-01-04T09:00", tokenA)),
+                "a window ending exactly at an interval start is half-open and stays empty");
+        // Error responses carry the JSON ApiError object, so the String-body
+        // raw exchange is used for the window-validation status pins.
+        assertEquals(HttpStatus.BAD_REQUEST, rawExchange(HttpMethod.GET, pathA, tokenA, null).getStatusCode(),
+                "a missing window must be rejected with 400");
+        assertEquals(HttpStatus.BAD_REQUEST, rawExchange(HttpMethod.GET,
+                pathA + "?from=2037-01-04T10:00&to=2037-01-04T10:00", tokenA, null).getStatusCode(),
+                "an empty window (from == to) must be rejected with 400");
+        assertEquals(HttpStatus.BAD_REQUEST, rawExchange(HttpMethod.GET,
+                pathA + "?from=2037-01-04T11:00&to=2037-01-04T10:00", tokenA, null).getStatusCode(),
+                "an inverted window must be rejected with 400");
+        assertEquals(HttpStatus.BAD_REQUEST, rawExchange(HttpMethod.GET,
+                pathA + "?from=yesterday&to=2037-01-04T10:00", tokenA, null).getStatusCode(),
+                "an unparseable window bound must be rejected with 400");
+
+        // Only the two successful creates may own audit events: every refused
+        // availability operation above recorded none.
+        assertEquals(availabilityCreatesBefore + 2, auditEventCount("StaffAvailability", "CREATE"),
+                "the adjacency create is the only later success; refused operations record no audit event");
     }
 
     // ------------------------------------------------------------------
@@ -1809,7 +2052,7 @@ class MultiBranchOperationsApiTest {
                 "today's dashboard is exactly the eleven flat keys with no branch/network keys");
 
         String patientId = createVerifiedPatientId(token, "dash");
-        String professionalId = createVerifiedStaffId(token, "dash");
+        String professionalId = createVerifiedSchedulableStaffId(token, "dash");
         postJson("/api/appointments", token, appointmentPayload(patientId, professionalId));
 
         Map<String, Object> after = readDashboard(token);
@@ -1918,26 +2161,32 @@ class MultiBranchOperationsApiTest {
 
         // Creation derives ownership from the acting context on both branches.
         Map<String, Object> patientA = postJson("/api/patients", tokenA, patientCreatePayload("ta")).getBody();
-        Map<String, Object> staffA = postJson("/api/staff", tokenA, staffCreatePayload("ta")).getBody();
         Map<String, Object> patientB = postJson("/api/patients", tokenB, patientCreatePayload("tb")).getBody();
-        Map<String, Object> staffB = postJson("/api/staff", tokenB, staffCreatePayload("tb")).getBody();
         assertNotNull(patientA);
-        assertNotNull(staffA);
         assertNotNull(patientB);
-        assertNotNull(staffB);
+        String staffA = createVerifiedSchedulableStaffId(tokenA, "ta");
+        String staffB = createVerifiedSchedulableStaffId(tokenB, "tb");
         assertEquals(branchA.getId().toString(), String.valueOf(patientA.get("branchId")),
                 "the patient must be owned by the acting branch derived from the context");
         assertEquals(branchB.getId().toString(), String.valueOf(patientB.get("branchId")),
                 "the same request shape must bind to the other acting branch, proving context derivation");
-        assertEquals(branchA.getId().toString(), String.valueOf(staffA.get("branchId")),
+        assertEquals(branchA.getId().toString(), String.valueOf(patientA.get("branchId")),
+                "the patient must be owned by the acting branch derived from the context");
+        assertEquals(branchB.getId().toString(), String.valueOf(patientB.get("branchId")),
+                "the same request shape must bind to the other acting branch, proving context derivation");
+        Map<String, Object> staffAResponse = getJson("/api/staff/" + staffA, tokenA).getBody();
+        Map<String, Object> staffBResponse = getJson("/api/staff/" + staffB, tokenB).getBody();
+        assertNotNull(staffAResponse);
+        assertNotNull(staffBResponse);
+        assertEquals(branchA.getId().toString(), String.valueOf(staffAResponse.get("branchId")),
                 "the staff record must be owned by the acting branch");
-        assertEquals(branchB.getId().toString(), String.valueOf(staffB.get("branchId")),
+        assertEquals(branchB.getId().toString(), String.valueOf(staffBResponse.get("branchId")),
                 "the other-branch staff record must bind to its own acting branch");
 
         Map<String, Object> appointmentA = postJson("/api/appointments", tokenA,
-                appointmentPayload(String.valueOf(patientA.get("id")), String.valueOf(staffA.get("id")))).getBody();
+                appointmentPayload(String.valueOf(patientA.get("id")), staffA)).getBody();
         Map<String, Object> appointmentB = postJson("/api/appointments", tokenB,
-                appointmentPayload(String.valueOf(patientB.get("id")), String.valueOf(staffB.get("id")))).getBody();
+                appointmentPayload(String.valueOf(patientB.get("id")), staffB)).getBody();
         assertNotNull(appointmentA);
         assertNotNull(appointmentB);
         assertEquals(branchA.getId().toString(), String.valueOf(appointmentA.get("branchId")),
@@ -1946,7 +2195,7 @@ class MultiBranchOperationsApiTest {
         // Cross-branch detail reads are the shared 404 — indistinguishable from nonexistent.
         assertEquals(HttpStatus.NOT_FOUND, getJson("/api/patients/" + patientB.get("id"), tokenA).getStatusCode(),
                 "branch A must not see branch B's patient");
-        assertEquals(HttpStatus.NOT_FOUND, getJson("/api/staff/" + staffB.get("id"), tokenA).getStatusCode(),
+        assertEquals(HttpStatus.NOT_FOUND, getJson("/api/staff/" + staffB, tokenA).getStatusCode(),
                 "branch A must not see branch B's professional");
         assertEquals(HttpStatus.NOT_FOUND, getJson("/api/appointments/" + appointmentB.get("id"), tokenA).getStatusCode(),
                 "branch A must not see branch B's appointment");
@@ -1958,8 +2207,8 @@ class MultiBranchOperationsApiTest {
         assertTrue(patientIdsA.contains(String.valueOf(patientA.get("id"))), "branch A lists its own patient");
         assertFalse(patientIdsA.contains(String.valueOf(patientB.get("id"))), "branch A never lists branch B's patient");
         List<String> staffIdsA = listOfIds(getList("/api/staff", tokenA));
-        assertTrue(staffIdsA.contains(String.valueOf(staffA.get("id"))), "branch A lists its own professional");
-        assertFalse(staffIdsA.contains(String.valueOf(staffB.get("id"))), "branch A never lists branch B's professional");
+        assertTrue(staffIdsA.contains(staffA), "branch A lists its own professional");
+        assertFalse(staffIdsA.contains(staffB), "branch A never lists branch B's professional");
         List<String> appointmentIdsA = listOfIds(getList("/api/appointments", tokenA));
         assertTrue(appointmentIdsA.contains(String.valueOf(appointmentA.get("id"))), "branch A lists its own appointment");
         assertFalse(appointmentIdsA.contains(String.valueOf(appointmentB.get("id"))),
@@ -1988,26 +2237,24 @@ class MultiBranchOperationsApiTest {
         String tokenB = adminTokenActingOn(branchB);
 
         Map<String, Object> patientA = postJson("/api/patients", tokenA, patientCreatePayload("ra")).getBody();
-        Map<String, Object> staffA = postJson("/api/staff", tokenA, staffCreatePayload("ra")).getBody();
         Map<String, Object> patientB = postJson("/api/patients", tokenB, patientCreatePayload("rb")).getBody();
-        Map<String, Object> staffB = postJson("/api/staff", tokenB, staffCreatePayload("rb")).getBody();
         assertNotNull(patientA);
-        assertNotNull(staffA);
         assertNotNull(patientB);
-        assertNotNull(staffB);
+        String staffA = createVerifiedSchedulableStaffId(tokenA, "ra");
+        String staffB = createVerifiedSchedulableStaffId(tokenB, "rb");
 
         long appointmentCreatesBefore = auditEventCount("Appointment", "CREATE");
         assertEquals(HttpStatus.NOT_FOUND, postJson("/api/appointments", tokenA,
-                        appointmentPayload(String.valueOf(patientB.get("id")), String.valueOf(staffA.get("id")))).getStatusCode(),
+                        appointmentPayload(String.valueOf(patientB.get("id")), staffA)).getStatusCode(),
                 "a cross-branch patient reference must be indistinguishable from a nonexistent one");
         assertEquals(HttpStatus.NOT_FOUND, postJson("/api/appointments", tokenA,
-                        appointmentPayload(String.valueOf(patientA.get("id")), String.valueOf(staffB.get("id")))).getStatusCode(),
+                        appointmentPayload(String.valueOf(patientA.get("id")), staffB)).getStatusCode(),
                 "a cross-branch professional reference must be refused like an unknown one");
         assertEquals(appointmentCreatesBefore, auditEventCount("Appointment", "CREATE"),
                 "failed cross-branch writes must record no audit event");
 
         assertTrue(postJson("/api/appointments", tokenA,
-                        appointmentPayload(String.valueOf(patientA.get("id")), String.valueOf(staffA.get("id"))))
+                        appointmentPayload(String.valueOf(patientA.get("id")), staffA))
                         .getStatusCode().is2xxSuccessful(),
                 "the same-branch reference pair must succeed");
         assertEquals(appointmentCreatesBefore + 1, auditEventCount("Appointment", "CREATE"),
@@ -2083,6 +2330,7 @@ class MultiBranchOperationsApiTest {
      */
     private void wipeHierarchy() {
         appointments.deleteAll();
+        staffAvailability.deleteAll();
         beds.deleteAll();
         staffMembers.deleteAll();
         patients.deleteAll();
@@ -2246,14 +2494,41 @@ class MultiBranchOperationsApiTest {
                 "patientId", UUID.randomUUID().toString());
     }
 
-    /** Synthetic CreateAppointmentRequest body over verified references. */
+    /**
+     * Synthetic CreateAppointmentRequest body over verified references.
+     * Task 9: durationMinutes is a required, bounded (5-480) engineering
+     * validation value for the synthetic demo only — never clinical,
+     * care, or staffing policy. The fixed slot (10:30 + 60 minutes) sits
+     * inside the day availability interval the schedulable-staff helper
+     * creates.
+     */
     private Map<String, Object> appointmentPayload(String patientId, String professionalId) {
         return Map.of(
                 "patientId", patientId,
                 "professionalId", professionalId,
                 "scheduledAt", "2036-07-08T10:30:00",
+                "durationMinutes", 60,
                 "type", "consultation",
                 "status", "scheduled");
+    }
+
+    /** Creates one modeled availability interval through the ADMIN/HR write route. */
+    private void createAvailability(String token, String professionalId, String startsAt, String endsAt) {
+        ResponseEntity<Map<String, Object>> created = postJson(
+                "/api/staff/" + professionalId + "/availability", token,
+                Map.of("startsAt", startsAt, "endsAt", endsAt));
+        assertTrue(created.getStatusCode().is2xxSuccessful(), "synthetic availability creation must succeed");
+    }
+
+    /**
+     * Creates a verified professional plus one full-day availability
+     * interval covering the fixed appointmentPayload slot — the minimal
+     * schedulable shape for Task 9 success-path tests.
+     */
+    private String createVerifiedSchedulableStaffId(String token, String tag) {
+        String professionalId = createVerifiedStaffId(token, tag);
+        createAvailability(token, professionalId, "2036-07-08T00:00", "2036-07-08T23:59");
+        return professionalId;
     }
 
     private String createVerifiedPatientId(String token, String tag) {

@@ -279,14 +279,30 @@ class SecurityAuthorizationTest {
                 "address", "2 Matrix Avenue " + tag);
     }
 
-    /** Synthetic CreateAppointmentRequest body over verified references. */
+    /**
+     * Synthetic CreateAppointmentRequest body over verified references.
+     * Task 9 (docs/plan3.md): durationMinutes is a required, bounded
+     * (5-480) engineering validation value for the synthetic demo — never a
+     * clinical policy or a statement about real appointment durations.
+     */
     private Map<String, Object> appointmentPayload(String patientId, String professionalId, int hourSlot) {
         return Map.of(
                 "patientId", patientId,
                 "professionalId", professionalId,
                 "scheduledAt", String.format("2033-05-06T%02d:30:00", hourSlot),
+                "durationMinutes", 60,
                 "type", "consultation",
                 "status", "scheduled");
+    }
+
+    /** Creates one full-day modeled availability interval for the professional through the ADMIN/HR write route. */
+    private void createDayAvailabilityFor(String token, String professionalId, String day) {
+        ResponseEntity<Map<String, Object>> created = postJson(
+                "/api/staff/" + professionalId + "/availability", token, Map.of(
+                        "startsAt", day + "T00:00",
+                        "endsAt", day + "T23:59"));
+        assertTrue(created.getStatusCode().is2xxSuccessful(),
+                "the synthetic availability interval must be creatable for the scheduling matrix");
     }
 
     private String createVerifiedPatientId(String token, String tag) {
@@ -429,6 +445,12 @@ class SecurityAuthorizationTest {
         String adminToken = login(ADMIN);
         String patientId = createVerifiedPatientId(adminToken, "appt");
         String professionalId = createVerifiedStaffId(adminToken, "appt");
+        // Task 9: an appointment must sit fully inside one modeled
+        // availability interval, so the allowed-role cases create one
+        // full-day interval first. The two allowed creates (08:30 and
+        // 09:30, each 60 minutes) end up exactly adjacent — the half-open
+        // overlap rule lets them both persist.
+        createDayAvailabilityFor(adminToken, professionalId, "2033-05-06");
         int slot = 8;
         for (String username : List.of(ADMIN, RECEPTIONIST)) {
             ResponseEntity<Map<String, Object>> created = postJson("/api/appointments", login(username),
@@ -481,6 +503,54 @@ class SecurityAuthorizationTest {
                 "licenseNumber", "LIC-" + suffix + "-recep",
                 "department", "internal medicine")).getStatusCode(),
                 "staff writes must stay ADMIN/HR-only");
+    }
+
+    /**
+     * Task 9 matrix — availability management surface. ENFORCED POLICY
+     * (inherited unchanged from the existing method-level/route rules):
+     * availability writes (/api/staff/** non-GET) stay ADMIN/HR-only, while
+     * the availability read rides the existing GET /api/staff/** family
+     * (ADMIN/HR/RECEPTIONIST) because the primary scheduling role must read
+     * the modeled intervals. Scheduling-only roles keep the read and are
+     * refused the write with 403; deny-by-default holds for every other
+     * role. No new route rule was added for this surface.
+     */
+    @Test
+    void availabilityWritesStayAdminHrOnlyWhileTheReadKeepsTheStaffFamilyRules() {
+        String adminToken = login(ADMIN);
+        String professionalId = createVerifiedStaffId(adminToken, "avail");
+        ResponseEntity<Map<String, Object>> created = postJson(
+                "/api/staff/" + professionalId + "/availability", adminToken, Map.of(
+                        "startsAt", "2035-02-02T09:00",
+                        "endsAt", "2035-02-02T12:00"));
+        assertTrue(created.getStatusCode().is2xxSuccessful(),
+                "ADMIN holds the availability-management role and must be admitted");
+        assertEquals(HttpStatus.FORBIDDEN, postJson(
+                        "/api/staff/" + professionalId + "/availability", login(RECEPTIONIST), Map.of(
+                                "startsAt", "2035-02-02T13:00",
+                                "endsAt", "2035-02-02T14:00")).getStatusCode(),
+                "RECEPTIONIST schedules but must be refused availability management with 403");
+        assertEquals(HttpStatus.FORBIDDEN, postJson(
+                        "/api/staff/" + professionalId + "/availability", login(NURSE), Map.of(
+                                "startsAt", "2035-02-02T13:00",
+                                "endsAt", "2035-02-02T14:00")).getStatusCode(),
+                "NURSE must be refused availability management with 403");
+        assertEquals(HttpStatus.FORBIDDEN, postJson(
+                        "/api/staff/" + professionalId + "/availability", login(DENIED), Map.of(
+                                "startsAt", "2035-02-02T13:00",
+                                "endsAt", "2035-02-02T14:00")).getStatusCode(),
+                "a role outside every staff rule must be denied the availability write with 403");
+
+        String windowPath = "/api/staff/" + professionalId + "/availability"
+                + "?from=2035-02-02T00:00&to=2035-02-03T00:00";
+        assertEquals(HttpStatus.OK, get(windowPath, adminToken).getStatusCode(),
+                "ADMIN must read the modeled availability");
+        assertEquals(HttpStatus.OK, get(windowPath, login(RECEPTIONIST)).getStatusCode(),
+                "RECEPTIONIST scheduling needs the modeled-availability read");
+        assertEquals(HttpStatus.FORBIDDEN, get(windowPath, login(NURSE)).getStatusCode(),
+                "the availability read keeps the GET /api/staff/** family rule");
+        assertEquals(HttpStatus.FORBIDDEN, get(windowPath, login(DENIED)).getStatusCode(),
+                "a role outside the staff read family stays denied");
     }
 
     // ------------------------------------------------------------------

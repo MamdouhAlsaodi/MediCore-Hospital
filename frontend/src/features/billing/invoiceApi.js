@@ -3,7 +3,8 @@ import { apiFetch } from '../../api.js';
 // The only invoice transport adapter (docs/plan2.md Task 4). Bodies mirror
 // InvoiceDtos exactly:
 //   - list:       GET /api/invoices -> InvoiceResponse[]
-//                 (id, patientId, invoiceNumber, amount, currency, status)
+//                 (id, branchId, patientId, invoiceNumber, amount,
+//                 currency, status)
 //   - create:     POST /api/invoices with CreateInvoiceRequest
 //                 { patientId: UUID, invoiceNumber, amount, currency } —
 //                 the server sets status=DRAFT and owns the lifecycle, so
@@ -14,9 +15,14 @@ import { apiFetch } from '../../api.js';
 //                 ISSUED -> PAID | VOID; PAID and VOID are terminal, and a
 //                 repeat, backward move, or unknown target is refused with
 //                 a safe 409.
-// patientId is a typed UUID reference validated server-side; unknown
-// references are rejected with 404 and malformed bodies with 400 by the
-// shared GlobalExceptionHandler. This family is a FINANCIAL SIMULATION —
+// patientId is a typed UUID reference validated server-side inside the
+// acting branch (docs/plan3.md Task 8): unknown and cross-branch references
+// are rejected with 404 and malformed bodies with 400 by the shared
+// GlobalExceptionHandler. Every list/detail/transition resolves only inside
+// the branch bound to the context-bound token — scope is always
+// server-derived from the token, never a client-selected value, so the
+// adapters carry no branch input of any kind. branchId on each row is the
+// server-stamped owning branch. This family is a FINANCIAL SIMULATION —
 // demo amounts and currency labels only: no payments, collection, charges,
 // gateways, taxes, currency conversion, FX, real money, or financial
 // advice. All transport goes through the shared apiFetch (Bearer token,

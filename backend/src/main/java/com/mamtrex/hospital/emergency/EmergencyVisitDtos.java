@@ -8,14 +8,18 @@ import java.util.UUID;
 
 /**
  * Public emergency-visit contract for /api/emergency-visits (docs/plan2.md
- * Task 3). patientId is a typed UUID reference resolved by
- * {@link EmergencyVisitService} against the patient repository; a malformed
- * non-UUID body value fails deserialization with 400 via the shared
- * GlobalExceptionHandler malformed-body mapping, and an unresolvable
- * reference returns the shared 404. arrivalAt is a typed ISO value stored as
- * its canonical string, following the appointment and admission precedent
- * (no destructive column migration). The create request deliberately carries
+ * Task 3, branch scope added by docs/plan3.md Task 8). patientId is a typed
+ * UUID reference resolved by {@link EmergencyVisitService} against the
+ * patient repository inside the acting branch; a malformed non-UUID body
+ * value fails deserialization with 400 via the shared GlobalExceptionHandler
+ * malformed-body mapping, and an unresolvable or cross-branch reference
+ * returns the shared 404. arrivalAt is a typed ISO value stored as its
+ * canonical string, following the appointment and admission precedent (no
+ * destructive column migration). The create request deliberately carries
  * NO status field: the server owns the lifecycle and sets status=WAITING.
+ * It deliberately carries NO branch field either: ownership is stamped by
+ * the server from the authenticated acting context and is never client
+ * input.
  *
  * triageLevel is a NEUTRAL DEMO LABEL restricted to the strings "1"–"5".
  * It is a non-clinical training simulation value with NO clinical meaning:
@@ -32,16 +36,16 @@ public final class EmergencyVisitDtos {
 
     /**
      * Stable public emergency-visit representation. patientId is the
-     * canonical UUID string of the verified patient; status is the
-     * server-owned lifecycle state WAITING | IN_TREATMENT | CLOSED; the
-     * triage label is the neutral demo value above. No persistence metadata
-     * is exposed.
+     * canonical UUID string of the verified patient; branchId is the
+     * server-stamped owning branch; status is the server-owned lifecycle
+     * state WAITING | IN_TREATMENT | CLOSED; the triage label is the neutral
+     * demo value above. No persistence metadata is exposed.
      */
-    public record EmergencyVisitResponse(UUID id, String patientId, String arrivalAt,
+    public record EmergencyVisitResponse(UUID id, UUID branchId, String patientId, String arrivalAt,
                                          String triageLevel, String chiefComplaint, String status) {
 
         public static EmergencyVisitResponse from(EmergencyVisit v) {
-            return new EmergencyVisitResponse(v.getId(), v.getPatientId(), v.getArrivalAt(),
+            return new EmergencyVisitResponse(v.getId(), v.getBranchId(), v.getPatientId(), v.getArrivalAt(),
                     v.getTriageLevel(), v.getChiefComplaint(), v.getStatus());
         }
     }

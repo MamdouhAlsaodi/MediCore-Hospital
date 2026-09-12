@@ -8,13 +8,17 @@ import java.util.UUID;
 
 /**
  * Narrow HTTP/DTO mapper over {@link EmergencyVisitService} (docs/plan2.md
- * Task 3): parses requests, delegates reference resolution, the server-owned
- * WAITING -> IN_TREATMENT | CLOSED lifecycle, and audit recording to the
- * service, and returns {@link EmergencyVisitDtos.EmergencyVisitResponse} —
- * never a JPA entity. It owns no repositories and records no audit events;
- * shared client-error mapping (404/400/409) lives in
- * {@link com.mamtrex.hospital.shared.GlobalExceptionHandler}. The triage
- * label handled here is a neutral 1–5 demo value with no clinical meaning.
+ * Task 3, branch scope added by docs/plan3.md Task 8): parses requests,
+ * delegates branch-derived ownership, the branch-scoped reference
+ * resolution, the server-owned WAITING -> IN_TREATMENT | CLOSED lifecycle,
+ * and audit recording to the service, and returns
+ * {@link EmergencyVisitDtos.EmergencyVisitResponse} — never a JPA entity.
+ * No request carries a branch value: scope comes only from the
+ * authenticated acting context inside the service. It owns no repositories
+ * and records no audit events; shared client-error mapping (404/400/409)
+ * lives in {@link com.mamtrex.hospital.shared.GlobalExceptionHandler}. The
+ * triage label handled here is a neutral 1–5 demo value with no clinical
+ * meaning.
  */
 @RestController
 @RequestMapping("/api/emergency-visits")

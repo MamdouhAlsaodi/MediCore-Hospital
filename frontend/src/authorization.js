@@ -24,7 +24,11 @@
 //   invoice read       GET  /api/invoices       (the invoices list; plan2.md Task 4)
 //   invoice create     POST /api/invoices       (the "Create invoice" action)
 //   invoice transition PUT  /api/invoices/{id}/status (the guarded status actions)
-//   audit read         GET  /api/audit          (the ADMIN audit evidence screen)
+//   audit read         GET  /api/audit?branchId&resourceType&actor&correlationId
+//                      (the ADMIN audit evidence screen; plan3.md Task 11 adds
+//                       the four read filters — the visible scope slice is
+//                       decided server-side from the acting context, so the
+//                       filters can only narrow, never widen, a view)
 //
 // The map mirrors the server-enforced matrix as of the Task 9 alignment
 // (commit b49e549, PR #4): method-level rules in SecurityConfig restrict
@@ -81,6 +85,10 @@ export const PERMISSIONS = {
     create: ['ADMIN', 'BILLING'],
     transition: ['ADMIN', 'BILLING'],
   },
+  // Bed/admission role narrowing stays an unresolved owner decision (plan3
+  // §8): Task 11 explicitly changed no bed/admission role policy, so these
+  // matrices remain exactly as the server family rules admit them.
+  //
   // Beds (plan3.md Task 6): the server family rule on /api/beds/** admits
   // all four clinical-administrative roles on every method and Task 6
   // changed no role policy (plan §8 narrowing stays an owner decision), so
@@ -96,6 +104,12 @@ export const PERMISSIONS = {
   },
   // Audit evidence stays ADMIN-only, mirroring the SecurityConfig rule
   // ("hasRole(\"ADMIN\")" on /api/audit/**) — no role may widen it.
+  // Task 11 (plan3.md) enriches the evidence with the acting context and one
+  // bounded correlation id and makes the read scope-aware on the server
+  // (organization-wide + legacy/unassigned for ORGANIZATION-scope ADMIN, own
+  // branch for BRANCH-scope, own department for DEPARTMENT-scope); it changes
+  // no role policy here or anywhere else, so the hint stays exactly this one
+  // ADMIN-only action.
   audit: {
     read: ['ADMIN'],
   },

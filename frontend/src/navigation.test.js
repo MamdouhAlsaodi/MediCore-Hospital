@@ -106,6 +106,24 @@ describe('navigation registry (plan1.md Task 9 + plan2.md Tasks 2-4)', () => {
     expect(invoices.heading).toBe('Invoices');
   });
 
+  it('audit is an implemented destination with its own label and heading, offered to ADMIN only (plan3.md Task 11)', () => {
+    const audit = permittedDestinations(sessionFor('ADMIN').roles)
+      .find((destination) => destination.id === 'audit');
+    expect(audit).toBeDefined();
+    expect(audit.implemented).toBe(true);
+    expect(audit.label).toBe('Audit');
+    expect(audit.heading).toBe('Audit Evidence');
+    // The destination mirrors the server rule on /api/audit/** (ADMIN-only,
+    // with the visible slice decided server-side from the acting context):
+    // no other role is offered it, and malformed role lists deny by default.
+    expect(canViewDestination(audit, ['ADMIN'])).toBe(true);
+    for (const role of ['DOCTOR', 'NURSE', 'RECEPTIONIST', 'BILLING', 'LAB_TECH']) {
+      expect(canViewDestination(audit, [role]), `${role} can view audit`).toBe(false);
+    }
+    expect(canViewDestination(audit, [])).toBe(false);
+    expect(canViewDestination(audit, undefined)).toBe(false);
+  });
+
   it('never offers any destination without roles; an unknown role still sees only the ANY dashboard', () => {
     // Missing or empty role lists deny every destination, so a malformed
     // session can never widen what the shell offers. A non-empty role set

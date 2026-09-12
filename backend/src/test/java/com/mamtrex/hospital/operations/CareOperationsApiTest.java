@@ -24,9 +24,9 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.HashSet;
 import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -142,12 +142,21 @@ class CareOperationsApiTest {
     /** The three branch-identity keys of the typed summary; every other key is a numeric count. */
     private static final Set<String> BRANCH_IDENTITY_KEYS = Set.of("branchId", "branchCode", "branchName");
 
-    /** Task 7 audit contract: exactly these six public event fields. */
-    private static final Set<String> AUDIT_CONTRACT_KEYS = Set.of(
-            "actor", "action", "resourceType", "resourceId", "details", "occurredAt");
+    /**
+     * Task 11 audit DTO contract: exactly these fifteen public evidence
+     * fields — the six Task 7 evidence fields plus the acting context
+     * (assignmentId, role, scope, organizationId, branchId, departmentId),
+     * the bounded correlation id, the event identity, and the
+     * legacy/unassigned attribution mark. The entity JSON (and its
+     * persistence metadata) is no longer exposed at all.
+     */
+    private static final Set<String> AUDIT_DTO_KEYS = Set.of(
+            "id", "actor", "action", "resourceType", "resourceId", "details", "occurredAt",
+            "assignmentId", "role", "scope", "organizationId", "branchId", "departmentId",
+            "correlationId", "branchAttribution");
 
-    /** Task 7 tolerated persistence metadata already on the entity JSON; the contract never grows beyond this. */
-    private static final Set<String> AUDIT_METADATA_KEYS = Set.of("id", "createdAt", "updatedAt", "version");
+    /** Task 11 correlation ids are bounded and use only safe evidence characters. */
+    private static final Pattern CORRELATION_SHAPE = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]{0,63}");
 
     @Autowired
     TestRestTemplate rest;
@@ -1644,6 +1653,9 @@ class CareOperationsApiTest {
                 visitId, Set.of("created", "status: IN_TREATMENT", "status: CLOSED"),
                 invoiceId, Set.of("created", "status: ISSUED", "status: PAID"));
         Set<String> allowedActors = Set.of(ADMIN_USER, NURSE_USER, DOCTOR_USER, BILLING_USER);
+        String actingBranchId = branches.findByOrganizationIdAndCode(
+                organizations.findByCode(TEST_ORG_CODE).orElseThrow().getId(), TEST_BRANCH_CODE)
+                .orElseThrow().getId().toString();
         for (Map<String, Object> event : swept) {
             String resourceId = String.valueOf(event.get("resourceId"));
             assertTrue(allowedDetails.get(resourceId).contains(event.get("details")),
@@ -1652,6 +1664,20 @@ class CareOperationsApiTest {
                     "the audit actor must be an authenticated session user: " + event.get("actor"));
             assertDoesNotThrow(() -> Instant.parse(String.valueOf(event.get("occurredAt"))),
                     "occurredAt must be a real instant");
+            // Task 11: every success event carries the acting context and a
+            // bounded correlation id — attributable to identity, assignment,
+            // role, scope, organization, and branch, never guessed.
+            assertNotNull(event.get("assignmentId"), "the event must carry the acting assignment");
+            assertInstanceOf(String.class, event.get("role"), "the event must carry the acting role");
+            assertInstanceOf(String.class, event.get("scope"), "the event must carry the acting scope");
+            assertEquals(actingBranchId, event.get("branchId"),
+                    "every swept event belongs to the suite's acting branch");
+            String correlationId = String.valueOf(event.get("correlationId"));
+            assertTrue(correlationId.length() <= 64, "correlation ids are bounded to 64 characters");
+            assertTrue(CORRELATION_SHAPE.matcher(correlationId).matches(),
+                    "correlation ids must use the safe bounded evidence alphabet: " + correlationId);
+            assertNull(event.get("branchAttribution"),
+                    "only context-less legacy events may carry the legacy/unassigned mark");
         }
 
         String dumped;
@@ -1699,18 +1725,14 @@ class CareOperationsApiTest {
     }
 
     /**
-     * Task 7 shape pin: the public event shape stays exactly the six
-     * contract fields; persistence metadata may exist on the entity JSON
-     * (BaseEntity), but nothing beyond it may appear — the public contract
-     * must not expand.
+     * Task 11 shape pin: the audit read is the exact fifteen-field DTO
+     * allowlist — the six evidence fields plus the acting context and the
+     * bounded correlation id — and the entity JSON (including the formerly
+     * tolerated persistence metadata) never surfaces.
      */
     private void assertEventShape(Map<String, Object> event) {
-        Set<String> keys = event.keySet();
-        assertTrue(keys.containsAll(AUDIT_CONTRACT_KEYS),
-                "every audit event must expose the six contract fields, saw: " + keys);
-        assertTrue(union(AUDIT_CONTRACT_KEYS, AUDIT_METADATA_KEYS).containsAll(keys),
-                "the audit payload contract must not expand beyond the six contract fields "
-                        + "and tolerated persistence metadata, saw: " + keys);
+        assertEquals(AUDIT_DTO_KEYS, event.keySet(),
+                "every audit event must be exactly the Task 11 DTO allowlist, saw: " + event.keySet());
     }
 
     /** Counts one resource's events for an (resourceType, resourceId, action) triple, ignoring details. */
@@ -1881,12 +1903,6 @@ class CareOperationsApiTest {
         return ((Number) value).longValue();
     }
 
-    private Set<String> union(Set<String> left, Set<String> right) {
-        Set<String> both = new HashSet<>(left);
-        both.addAll(right);
-        return both;
-    }
-
     private String requireId(ResponseEntity<Map<String, Object>> response) {
         assertEquals(HttpStatus.OK, response.getStatusCode());
         Map<String, Object> body = response.getBody();
@@ -1954,5 +1970,71 @@ class CareOperationsApiTest {
             headers.setBearerAuth(token);
         }
         return headers;
+    }
+
+    // ------------------------------------------------------------------
+    // Task 11 correlation-id evidence contract (docs/plan3.md)
+    // ------------------------------------------------------------------
+
+    /** POST JSON with one optional correlation-id header, keeping the response headers reachable. */
+    private ResponseEntity<Map<String, Object>> postWithCorrelation(
+            String path, String token, String correlationId, Map<String, Object> payload) {
+        HttpHeaders headers = new HttpHeaders();
+        if (token != null) {
+            headers.setBearerAuth(token);
+        }
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        if (correlationId != null) {
+            headers.set("X-Correlation-Id", correlationId);
+        }
+        return rest.exchange(path, HttpMethod.POST, new HttpEntity<>(payload, headers),
+                new ParameterizedTypeReference<Map<String, Object>>() {});
+    }
+
+    /**
+     * Task 11: the request boundary echoes one bounded correlation id in the
+     * X-Correlation-Id response header, a well-formed client value is stored
+     * verbatim on exactly the one success event it produced, and a malformed
+     * value is safely replaced by a server-generated bounded id — never
+     * echoed or stored raw. Failure responses record no event at all, so a
+     * correlation id never points at a refused command.
+     */
+    @Test
+    void sensitiveCommandsEchoAndPersistOneBoundedCorrelationId() {
+        String adminToken = login(ADMIN_USER);
+        String token = login(RECEPTIONIST_USER);
+        String patientId = createSyntheticPatient(adminToken, "corr");
+
+        // A well-formed client correlation id is echoed and stored verbatim.
+        ResponseEntity<Map<String, Object>> created = postWithCorrelation(
+                "/api/admissions", token, "careops-evidence-77", admissionCreatePayload("corr-ok", patientId));
+        assertTrue(created.getStatusCode().is2xxSuccessful(), "the admission create must succeed");
+        assertEquals("careops-evidence-77", created.getHeaders().getFirst("X-Correlation-Id"),
+                "the response must echo the validated client correlation id");
+        String createdId = requireId(created);
+        List<Map<String, Object>> matching = auditEvents(adminToken).stream()
+                .filter(e -> "careops-evidence-77".equals(e.get("correlationId")))
+                .toList();
+        assertEquals(1, matching.size(), "exactly one event carries this correlation id");
+        assertEquals("Admission", matching.get(0).get("resourceType"));
+        assertEquals(createdId, matching.get(0).get("resourceId"));
+        assertEventShape(matching.get(0));
+
+        // A malformed correlation id is replaced by a bounded server-generated one.
+        ResponseEntity<Map<String, Object>> replaced = postWithCorrelation(
+                "/api/admissions", token, "invalid correlation id!", admissionCreatePayload("corr-bad", patientId));
+        assertTrue(replaced.getStatusCode().is2xxSuccessful());
+        String generated = replaced.getHeaders().getFirst("X-Correlation-Id");
+        assertNotNull(generated, "every response carries a bounded correlation id");
+        assertNotEquals("invalid correlation id!", generated, "hostile header input is never echoed");
+        assertTrue(generated.length() <= 64, "correlation ids are bounded to 64 characters");
+        assertTrue(CORRELATION_SHAPE.matcher(generated).matches(),
+                "the generated id must use the safe bounded evidence alphabet: " + generated);
+        String replacedId = requireId(replaced);
+        assertEquals(generated,
+                auditEvents(adminToken).stream()
+                        .filter(e -> "Admission".equals(e.get("resourceType")) && replacedId.equals(e.get("resourceId")))
+                        .findFirst().orElseThrow().get("correlationId"),
+                "the event stores exactly the server-generated id the caller received");
     }
 }

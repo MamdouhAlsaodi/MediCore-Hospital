@@ -1,5 +1,6 @@
 package com.mamtrex.hospital.auth;
 
+import com.mamtrex.hospital.audit.AuditService;
 import com.mamtrex.hospital.department.Department;
 import com.mamtrex.hospital.department.DepartmentRepository;
 import com.mamtrex.hospital.organization.Branch;
@@ -17,6 +18,7 @@ import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.*;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -29,6 +31,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -72,6 +75,18 @@ import static org.junit.jupiter.api.Assertions.*;
  * pins for the global shape were intentionally replaced by these Task 3 pins;
  * the care-operations and Task 9 matrices above are neither weakened nor
  * duplicated.
+ *
+ * Plan 3 Task 11 (docs/plan3.md, packet MEDICORE-PLAN3-TASK11-071) enriches
+ * every success audit event with the acting context (assignment id, role,
+ * scope, organization, selected branch, optional department) and one
+ * server-generated-or-validated bounded correlation id that the request
+ * boundary echoes in the {@code X-Correlation-Id} response header. The audit
+ * read becomes a scope-aware DTO/allowlist surface: organization-scoped ADMIN
+ * inspects the whole organization plus legacy/unassigned events (never
+ * guessed into a branch), branch-scoped ADMIN sees only its own branch
+ * server-side, department-scoped ADMIN only its department, and the branch,
+ * resource-type, actor, and correlation filters never widen any scope. No
+ * failure class (400/401/403/404/409) records a domain-success event.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
         "spring.datasource.url=jdbc:h2:mem:authz-test;MODE=PostgreSQL;DB_CLOSE_DELAY=-1",
@@ -123,6 +138,10 @@ class SecurityAuthorizationTest {
     @Autowired
     JdbcTemplate jdbc;
 
+    /** Direct seam for fabricating legacy/unassigned events exactly as unauthenticated bootstrap code does. */
+    @Autowired
+    AuditService auditService;
+
     /** Unique synthetic suffix per test instance keeps every record disposable. */
     private final String suffix = UUID.randomUUID().toString().substring(0, 8);
 
@@ -137,6 +156,16 @@ class SecurityAuthorizationTest {
             "branchId", "branchLabel", "departmentId", "departmentLabel", "enabled");
     private static final Set<String> ACTING_CONTEXT_KEYS = Set.of(
             "username", "assignmentId", "role", "scope", "organizationId", "branchId", "departmentId");
+
+    /** Task 11 audit DTO allowlist: exactly these fifteen evidence fields — the entity JSON is never exposed. */
+    private static final Set<String> AUDIT_DTO_KEYS = Set.of(
+            "id", "actor", "action", "resourceType", "resourceId", "details", "occurredAt",
+            "assignmentId", "role", "scope", "organizationId", "branchId", "departmentId",
+            "correlationId", "branchAttribution");
+
+    /** Task 11 correlation id header and its bounded safe shape (1-64 chars, safe evidence alphabet). */
+    private static final String CORRELATION_HEADER = "X-Correlation-Id";
+    private static final Pattern CORRELATION_SHAPE = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]{0,63}");
 
     private static final ParameterizedTypeReference<Map<String, Object>> MAP =
             new ParameterizedTypeReference<Map<String, Object>>() {};
@@ -1446,5 +1475,365 @@ class SecurityAuthorizationTest {
             assertEquals(Map.of("error", INVALID_CREDENTIALS_BODY), response.getBody(),
                     "bad username and wrong password stay one indistinguishable 401");
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Plan 3 Task 11 (docs/plan3.md) — audit context, correlation ids,
+    // scope-aware filtered read, and the failure-class audit silence pin.
+    // ------------------------------------------------------------------
+
+    /** POST JSON with one optional correlation-id header, keeping the response headers reachable. */
+    private ResponseEntity<Map<String, Object>> postJsonWithCorrelation(
+            String path, String token, String correlationId, Map<String, Object> payload) {
+        HttpHeaders headers = new HttpHeaders();
+        if (token != null) {
+            headers.setBearerAuth(token);
+        }
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        if (correlationId != null) {
+            headers.set(CORRELATION_HEADER, correlationId);
+        }
+        return rest.exchange(path, HttpMethod.POST, new HttpEntity<>(payload, headers),
+                new ParameterizedTypeReference<Map<String, Object>>() {});
+    }
+
+    /** The whole audit list as the org ADMIN sees it (its DTO shape is pinned elsewhere). */
+    private List<Map<String, Object>> auditList(String token) {
+        ResponseEntity<List<Map<String, Object>>> audit = getList("/api/audit", token);
+        assertEquals(HttpStatus.OK, audit.getStatusCode(), "the ADMIN audit read must stay admitted");
+        return audit.getBody();
+    }
+
+    private int auditEventTotal(String token) {
+        List<Map<String, Object>> events = auditList(token);
+        return events == null ? -1 : events.size();
+    }
+
+    private void assertBoundedCorrelation(String correlationId) {
+        assertNotNull(correlationId, "every success event must carry a correlation id");
+        assertTrue(correlationId.length() <= 64, "correlation ids are bounded to 64 characters");
+        assertTrue(CORRELATION_SHAPE.matcher(correlationId).matches(),
+                "correlation ids must use the safe bounded evidence alphabet: " + correlationId);
+    }
+
+    /**
+     * Task 11: a successful sensitive command's event carries the full acting
+     * context (assignment id, role, scope, organization, selected branch) and
+     * exactly the correlation id the caller could observe in the response
+     * header. The public event shape is the exact fifteen-field DTO
+     * allowlist — no persistence metadata, no raw entity JSON.
+     */
+    @Test
+    void task11SuccessEventsCarryTheFullActingContextAndTheEchoedCorrelationId() {
+        UUID adminAssignment = assignmentIdFor(ADMIN, Role.ADMIN);
+        UUID selectedBranchId = testBranch(OTHER_BRANCH_CODE).getId();
+        long before = contextSwitchEventCount();
+
+        String token = login(ADMIN);
+        ResponseEntity<Map<String, Object>> switched =
+                switchContext(token, adminAssignment, selectedBranchId);
+        assertTrue(switched.getStatusCode().is2xxSuccessful(), "the switch must succeed");
+        String echoed = switched.getHeaders().getFirst(CORRELATION_HEADER);
+        assertBoundedCorrelation(echoed);
+
+        assertEquals(before + 1, contextSwitchEventCount(), "exactly one event per successful switch");
+        List<Map<String, Object>> matches = auditList(login(ADMIN)).stream()
+                .filter(e -> "SWITCH".equals(e.get("action"))
+                        && "ActingAssignment".equals(e.get("resourceType"))
+                        && adminAssignment.toString().equals(e.get("resourceId")))
+                .toList();
+        assertFalse(matches.isEmpty(), "the switch event must be discoverable by its resource id");
+        // The audit read is newest-first, so index 0 is the switch this test
+        // just performed — the only event the before/after count above proves.
+        Map<String, Object> event = matches.get(0);
+        assertEquals(AUDIT_DTO_KEYS, event.keySet(),
+                "the audit read is the exact DTO allowlist — the entity JSON never surfaces");
+        assertEquals(ADMIN, event.get("actor"));
+        assertEquals(adminAssignment.toString(), event.get("assignmentId"),
+                "the event must point at the acting assignment");
+        assertEquals("ADMIN", event.get("role"));
+        assertEquals("ORGANIZATION", event.get("scope"));
+        assertEquals(testOrg().getId().toString(), event.get("organizationId"));
+        // Every command's event — a context switch included — is attributed to
+        // the acting context that performed it. The switch ran under the
+        // pre-switch organization context, whose branch is the deterministic
+        // first active branch in code order; the newly selected branch takes
+        // effect for subsequent commands and is proved below.
+        UUID performingBranchId = testBranch(DEFAULT_BRANCH_CODE).getId();
+        assertEquals(performingBranchId.toString(), event.get("branchId"),
+                "the switch event carries the acting branch that performed it");
+        assertNull(event.get("departmentId"), "an organization/branch context has no department");
+        assertEquals(echoed, event.get("correlationId"),
+                "the stored correlation id must be exactly the one echoed in the response header");
+
+        // The selected branch is evidenced by the next command under the
+        // replacement token: its event carries the switched acting branch.
+        Map<String, Object> switchedSession = switched.getBody();
+        assertNotNull(switchedSession);
+        String switchedToken = String.valueOf(switchedSession.get("accessToken"));
+        assertFalse(switchedToken.isBlank(), "the switch must issue a replacement token");
+        Map<String, Object> afterSwitch = postJson("/api/patients", switchedToken,
+                patientCreatePayload("post-switch")).getBody();
+        assertNotNull(afterSwitch);
+        Map<String, Object> afterSwitchEvent = auditList(login(ADMIN)).stream()
+                .filter(e -> "Patient".equals(e.get("resourceType"))
+                        && String.valueOf(afterSwitch.get("id")).equals(e.get("resourceId")))
+                .findFirst().orElseThrow();
+        assertEquals(selectedBranchId.toString(), afterSwitchEvent.get("branchId"),
+                "commands under the replacement token are evidenced on the selected branch");
+        assertEquals("ORGANIZATION", afterSwitchEvent.get("scope"),
+                "an organization-scope assignment acting on a selected branch keeps its scope");
+    }
+
+    /**
+     * Task 11: the correlation id is validated at the request boundary — a
+     * well-formed header is echoed and stored verbatim, while an absent or
+     * malformed header is safely replaced by a server-generated bounded id
+     * that is still echoed and still stored on the event. No input is ever
+     * trusted into storage unvalidated.
+     */
+    @Test
+    void task11CorrelationIdsAreValidatedBoundedOrServerGenerated() {
+        String adminToken = login(ADMIN);
+
+        // 1. A valid correlation id is echoed and persisted verbatim.
+        String valid = "evidence.run-42";
+        ResponseEntity<Map<String, Object>> created = postJsonWithCorrelation(
+                "/api/patients", adminToken, valid, patientCreatePayload("corr-ok"));
+        assertTrue(created.getStatusCode().is2xxSuccessful(), "the valid-correlation create must succeed");
+        assertEquals(valid, created.getHeaders().getFirst(CORRELATION_HEADER),
+                "the response header must echo the client's valid correlation id");
+        String createdId = String.valueOf(created.getBody().get("id"));
+        Map<String, Object> event = auditList(adminToken).stream()
+                .filter(e -> "Patient".equals(e.get("resourceType")) && createdId.equals(e.get("resourceId")))
+                .findFirst().orElseThrow();
+        assertEquals(valid, event.get("correlationId"),
+                "the event must store exactly the validated client correlation id");
+
+        // 2. A malformed correlation id is replaced, never stored or echoed raw.
+        String malformed = "bad correlation id with spaces!";
+        ResponseEntity<Map<String, Object>> replaced = postJsonWithCorrelation(
+                "/api/patients", adminToken, malformed, patientCreatePayload("corr-bad"));
+        assertTrue(replaced.getStatusCode().is2xxSuccessful());
+        String generated = replaced.getHeaders().getFirst(CORRELATION_HEADER);
+        assertBoundedCorrelation(generated);
+        assertNotEquals(malformed, generated, "hostile header input must never be echoed back");
+        String replacedId = String.valueOf(replaced.getBody().get("id"));
+        Map<String, Object> replacedEvent = auditList(adminToken).stream()
+                .filter(e -> "Patient".equals(e.get("resourceType")) && replacedId.equals(e.get("resourceId")))
+                .findFirst().orElseThrow();
+        assertEquals(generated, replacedEvent.get("correlationId"),
+                "the event must store exactly the server-generated id the caller received");
+
+        // 3. No header at all still yields a bounded generated id on the response and the event.
+        ResponseEntity<Map<String, Object>> plain = postJsonWithCorrelation(
+                "/api/patients", adminToken, null, patientCreatePayload("corr-none"));
+        assertTrue(plain.getStatusCode().is2xxSuccessful());
+        String plainCorrelation = plain.getHeaders().getFirst(CORRELATION_HEADER);
+        assertBoundedCorrelation(plainCorrelation);
+        String plainId = String.valueOf(plain.getBody().get("id"));
+        Map<String, Object> plainEvent = auditList(adminToken).stream()
+                .filter(e -> "Patient".equals(e.get("resourceType")) && plainId.equals(e.get("resourceId")))
+                .findFirst().orElseThrow();
+        assertEquals(plainCorrelation, plainEvent.get("correlationId"));
+
+        // The audit read itself is a read: its own response still carries a bounded id.
+        ResponseEntity<String> auditRead = get("/api/audit", adminToken);
+        assertEquals(HttpStatus.OK, auditRead.getStatusCode());
+        assertBoundedCorrelation(auditRead.getHeaders().getFirst(CORRELATION_HEADER));
+    }
+
+    /**
+     * Task 11: the ADMIN audit read is scope-aware on the server — never
+     * merely hidden in the UI. A branch-scoped ADMIN sees only its own
+     * branch's events (a foreign branch filter answers the empty set, never
+     * a widening), a department-scoped ADMIN only its department's events,
+     * and legacy/unassigned events (no acting context, exactly as
+     * unauthenticated bootstrap code records them) stay hidden from every
+     * scoped view and are shown to the organization-scoped ADMIN marked
+     * {@code legacy/unassigned} — ownership is never guessed.
+     */
+    @Test
+    void task11AuditReadIsScopeAwareOnTheServer() {
+        Branch defaultBranch = testBranch(DEFAULT_BRANCH_CODE);
+        Branch otherBranch = testBranch(OTHER_BRANCH_CODE);
+
+        // Legacy/unassigned evidence, recorded exactly as unauthenticated bootstrap code would.
+        SecurityContextHolder.clearContext();
+        auditService.record("CREATE", "LegacyAuditFixture", UUID.randomUUID().toString(),
+                "system-seeded legacy evidence " + suffix);
+
+        // Branch-scoped ADMIN acting on the default branch: its patient-create event lands there.
+        UserAccount branchAdmin = newDedicatedAccount("audit-branch-admin", Role.ADMIN,
+                AssignmentScope.BRANCH, testOrg(), defaultBranch, null);
+        String branchToken = login(branchAdmin.getUsername());
+        Map<String, Object> branchPatient =
+                postJson("/api/patients", branchToken, patientCreatePayload("scope-own")).getBody();
+        assertNotNull(branchPatient);
+
+        // Organization-scoped ADMIN acting on the other branch: a foreign-branch
+        // event. The create must run under the replacement token whose acting
+        // context is bound to the other branch — a fresh login would fall back
+        // to the deterministic default branch and prove nothing.
+        String orgToken = login(ADMIN);
+        UUID adminAssignment = assignmentIdFor(ADMIN, Role.ADMIN);
+        ResponseEntity<Map<String, Object>> foreignSwitch =
+                switchContext(orgToken, adminAssignment, otherBranch.getId());
+        assertTrue(foreignSwitch.getStatusCode().is2xxSuccessful(), "the foreign-branch switch must succeed");
+        String foreignToken = String.valueOf(foreignSwitch.getBody().get("accessToken"));
+        assertFalse(foreignToken.isBlank(), "the foreign-branch switch must issue a replacement token");
+        Map<String, Object> otherPatient =
+                postJson("/api/patients", foreignToken, patientCreatePayload("scope-foreign")).getBody();
+        assertNotNull(otherPatient);
+
+        // Branch-scoped ADMIN: only its own branch — never the foreign branch, never legacy rows.
+        List<Map<String, Object>> branchView = auditList(branchToken);
+        assertTrue(branchView.stream().anyMatch(e -> String.valueOf(branchPatient.get("id")).equals(e.get("resourceId"))),
+                "the branch ADMIN must see its own branch's evidence");
+        assertTrue(branchView.stream().noneMatch(e -> String.valueOf(otherPatient.get("id")).equals(e.get("resourceId"))),
+                "the branch ADMIN must never see another branch's evidence");
+        assertTrue(branchView.stream().noneMatch(e -> "LegacyAuditFixture".equals(e.get("resourceType"))),
+                "legacy/unassigned events stay hidden from scoped views");
+        assertTrue(branchView.stream().allMatch(e -> defaultBranch.getId().toString().equals(e.get("branchId"))),
+                "every row of the branch view belongs to the acting branch");
+
+        // A foreign branch filter answers empty for the branch ADMIN — no server-side widening.
+        ResponseEntity<List<Map<String, Object>>> widened =
+                getList("/api/audit?branchId=" + otherBranch.getId(), branchToken);
+        assertEquals(HttpStatus.OK, widened.getStatusCode());
+        assertTrue(widened.getBody() != null && widened.getBody().isEmpty(),
+                "a branch-scoped ADMIN cannot widen its view with a foreign branch filter");
+
+        // A well-formed own-branch filter stays admitted and still scoped.
+        ResponseEntity<List<Map<String, Object>>> own =
+                getList("/api/audit?branchId=" + defaultBranch.getId(), branchToken);
+        assertTrue(own.getBody() != null && !own.getBody().isEmpty(),
+                "an own-branch filter keeps the branch view populated");
+        assertTrue(own.getBody().stream().allMatch(e -> defaultBranch.getId().toString().equals(e.get("branchId"))));
+
+        // Department-scoped ADMIN: sees exactly its department's evidence — strictly inside its branch.
+        Department department = departments.save(new Department(
+                defaultBranch, "AUTHZ-DEP-AUDIT-" + suffix, "Audit Department", "general", "9 Audit Way"));
+        UserAccount deptAdmin = newDedicatedAccount("audit-dept-admin", Role.ADMIN,
+                AssignmentScope.DEPARTMENT, testOrg(), null, department);
+        String deptToken = login(deptAdmin.getUsername());
+        assertTrue(postJson("/api/patients", deptToken, patientCreatePayload("scope-dept")).getStatusCode().is2xxSuccessful(),
+                "the department ADMIN holds the patient-create role");
+        List<Map<String, Object>> deptView = auditList(deptToken);
+        assertFalse(deptView.isEmpty(), "the department ADMIN must see its own department's evidence");
+        assertTrue(deptView.stream().allMatch(e -> department.getId().toString().equals(e.get("departmentId"))),
+                "every row of the department view belongs to the acting department");
+        assertTrue(deptView.stream().noneMatch(e -> String.valueOf(branchPatient.get("id")).equals(e.get("resourceId"))),
+                "branch-level evidence of other actors is outside the department view");
+
+        // Organization-scoped ADMIN: organization-wide, plus legacy/unassigned marked — never guessed.
+        List<Map<String, Object>> orgView = auditList(orgToken);
+        assertTrue(orgView.stream().anyMatch(e -> String.valueOf(otherPatient.get("id")).equals(e.get("resourceId"))),
+                "the organization ADMIN sees other branches' evidence");
+        List<Map<String, Object>> legacyRows = orgView.stream()
+                .filter(e -> "LegacyAuditFixture".equals(e.get("resourceType"))).toList();
+        assertEquals(1, legacyRows.size(), "exactly the fabricated legacy fixture is marked");
+        Map<String, Object> legacy = legacyRows.get(0);
+        assertEquals("legacy/unassigned", legacy.get("branchAttribution"),
+                "the organization ADMIN sees the legacy event marked, never guessed into a branch");
+        assertNull(legacy.get("branchId"));
+        assertNull(legacy.get("assignmentId"));
+        assertNull(legacy.get("organizationId"));
+        assertEquals("system", legacy.get("actor"), "unauthenticated recording stays attributed to system");
+    }
+
+    /**
+     * Task 11: the four audit filters — branch, resource type, actor, and
+     * correlation id — work for the organization-scoped ADMIN, combine
+     * conjunctively, and never leak a row outside the filter. A malformed
+     * branch filter fails typed deserialization as the shared 400.
+     */
+    @Test
+    void task11AuditFiltersSupportBranchResourceTypeActorAndCorrelationId() {
+        String orgToken = login(ADMIN);
+        Branch defaultBranch = testBranch(DEFAULT_BRANCH_CODE);
+        String correlation = "filter-proof-" + suffix;
+
+        Map<String, Object> created = postJsonWithCorrelation(
+                "/api/patients", orgToken, correlation, patientCreatePayload("filter")).getBody();
+        assertNotNull(created);
+
+        // Branch filter.
+        List<Map<String, Object>> byBranch =
+                getList("/api/audit?branchId=" + defaultBranch.getId(), orgToken).getBody();
+        assertNotNull(byBranch);
+        assertFalse(byBranch.isEmpty(), "the acting branch owns the new event");
+        assertTrue(byBranch.stream().allMatch(e -> defaultBranch.getId().toString().equals(e.get("branchId"))));
+        assertTrue(byBranch.stream().anyMatch(e -> String.valueOf(created.get("id")).equals(e.get("resourceId"))));
+
+        // Resource-type filter.
+        List<Map<String, Object>> byType = getList("/api/audit?resourceType=Patient", orgToken).getBody();
+        assertNotNull(byType);
+        assertFalse(byType.isEmpty());
+        assertTrue(byType.stream().allMatch(e -> "Patient".equals(e.get("resourceType"))));
+
+        // Actor filter: matching rows only; an unknown actor is the empty set.
+        List<Map<String, Object>> byActor = getList("/api/audit?actor=" + ADMIN, orgToken).getBody();
+        assertNotNull(byActor);
+        assertTrue(byActor.stream().allMatch(e -> ADMIN.equals(e.get("actor"))));
+        assertTrue(getList("/api/audit?actor=no-such-actor-" + suffix, orgToken).getBody().isEmpty(),
+                "an unknown actor filter answers the empty set");
+
+        // Correlation filter: exactly the events of that one bounded request chain.
+        List<Map<String, Object>> byCorrelation =
+                getList("/api/audit?correlationId=" + correlation, orgToken).getBody();
+        assertNotNull(byCorrelation);
+        assertEquals(1, byCorrelation.size(), "the correlation id belongs to exactly one stored event");
+        assertEquals(String.valueOf(created.get("id")), byCorrelation.get(0).get("resourceId"));
+
+        // The filters combine conjunctively.
+        List<Map<String, Object>> combined = getList("/api/audit?resourceType=Patient&branchId="
+                + defaultBranch.getId() + "&actor=" + ADMIN + "&correlationId=" + correlation, orgToken).getBody();
+        assertNotNull(combined);
+        assertEquals(1, combined.size(), "the combined filter must resolve to exactly the one matching event");
+
+        // A malformed branch filter is typed-deserialization 400, never a silent match.
+        assertEquals(HttpStatus.BAD_REQUEST, get("/api/audit?branchId=not-a-uuid", orgToken).getStatusCode());
+    }
+
+    /**
+     * Task 11: no failure class records a domain-success audit event. The
+     * declared classes — 401 invalid auth context, 400 malformed/invalid
+     * body, 403 action denial, 404 unknown resource, 409 conflict — are all
+     * proved against one sensitive endpoint, and the audit total stays
+     * frozen across every refusal.
+     */
+    @Test
+    void task11NoDomainSuccessAuditEventExistsForAnyDeclaredFailureClass() {
+        String adminToken = login(ADMIN);
+        Map<String, Object> created = postJson("/api/patients", adminToken, patientCreatePayload("failmx")).getBody();
+        assertNotNull(created);
+        String existingMrn = String.valueOf(created.get("medicalRecordNumber"));
+        int eventsBefore = auditEventTotal(adminToken);
+
+        // 401 — invalid auth context (no token at all).
+        HttpHeaders anonymous = new HttpHeaders();
+        anonymous.setContentType(MediaType.APPLICATION_JSON);
+        assertEquals(HttpStatus.UNAUTHORIZED,
+                rest.exchange("/api/patients", HttpMethod.POST,
+                        new HttpEntity<>(patientCreatePayload("failmx-401"), anonymous), MAP).getStatusCode());
+        // 400 — malformed body (missing required fields).
+        assertEquals(HttpStatus.BAD_REQUEST,
+                postJson("/api/patients", adminToken, Map.of("fullName", "missing-everything")).getStatusCode());
+        // 403 — action denial (NURSE holds the read family, not the create).
+        assertEquals(HttpStatus.FORBIDDEN,
+                postJson("/api/patients", login(NURSE), patientCreatePayload("failmx-403")).getStatusCode());
+        // 404 — unknown resource id.
+        assertEquals(HttpStatus.NOT_FOUND,
+                putJson("/api/patients/" + UUID.randomUUID(), adminToken,
+                        patientUpdatePayload("failmx-404")).getStatusCode());
+        // 409 — natural-key conflict (duplicate MRN).
+        Map<String, Object> duplicate = new LinkedHashMap<>(patientCreatePayload("failmx-409"));
+        duplicate.put("medicalRecordNumber", existingMrn);
+        assertEquals(HttpStatus.CONFLICT,
+                postJson("/api/patients", adminToken, duplicate).getStatusCode());
+
+        assertEquals(eventsBefore, auditEventTotal(adminToken),
+                "no declared failure class may record a domain-success audit event");
     }
 }

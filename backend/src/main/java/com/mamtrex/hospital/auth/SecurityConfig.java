@@ -1,5 +1,6 @@
 package com.mamtrex.hospital.auth;
 
+import com.mamtrex.hospital.audit.CorrelationIdFilter;
 import org.springframework.context.annotation.*;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
@@ -29,7 +30,11 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
  * department create/delete are narrowed to ADMIN (hierarchy writes), while
  * the department read keeps its ADMIN/HR family role.
  * Unauthenticated requests receive 401 so clients can distinguish an expired
- * session (401) from an authenticated but unauthorized role (403).
+ * session (401) from an authenticated but unauthorized role (403). The
+ * {@code CorrelationIdFilter} (docs/plan3.md Task 11) runs ahead of the JWT
+ * filter on every request: it validates or server-generates one bounded
+ * correlation id and echoes it in the {@code X-Correlation-Id} response
+ * header, without ever authenticating, rejecting, or altering a request.
  */
 @Configuration
 @EnableMethodSecurity
@@ -46,7 +51,8 @@ public class SecurityConfig {
     }
 
     @Bean
-    SecurityFilterChain chain(HttpSecurity http, JwtFilter jwtFilter) throws Exception {
+    SecurityFilterChain chain(HttpSecurity http, JwtFilter jwtFilter, CorrelationIdFilter correlationIdFilter)
+            throws Exception {
         return http.csrf(csrf -> csrf.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(authorize -> authorize
@@ -103,6 +109,10 @@ public class SecurityConfig {
                         .accessDeniedHandler((req, res, ex) -> writeSecurityError(
                                 res, HttpStatus.FORBIDDEN, "access denied")))
                 .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
+                // Task 11 (docs/plan3.md): the correlation-id boundary runs first on
+                // every request — validating/generating the bounded id and echoing it
+                // in the X-Correlation-Id response header — before authentication.
+                .addFilterBefore(correlationIdFilter, JwtFilter.class)
                 .build();
     }
 

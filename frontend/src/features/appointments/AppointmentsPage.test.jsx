@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import AppointmentsPage from './AppointmentsPage.jsx';
+import AppointmentsPage, { appointmentsDisplayState } from './AppointmentsPage.jsx';
 import PatientDetailPage from '../patients/PatientDetailPage.jsx';
+import { availabilityDisplayState } from './AppointmentForm.jsx';
 
 const PATIENT_A = {
   id: '11111111-1111-4111-8111-111111111111',
@@ -53,6 +54,27 @@ const GP = {
 const STAFF = [CARDIOLOGIST, GP];
 
 const CARDIOLOGIST_LABEL = 'Layla Fawzi — Cardiologist (Cardiology)';
+
+// Task 9 allowlisted availability interval DTO for the cardiologist on the
+// day the schedule tests use. Times are the server's UTC/ISO contract
+// values exactly as modeled — no branch-local conversion anywhere.
+const AVAILABILITY_INTERVAL = {
+  id: '88888888-8888-4888-8888-888888888888',
+  branchId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+  staffMemberId: CARDIOLOGIST.id,
+  startsAt: '2026-03-01T08:00',
+  endsAt: '2026-03-01T18:00',
+};
+
+const AVAILABILITY_INTERVAL_B = {
+  ...AVAILABILITY_INTERVAL,
+  id: '99999999-9999-4999-8999-999999999999',
+  startsAt: '2026-03-01T09:00',
+  endsAt: '2026-03-01T12:00',
+};
+
+const AVAILABILITY_INTERVAL_TEXT = `${AVAILABILITY_INTERVAL.startsAt} – ${AVAILABILITY_INTERVAL.endsAt}`;
+const AVAILABILITY_INTERVAL_B_TEXT = `${AVAILABILITY_INTERVAL_B.startsAt} – ${AVAILABILITY_INTERVAL_B.endsAt}`;
 
 // Pre-Task-4 row shape: patient/professional references are raw stored
 // strings, not verified UUID records. The list must render honest
@@ -115,6 +137,14 @@ function stubBackend(fetchMock, state) {
     if (path === '/api/staff') {
       return Promise.resolve(jsonResponse(STAFF, state.staffStatus ?? 200));
     }
+    if (path.startsWith('/api/staff/') && path.includes('/availability')) {
+      state.availabilityCalls = state.availabilityCalls ?? [];
+      state.availabilityCalls.push({ path, auth: options.headers?.Authorization });
+      return Promise.resolve(jsonResponse(
+        state.availability ?? [AVAILABILITY_INTERVAL],
+        state.availabilityStatus ?? 200,
+      ));
+    }
     if (path === '/api/appointments') {
       if (method === 'POST') {
         state.postCalls.push(JSON.parse(options.body));
@@ -138,6 +168,23 @@ async function openScheduleForm(user) {
     expect(within(screen.getByLabelText('Professional')).getAllByRole('option').length).toBeGreaterThan(1)
   );
   return patientSelect;
+}
+
+/** Selects the professional and the date so the availability window flow activates. */
+async function chooseProfessionalAndDate(user, professionalId = CARDIOLOGIST.id, date = '2026-03-01T09:30') {
+  await user.selectOptions(screen.getByLabelText('Professional'), professionalId);
+  fireEvent.change(screen.getByLabelText('Date and time'), {
+    target: { value: date },
+  });
+  await screen.findByLabelText('Modeled availability');
+}
+
+/** Fills professional, date, and the Task 9 duration (the Type text stays caller-owned). */
+async function fillSchedulableForm(user, { duration = '60', professionalId = CARDIOLOGIST.id, date = '2026-03-01T09:30' } = {}) {
+  await user.selectOptions(screen.getByLabelText('Professional'), professionalId);
+  fireEvent.change(screen.getByLabelText('Date and time'), { target: { value: date } });
+  await screen.findByLabelText('Modeled availability');
+  await user.type(screen.getByLabelText('Duration (minutes)'), duration);
 }
 
 describe('AppointmentsPage', () => {
@@ -201,10 +248,7 @@ describe('AppointmentsPage', () => {
     await openScheduleForm(user);
 
     await user.selectOptions(screen.getByLabelText('Patient'), PATIENT_A.id);
-    await user.selectOptions(screen.getByLabelText('Professional'), CARDIOLOGIST.id);
-    fireEvent.change(screen.getByLabelText('Date and time'), {
-      target: { value: '2026-03-01T09:30' },
-    });
+    await fillSchedulableForm(user);
     await user.type(screen.getByLabelText('Type'), 'Consultation');
     // 'scheduled' is the initial value of the lowercase status contract.
     expect(screen.getByLabelText('Status')).toHaveValue('scheduled');
@@ -227,11 +271,13 @@ describe('AppointmentsPage', () => {
 
     expect(state.postCalls).toHaveLength(1);
     // IDs are the selected domain records, not typed opaque strings, and the
-    // body mirrors CreateAppointmentRequest exactly.
+    // body mirrors CreateAppointmentRequest exactly — including the required
+    // Task 9 durationMinutes.
     expect(state.postCalls[0]).toEqual({
       patientId: PATIENT_A.id,
       professionalId: CARDIOLOGIST.id,
       scheduledAt: '2026-03-01T09:30',
+      durationMinutes: 60,
       type: 'Consultation',
       status: 'scheduled',
     });
@@ -256,10 +302,7 @@ describe('AppointmentsPage', () => {
     await openScheduleForm(user);
 
     await user.selectOptions(screen.getByLabelText('Patient'), PATIENT_A.id);
-    await user.selectOptions(screen.getByLabelText('Professional'), GP.id);
-    fireEvent.change(screen.getByLabelText('Date and time'), {
-      target: { value: '2026-04-02T14:15' },
-    });
+    await fillSchedulableForm(user, { professionalId: GP.id, date: '2026-04-02T14:15' });
     await user.type(screen.getByLabelText('Type'), 'Follow-up');
 
     await user.click(screen.getByRole('button', { name: 'Schedule appointment' }));
@@ -271,6 +314,7 @@ describe('AppointmentsPage', () => {
     expect(screen.getByLabelText('Patient')).toHaveValue(PATIENT_A.id);
     expect(screen.getByLabelText('Professional')).toHaveValue(GP.id);
     expect(screen.getByLabelText('Date and time')).toHaveValue('2026-04-02T14:15');
+    expect(screen.getByLabelText('Duration (minutes)')).toHaveValue(60);
     expect(screen.getByLabelText('Type')).toHaveValue('Follow-up');
 
     // A failed create never refreshes the list.
@@ -292,10 +336,7 @@ describe('AppointmentsPage', () => {
     await openScheduleForm(user);
 
     await user.selectOptions(screen.getByLabelText('Patient'), PATIENT_B.id);
-    await user.selectOptions(screen.getByLabelText('Professional'), CARDIOLOGIST.id);
-    fireEvent.change(screen.getByLabelText('Date and time'), {
-      target: { value: '2026-05-10T08:00' },
-    });
+    await fillSchedulableForm(user, { date: '2026-05-10T08:00' });
     await user.type(screen.getByLabelText('Type'), 'Consultation');
 
     await user.click(screen.getByRole('button', { name: 'Schedule appointment' }));
@@ -303,6 +344,7 @@ describe('AppointmentsPage', () => {
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('You do not have permission to view this data.');
     expect(screen.getByLabelText('Patient')).toHaveValue(PATIENT_B.id);
+    expect(screen.getByLabelText('Duration (minutes)')).toHaveValue(60);
     expect(onSessionExpired).not.toHaveBeenCalled();
   });
 
@@ -319,10 +361,7 @@ describe('AppointmentsPage', () => {
     await openScheduleForm(user);
 
     await user.selectOptions(screen.getByLabelText('Patient'), PATIENT_A.id);
-    await user.selectOptions(screen.getByLabelText('Professional'), CARDIOLOGIST.id);
-    fireEvent.change(screen.getByLabelText('Date and time'), {
-      target: { value: '2026-06-01T11:00' },
-    });
+    await fillSchedulableForm(user, { date: '2026-06-01T11:00' });
     await user.type(screen.getByLabelText('Type'), 'Consultation');
 
     await user.click(screen.getByRole('button', { name: 'Schedule appointment' }));
@@ -515,5 +554,329 @@ describe('AppointmentsPage', () => {
     expect(calls[0][1].headers.Authorization).toBe('Bearer branch-a-token');
     expect(calls[1][1].headers.Authorization).toBe('Bearer branch-b-token');
     expect(onSessionExpired).not.toHaveBeenCalled();
+  });
+
+  // ------------------------------------------------------------------
+  // Task 9 (docs/plan3.md): duration boundaries, modeled availability
+  // states, server 409 conflicts, and context-switch display isolation.
+  // ------------------------------------------------------------------
+
+  it('validates the duration against the bounded 5–480 demo range before submitting and sends boundary values on the wire', { timeout: 20000 }, async () => {
+    const user = userEvent.setup();
+    const state = { postCalls: [], appointmentsList: APPOINTMENTS_INITIAL };
+    stubBackend(fetchMock, state);
+    renderAppointments(['ADMIN']);
+    await screen.findByRole('table', { name: 'Scheduled appointments' });
+    await openScheduleForm(user);
+    await user.selectOptions(screen.getByLabelText('Patient'), PATIENT_A.id);
+
+    // Below the inclusive minimum.
+    await fillSchedulableForm(user, { duration: '4' });
+    await user.type(screen.getByLabelText('Type'), 'Consultation');
+    await user.click(screen.getByRole('button', { name: 'Schedule appointment' }));
+    let alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/duration/i);
+    expect(state.postCalls).toHaveLength(0);
+
+    // Above the inclusive maximum.
+    await user.clear(screen.getByLabelText('Duration (minutes)'));
+    await user.type(screen.getByLabelText('Duration (minutes)'), '481');
+    await user.click(screen.getByRole('button', { name: 'Schedule appointment' }));
+    alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/duration/i);
+    expect(state.postCalls).toHaveLength(0);
+
+    // Missing.
+    await user.clear(screen.getByLabelText('Duration (minutes)'));
+    await user.click(screen.getByRole('button', { name: 'Schedule appointment' }));
+    alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/duration/i);
+    expect(state.postCalls).toHaveLength(0);
+
+    // The boundary values themselves are accepted and typed on the wire.
+    await user.clear(screen.getByLabelText('Duration (minutes)'));
+    await user.type(screen.getByLabelText('Duration (minutes)'), '480');
+    await user.click(screen.getByRole('button', { name: 'Schedule appointment' }));
+    await screen.findByRole('table', { name: 'Scheduled appointments' });
+    expect(state.postCalls).toHaveLength(1);
+    expect(state.postCalls[0].durationMinutes).toBe(480);
+
+    await user.click(screen.getByRole('button', { name: 'Schedule appointment' }));
+    await openScheduleForm(user);
+    await user.selectOptions(screen.getByLabelText('Patient'), PATIENT_A.id);
+    await fillSchedulableForm(user, { duration: '5' });
+    await user.type(screen.getByLabelText('Type'), 'Consultation');
+    await user.click(screen.getByRole('button', { name: 'Schedule appointment' }));
+    await screen.findByRole('table', { name: 'Scheduled appointments' });
+    expect(state.postCalls).toHaveLength(2);
+    expect(state.postCalls[1].durationMinutes).toBe(5);
+  });
+
+  it('loads and displays the modeled availability for the selected professional and date over the ISO window request', { timeout: 20000 }, async () => {
+    const user = userEvent.setup();
+    const state = { postCalls: [], appointmentsList: APPOINTMENTS_INITIAL };
+    stubBackend(fetchMock, state);
+    renderAppointments(['ADMIN']);
+    await screen.findByRole('table', { name: 'Scheduled appointments' });
+    await openScheduleForm(user);
+    await user.selectOptions(screen.getByLabelText('Patient'), PATIENT_A.id);
+    await chooseProfessionalAndDate(user);
+
+    const panel = screen.getByLabelText('Modeled availability');
+    expect(within(panel).getByText(AVAILABILITY_INTERVAL_TEXT)).toBeInTheDocument();
+    expect(within(panel).queryByText(/clinical/i)).not.toBeInTheDocument();
+    const call = state.availabilityCalls.at(-1);
+    expect(call.path).toBe(
+      `/api/staff/${CARDIOLOGIST.id}/availability?from=2026-03-01T00%3A00&to=2026-03-02T00%3A00`
+    );
+    expect(call.auth).toBe('Bearer synthetic-token');
+  });
+
+  it('shows the honest loading state while the availability request is in flight', { timeout: 20000 }, async () => {
+    const user = userEvent.setup();
+    let resolveAvailability;
+    const state = { postCalls: [], appointmentsList: APPOINTMENTS_INITIAL };
+    stubBackend(fetchMock, state);
+    fetchMock.mockImplementation((path, options = {}) => {
+      if (path.startsWith('/api/staff/') && path.includes('/availability')) {
+        return new Promise((resolve) => { resolveAvailability = resolve; });
+      }
+      if (path === '/api/appointments' && options.method === 'POST') {
+        state.postCalls.push(JSON.parse(options.body));
+        return Promise.resolve(jsonResponse(KNOWN_APPOINTMENT));
+      }
+      if (path === '/api/patients') return Promise.resolve(jsonResponse(PATIENTS));
+      if (path === '/api/staff') return Promise.resolve(jsonResponse(STAFF));
+      if (path === '/api/appointments') return Promise.resolve(jsonResponse(state.appointmentsList));
+      return Promise.resolve(jsonResponse({}, 404));
+    });
+
+    renderAppointments(['ADMIN']);
+    await screen.findByRole('table', { name: 'Scheduled appointments' });
+    await openScheduleForm(user);
+    await user.selectOptions(screen.getByLabelText('Patient'), PATIENT_A.id);
+    await user.selectOptions(screen.getByLabelText('Professional'), CARDIOLOGIST.id);
+    fireEvent.change(screen.getByLabelText('Date and time'), { target: { value: '2026-03-01T09:30' } });
+
+    const panel = await screen.findByLabelText('Modeled availability');
+    expect(within(panel).getByText(/loading availability/i)).toBeInTheDocument();
+    expect(within(panel).queryByText(AVAILABILITY_INTERVAL_TEXT)).not.toBeInTheDocument();
+
+    resolveAvailability(jsonResponse([AVAILABILITY_INTERVAL]));
+    expect(await within(panel).findByText(AVAILABILITY_INTERVAL_TEXT)).toBeInTheDocument();
+    expect(within(panel).queryByText(/loading availability/i)).not.toBeInTheDocument();
+  });
+
+  it('shows the empty-availability state without suggesting any clinical appropriateness', { timeout: 20000 }, async () => {
+    const user = userEvent.setup();
+    const state = { postCalls: [], appointmentsList: APPOINTMENTS_INITIAL, availability: [] };
+    stubBackend(fetchMock, state);
+    renderAppointments(['ADMIN']);
+    await screen.findByRole('table', { name: 'Scheduled appointments' });
+    await openScheduleForm(user);
+    await user.selectOptions(screen.getByLabelText('Patient'), PATIENT_A.id);
+    await chooseProfessionalAndDate(user);
+
+    const panel = screen.getByLabelText('Modeled availability');
+    expect(within(panel).getByText(/no modeled availability/i)).toBeInTheDocument();
+    expect(within(panel).queryByText(/clinical|appropriate|recommended/i)).not.toBeInTheDocument();
+  });
+
+  it('shows the availability load error with a retry that preserves the form and recovers', { timeout: 20000 }, async () => {
+    const user = userEvent.setup();
+    const state = {
+      postCalls: [],
+      appointmentsList: APPOINTMENTS_INITIAL,
+      availabilityStatus: 500,
+    };
+    stubBackend(fetchMock, state);
+    renderAppointments(['ADMIN']);
+    await screen.findByRole('table', { name: 'Scheduled appointments' });
+    await openScheduleForm(user);
+    await user.selectOptions(screen.getByLabelText('Patient'), PATIENT_A.id);
+    await chooseProfessionalAndDate(user);
+    await user.type(screen.getByLabelText('Duration (minutes)'), '60');
+
+    const panel = screen.getByLabelText('Modeled availability');
+    expect(within(panel).getByRole('alert')).toHaveTextContent(/500/);
+    expect(within(panel).getByRole('button', { name: /retry/i })).toBeInTheDocument();
+    expect(screen.getByLabelText('Patient')).toHaveValue(PATIENT_A.id);
+    expect(screen.getByLabelText('Professional')).toHaveValue(CARDIOLOGIST.id);
+    expect(screen.getByLabelText('Date and time')).toHaveValue('2026-03-01T09:30');
+    expect(screen.getByLabelText('Duration (minutes)')).toHaveValue(60);
+
+    state.availabilityStatus = 200;
+    await user.click(within(panel).getByRole('button', { name: /retry/i }));
+    expect(await within(panel).findByText(AVAILABILITY_INTERVAL_TEXT)).toBeInTheDocument();
+    expect(within(panel).queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('shows the server 409 conflict inline and keeps every entered value when the slot is outside availability or overlapping', { timeout: 20000 }, async () => {
+    const user = userEvent.setup();
+    const state = {
+      postCalls: [],
+      appointmentsList: APPOINTMENTS_INITIAL,
+      postResponse: jsonResponse({ message: 'conflict' }, 409),
+    };
+    stubBackend(fetchMock, state);
+    const { onSessionExpired } = renderAppointments(['ADMIN']);
+    await screen.findByRole('table', { name: 'Scheduled appointments' });
+    await openScheduleForm(user);
+    await user.selectOptions(screen.getByLabelText('Patient'), PATIENT_A.id);
+    await fillSchedulableForm(user);
+    await user.type(screen.getByLabelText('Type'), 'Consultation');
+
+    await user.click(screen.getByRole('button', { name: 'Schedule appointment' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/409/);
+    expect(screen.getByLabelText('Patient')).toHaveValue(PATIENT_A.id);
+    expect(screen.getByLabelText('Professional')).toHaveValue(CARDIOLOGIST.id);
+    expect(screen.getByLabelText('Date and time')).toHaveValue('2026-03-01T09:30');
+    expect(screen.getByLabelText('Duration (minutes)')).toHaveValue(60);
+
+    // A failed create never refreshes the list and never expires the session.
+    const appointmentGets = fetchMock.mock.calls.filter(([path, options]) => path === '/api/appointments' && (options?.method ?? 'GET') === 'GET');
+    expect(appointmentGets).toHaveLength(1);
+    expect(onSessionExpired).not.toHaveBeenCalled();
+  });
+
+  it('drops stale availability on a context switch in the same render and refetches under the new context-bound token', { timeout: 20000 }, async () => {
+    const user = userEvent.setup();
+    const onSessionExpired = vi.fn();
+    const assignmentA = {
+      id: '11111111-1111-4111-8111-111111111111',
+      role: 'RECEPTIONIST',
+      scope: 'BRANCH',
+      organizationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      organizationLabel: 'Main Hospital Group',
+      branchId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      branchLabel: 'East Clinic',
+      departmentId: null,
+      departmentLabel: null,
+      enabled: true,
+    };
+    const assignmentB = { ...assignmentA, id: '22222222-2222-4222-8222-222222222222', branchId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', branchLabel: 'West Clinic' };
+    const sessionA = {
+      token: 'branch-a-token',
+      username: 'testuser',
+      roles: ['RECEPTIONIST'],
+      assignments: [assignmentA, assignmentB],
+      actingContext: {
+        username: 'testuser',
+        assignmentId: assignmentA.id,
+        role: 'RECEPTIONIST',
+        scope: 'BRANCH',
+        organizationId: assignmentA.organizationId,
+        branchId: assignmentA.branchId,
+        departmentId: null,
+      },
+    };
+    const sessionB = {
+      ...sessionA,
+      token: 'branch-b-token',
+      actingContext: { ...sessionA.actingContext, assignmentId: assignmentB.id, branchId: assignmentB.branchId },
+    };
+
+    const availabilityByToken = {
+      'Bearer branch-a-token': [AVAILABILITY_INTERVAL],
+    };
+    let resolveBranchBAvailability;
+    fetchMock.mockImplementation((path, options = {}) => {
+      if (path.startsWith('/api/staff/') && path.includes('/availability')) {
+        const auth = options.headers?.Authorization;
+        if (auth === 'Bearer branch-b-token') {
+          return new Promise((resolve) => { resolveBranchBAvailability = () => resolve(jsonResponse([AVAILABILITY_INTERVAL_B])); });
+        }
+        return Promise.resolve(jsonResponse(availabilityByToken[auth] ?? []));
+      }
+      if (path === '/api/patients') return Promise.resolve(jsonResponse(PATIENTS));
+      if (path === '/api/staff') return Promise.resolve(jsonResponse(STAFF));
+      if (path === '/api/appointments') return Promise.resolve(jsonResponse([]));
+      return Promise.resolve(jsonResponse({}, 404));
+    });
+
+    const view = render(<AppointmentsPage session={sessionA} onSessionExpired={onSessionExpired} />);
+    // The stub serves an empty list, so the list is ready when the schedule
+    // action renders.
+    const scheduleButton = await screen.findByRole('button', { name: 'Schedule appointment' });
+    expect(scheduleButton).toBeInTheDocument();
+    await openScheduleForm(user);
+    await user.selectOptions(screen.getByLabelText('Patient'), PATIENT_A.id);
+    await chooseProfessionalAndDate(user);
+    await screen.findByText(AVAILABILITY_INTERVAL_TEXT);
+    expect(screen.getByLabelText('Modeled availability'))
+      .toHaveTextContent(AVAILABILITY_INTERVAL_TEXT);
+
+    // The shell swaps in the switched session: from this first render the
+    // previous branch's modeled intervals must be gone — the render-phase
+    // selector shows loading, never branch-A rows, never a stale empty state.
+    view.rerender(<AppointmentsPage session={sessionB} onSessionExpired={onSessionExpired} />);
+
+    const panel = screen.getByLabelText('Modeled availability');
+    expect(within(panel).queryByText(AVAILABILITY_INTERVAL_TEXT)).not.toBeInTheDocument();
+    expect(within(panel).getByText(/loading availability/i)).toBeInTheDocument();
+
+    resolveBranchBAvailability();
+    expect(await within(panel).findByText(AVAILABILITY_INTERVAL_B_TEXT)).toBeInTheDocument();
+    expect(within(panel).queryByText(AVAILABILITY_INTERVAL_TEXT)).not.toBeInTheDocument();
+
+    const availabilityGets = fetchMock.mock.calls.filter(([path]) => path.includes('/availability'));
+    expect(availabilityGets).toHaveLength(2);
+    expect(availabilityGets[0][1].headers.Authorization).toBe('Bearer branch-a-token');
+    expect(availabilityGets[1][1].headers.Authorization).toBe('Bearer branch-b-token');
+    expect(onSessionExpired).not.toHaveBeenCalled();
+  });
+
+  it('pins the render-phase display selectors: tagged rows never leak across acting contexts', () => {
+    const KEY_A = 'assign-a:branch-a';
+    const KEY_B = 'assign-b:branch-b';
+    const loadedUnderA = {
+      contextKey: KEY_A,
+      status: 'ready',
+      loadError: '',
+      patients: [PATIENT_A],
+      staff: STAFF,
+      appointments: [KNOWN_APPOINTMENT],
+    };
+
+    // Matching tag: the loaded state is displayed as-is.
+    expect(appointmentsDisplayState({ contextKey: KEY_A, loaded: loadedUnderA })).toBe(loadedUnderA);
+
+    // Mismatched tag: loading with empty collections — no prior-branch rows,
+    // no prior error, never a misleading empty result.
+    const underB = appointmentsDisplayState({ contextKey: KEY_B, loaded: loadedUnderA });
+    expect(underB).toEqual({
+      contextKey: KEY_B,
+      status: 'loading',
+      loadError: '',
+      patients: [],
+      staff: [],
+      appointments: [],
+    });
+
+    // A late-arriving branch-A payload stays hidden under branch B.
+    const lateA = { ...loadedUnderA, appointments: [LEGACY_APPOINTMENT, KNOWN_APPOINTMENT] };
+    expect(appointmentsDisplayState({ contextKey: KEY_B, loaded: lateA }).appointments).toEqual([]);
+
+    // A failed branch-A load is likewise not shown under branch B.
+    const failedA = { contextKey: KEY_A, status: 'ready', loadError: 'boom', patients: [], staff: [], appointments: [] };
+    expect(appointmentsDisplayState({ contextKey: KEY_B, loaded: failedA }).loadError).toBe('');
+
+    // The availability selector mirrors the same contract for the form.
+    const availabilityA = {
+      contextKey: KEY_A,
+      phase: 'ready',
+      intervals: [AVAILABILITY_INTERVAL],
+      errorText: '',
+    };
+    expect(availabilityDisplayState({ contextKey: KEY_A, loaded: availabilityA })).toBe(availabilityA);
+    const availabilityUnderB = availabilityDisplayState({ contextKey: KEY_B, loaded: availabilityA });
+    expect(availabilityUnderB).toEqual({
+      contextKey: KEY_B,
+      phase: 'loading',
+      intervals: [],
+      errorText: '',
+    });
   });
 });

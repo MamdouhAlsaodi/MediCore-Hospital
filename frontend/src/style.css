@@ -558,6 +558,42 @@ button.appointment-cancel:focus-visible {
   margin-top: 10px;
 }
 
+/* Task 9 (docs/plan3.md): duration hint and the modeled-availability
+   panel — narrow additions reusing the existing navy/gold identity. */
+.appointment-field-hint { font-size: 12px; color: var(--muted); margin: 6px 0 0; }
+.availability-panel {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+}
+.availability-panel h4 { margin: 0 0 8px; font-size: 13px; }
+.availability-list {
+  margin: 0;
+  padding: 0 0 0 18px;
+  font-size: 14px;
+}
+.availability-list li { margin: 2px 0; overflow-wrap: anywhere; }
+.availability-panel .panel-hint { margin-top: 8px; }
+.availability-panel .appointment-field-hint { margin-top: 8px; }
+button.availability-retry {
+  min-height: 44px;
+  border-radius: 10px;
+  font: inherit;
+  font-size: 14px;
+  padding: 8px 16px;
+  cursor: pointer;
+  background: #fff;
+  border: 1px solid var(--line);
+  color: var(--navy);
+}
+button.availability-retry:hover { border-color: var(--navy-2); }
+button.availability-retry:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+
 @media (max-width: 560px) {
   /* Scheduling forms collapse to one column with labels above inputs and
      full-width 44px touch targets; the list scrolls inside its own wrap. */

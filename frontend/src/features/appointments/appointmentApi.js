@@ -14,7 +14,10 @@ import { apiFetch } from '../../api.js';
 // the shared GlobalExceptionHandler. The adapter deliberately sends exactly
 // the five contract fields and nothing else. All transport goes through the
 // shared apiFetch (Bearer token, JSON, ApiError, onUnauthorized); components
-// never call fetch directly.
+// never call fetch directly. Plan 3 Task 5: branch scoping rides the acting
+// context's bound bearer token alone — no branch/assignment headers or
+// parameters are ever sent, and a successful context switch refreshes data
+// because the shell hands the new session's token to these functions.
 export function fetchAppointments({ token, onUnauthorized } = {}) {
   return apiFetch('/api/appointments', { method: 'GET', token, onUnauthorized });
 }

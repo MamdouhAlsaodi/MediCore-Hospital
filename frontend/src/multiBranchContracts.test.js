@@ -1,12 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, apiFetch, loginRequest } from './api.js';
+import { ApiError, apiFetch, authenticate, parseActingSessionPayload } from './api.js';
+import { fetchOrganizationView, switchContext } from './features/branches/actingContextApi.js';
 import { loadSession, saveSession } from './auth.js';
 
-// Plan 3 Task 1 characterization (docs/plan3.md Task 1): these tests pin
-// TODAY'S frontend contract — token/username/roles sessions with no branch
-// context, an apiFetch that sends no acting-assignment headers — as the
-// baseline that Plan 3 Task 5 will deliberately replace. Only the browser
-// `fetch` boundary is mocked; the real exported adapter functions run.
+// Transport-contract tests at the browser `fetch` boundary only; the real
+// exported adapter functions run. The Task 1 characterization that pinned the
+// superseded global-role login mapping has been replaced by the Task 5
+// acting-session and organization-view contracts; the still-accurate Task 1
+// characterizations (plain session storage round-trip, apiFetch header
+// contract, and the 401/403 callback boundary) are retained.
 function jsonResponse(payload, status = 200) {
   return new Response(JSON.stringify(payload), {
     status,
@@ -25,10 +27,11 @@ describe('multi-branch baseline contracts (Plan 3 Task 1 characterization)', () 
     vi.unstubAllGlobals();
   });
 
-  describe('loginRequest maps the global-role response only', () => {
-    // CURRENT BASELINE — Task 5 will replace this adapter so the shell can
-    // receive server-issued assignments and an acting context.
-    it('maps a successful response to {token, username, roles} and discards future-looking assignments and actingContext', async () => {
+  describe('authenticate maps the complete acting-session response (Task 5 contract)', () => {
+    // Supersedes the removed loginRequest pin: login no longer discards the
+    // server-issued assignment list and acting context — it returns the full
+    // normalized session the acting-context shell stores.
+    it('maps a successful response to the complete session with assignments and acting context', async () => {
       fetchMock = vi.fn(() =>
         Promise.resolve(
           jsonResponse({
@@ -37,22 +40,209 @@ describe('multi-branch baseline contracts (Plan 3 Task 1 characterization)', () 
             username: 'receptionist',
             roles: ['RECEPTIONIST'],
             assignments: [
-              { id: 'assignment-1', role: 'RECEPTIONIST', scope: 'BRANCH', branchId: 'branch-1', enabled: true },
+              {
+                id: 'assignment-1', role: 'RECEPTIONIST', scope: 'BRANCH',
+                organizationId: 'org-1', organizationLabel: 'Main Hospital Group',
+                branchId: 'branch-1', branchLabel: 'East Clinic',
+                departmentId: null, departmentLabel: null, enabled: true,
+              },
             ],
-            actingContext: { assignmentId: 'assignment-1', branchId: 'branch-1' },
+            actingContext: {
+              username: 'receptionist', assignmentId: 'assignment-1', role: 'RECEPTIONIST',
+              scope: 'BRANCH', organizationId: 'org-1', branchId: 'branch-1', departmentId: null,
+            },
           })
         )
       );
       vi.stubGlobal('fetch', fetchMock);
 
-      const session = await loginRequest('receptionist', 'synthetic-password');
+      const session = await authenticate('receptionist', 'synthetic-password');
 
       expect(session).toEqual({
         token: 'synthetic-access-token',
         username: 'receptionist',
         roles: ['RECEPTIONIST'],
+        assignments: [
+          {
+            id: 'assignment-1', role: 'RECEPTIONIST', scope: 'BRANCH',
+            organizationId: 'org-1', organizationLabel: 'Main Hospital Group',
+            branchId: 'branch-1', branchLabel: 'East Clinic',
+            departmentId: null, departmentLabel: null, enabled: true,
+          },
+        ],
+        actingContext: {
+          username: 'receptionist', assignmentId: 'assignment-1', role: 'RECEPTIONIST',
+          scope: 'BRANCH', organizationId: 'org-1', branchId: 'branch-1', departmentId: null,
+        },
       });
-      expect(Object.keys(session).sort()).toEqual(['roles', 'token', 'username']);
+      expect(fetchMock.mock.calls[0]).toEqual([
+        '/api/auth/login',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: 'receptionist', password: 'synthetic-password' }),
+        },
+      ]);
+    });
+
+    it('rejects a global-role-only response instead of silently discarding the acting context', async () => {
+      fetchMock = vi.fn(() =>
+        Promise.resolve(
+          jsonResponse({
+            accessToken: 'synthetic-access-token',
+            tokenType: 'Bearer',
+            username: 'receptionist',
+            roles: ['RECEPTIONIST'],
+          })
+        )
+      );
+      vi.stubGlobal('fetch', fetchMock);
+
+      const error = await authenticate('receptionist', 'synthetic-password').then(
+        () => null,
+        (thrown) => thrown
+      );
+
+      expect(error).toBeInstanceOf(ApiError);
+      expect(error.status).toBe(500);
+    });
+
+    it('rejects acting-session responses whose context contradicts the selected assignment', () => {
+      const validPayload = () => ({
+        accessToken: 'synthetic-access-token',
+        tokenType: 'Bearer',
+        username: 'receptionist',
+        roles: ['RECEPTIONIST'],
+        assignments: [{
+          id: 'assignment-1', role: 'RECEPTIONIST', scope: 'BRANCH',
+          organizationId: 'org-1', organizationLabel: 'Main Hospital Group',
+          branchId: 'branch-1', branchLabel: 'East Clinic',
+          departmentId: null, departmentLabel: null, enabled: true,
+        }],
+        actingContext: {
+          username: 'receptionist', assignmentId: 'assignment-1', role: 'RECEPTIONIST',
+          scope: 'BRANCH', organizationId: 'org-1', branchId: 'branch-1', departmentId: null,
+        },
+      });
+      const contradictions = [
+        (payload) => { payload.actingContext.role = 'NURSE'; },
+        (payload) => { payload.actingContext.scope = 'ORGANIZATION'; },
+        (payload) => { payload.actingContext.organizationId = 'other-organization'; },
+        (payload) => { payload.actingContext.branchId = 'other-branch'; },
+        (payload) => { payload.actingContext.departmentId = 'other-department'; },
+        (payload) => { payload.actingContext.username = 'other-user'; },
+      ];
+
+      for (const contradict of contradictions) {
+        const payload = validPayload();
+        contradict(payload);
+        expect(() => parseActingSessionPayload(payload)).toThrow(ApiError);
+      }
+    });
+  });
+
+  describe('context switch transport names the assignment and the selected branch (Task 5 contract)', () => {
+    it('posts both ids to /api/auth/context with the bearer token and parses the replacement session', async () => {
+      fetchMock = vi.fn(() =>
+        Promise.resolve(
+          jsonResponse({
+            accessToken: 'switched-access-token',
+            tokenType: 'Bearer',
+            username: 'admin',
+            roles: ['ADMIN'],
+            assignments: [
+              {
+                id: 'assignment-2', role: 'ADMIN', scope: 'ORGANIZATION',
+                organizationId: 'org-1', organizationLabel: 'Main Hospital Group',
+                branchId: null, branchLabel: null,
+                departmentId: null, departmentLabel: null, enabled: true,
+              },
+            ],
+            actingContext: {
+              username: 'admin', assignmentId: 'assignment-2', role: 'ADMIN',
+              scope: 'ORGANIZATION', organizationId: 'org-1', branchId: 'branch-2', departmentId: null,
+            },
+          })
+        )
+      );
+      vi.stubGlobal('fetch', fetchMock);
+      const onUnauthorized = vi.fn();
+
+      const session = await switchContext({
+        token: 'current-token',
+        assignmentId: 'assignment-2',
+        branchId: 'branch-2',
+        onUnauthorized,
+      });
+
+      expect(fetchMock.mock.calls[0]).toEqual([
+        '/api/auth/context',
+        {
+          method: 'POST',
+          headers: { Authorization: 'Bearer current-token', 'Content-Type': 'application/json' },
+          body: JSON.stringify({ assignmentId: 'assignment-2', branchId: 'branch-2' }),
+        },
+      ]);
+      expect(onUnauthorized).not.toHaveBeenCalled();
+      expect(session.token).toBe('switched-access-token');
+      expect(session.actingContext.branchId).toBe('branch-2');
+    });
+  });
+
+  describe('organization view transport is the branch allowlist source (Task 5 contract)', () => {
+    it('fetches GET /api/organization with the bearer token and returns the strict active-branch view', async () => {
+      fetchMock = vi.fn(() =>
+        Promise.resolve(
+          jsonResponse({
+            id: 'org-1',
+            code: 'MHG',
+            name: 'Main Hospital Group',
+            activeBranches: [
+              { id: 'branch-1', organizationId: 'org-1', code: 'EAST', name: 'East Clinic', locationLabel: '1 East Way', active: true },
+              { id: 'branch-2', organizationId: 'org-1', code: 'WEST', name: 'West Clinic', locationLabel: '9 West Way', active: true },
+            ],
+          })
+        )
+      );
+      vi.stubGlobal('fetch', fetchMock);
+
+      const view = await fetchOrganizationView({ token: 'current-token' });
+
+      expect(fetchMock.mock.calls[0]).toEqual([
+        '/api/organization',
+        { headers: { Authorization: 'Bearer current-token' } },
+      ]);
+      expect(view).toEqual({
+        id: 'org-1',
+        name: 'Main Hospital Group',
+        activeBranches: [
+          { id: 'branch-1', organizationId: 'org-1', code: 'EAST', name: 'East Clinic', locationLabel: '1 East Way', active: true },
+          { id: 'branch-2', organizationId: 'org-1', code: 'WEST', name: 'West Clinic', locationLabel: '9 West Way', active: true },
+        ],
+      });
+    });
+
+    it('delegates 401 to the expiry callback and refuses a malformed allowlist with ApiError(500)', async () => {
+      const onUnauthorized = vi.fn();
+      fetchMock = vi.fn()
+        .mockResolvedValueOnce(jsonResponse({ error: 'expired' }, 401))
+        .mockResolvedValueOnce(jsonResponse({ id: 'org-1', name: 'Main Hospital Group', activeBranches: [{ id: 'branch-1' }] }));
+      vi.stubGlobal('fetch', fetchMock);
+
+      const expired = await fetchOrganizationView({ token: 'current-token', onUnauthorized }).then(
+        () => null,
+        (thrown) => thrown
+      );
+      expect(expired).toBeInstanceOf(ApiError);
+      expect(expired.status).toBe(401);
+      expect(onUnauthorized).toHaveBeenCalledTimes(1);
+
+      const malformed = await fetchOrganizationView({ token: 'current-token' }).then(
+        () => null,
+        (thrown) => thrown
+      );
+      expect(malformed).toBeInstanceOf(ApiError);
+      expect(malformed.status).toBe(500);
     });
   });
 

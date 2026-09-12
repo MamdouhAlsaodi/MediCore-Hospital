@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { loginRequest } from './api.js';
+import { authenticate } from './api.js';
 
 export default function LoginPage({ onLogin }) {
   const [username, setUsername] = useState('');
@@ -13,7 +13,7 @@ export default function LoginPage({ onLogin }) {
     setBusy(true);
     setError('');
     try {
-      const session = await loginRequest(username.trim(), password);
+      const session = await authenticate(username.trim(), password);
       onLogin(session);
     } catch (err) {
       setError(err && err.message ? err.message : 'Invalid username or password.');
@@ -34,7 +34,11 @@ export default function LoginPage({ onLogin }) {
         </div>
 
         <h2>Sign in to your workspace</h2>
-        <p className="login-hint">Use the account provided by your administrator.</p>
+        <p className="login-hint">
+          Use the account provided by your administrator. You start in the acting
+          role and branch the server selects for you; you can switch context from
+          the sidebar.
+        </p>
 
         <form onSubmit={submit} noValidate={false}>
           <div className="field">

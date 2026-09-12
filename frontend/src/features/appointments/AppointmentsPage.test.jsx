@@ -458,4 +458,62 @@ describe('AppointmentsPage', () => {
     );
     expect(screen.queryByRole('button', { name: 'Schedule appointment' })).not.toBeInTheDocument();
   });
+
+  it('refetches the branch-scoped appointment list under the new context-bound token after a successful context switch', async () => {
+    const onSessionExpired = vi.fn();
+    const assignmentA = {
+      id: '11111111-1111-4111-8111-111111111111',
+      role: 'RECEPTIONIST',
+      scope: 'BRANCH',
+      organizationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      organizationLabel: 'Main Hospital Group',
+      branchId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      branchLabel: 'East Clinic',
+      departmentId: null,
+      departmentLabel: null,
+      enabled: true,
+    };
+    const assignmentB = { ...assignmentA, id: '22222222-2222-4222-8222-222222222222', branchId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', branchLabel: 'West Clinic' };
+    const sessionA = {
+      token: 'branch-a-token',
+      username: 'testuser',
+      roles: ['RECEPTIONIST'],
+      assignments: [assignmentA, assignmentB],
+      actingContext: {
+        username: 'testuser',
+        assignmentId: assignmentA.id,
+        role: 'RECEPTIONIST',
+        scope: 'BRANCH',
+        organizationId: assignmentA.organizationId,
+        branchId: assignmentA.branchId,
+        departmentId: null,
+      },
+    };
+    const sessionB = {
+      ...sessionA,
+      token: 'branch-b-token',
+      actingContext: { ...sessionA.actingContext, assignmentId: assignmentB.id, branchId: assignmentB.branchId },
+    };
+    const state = { appointmentsList: APPOINTMENTS_INITIAL };
+    stubBackend(fetchMock, state);
+
+    const view = render(<AppointmentsPage session={sessionA} onSessionExpired={onSessionExpired} />);
+    const tableA = await screen.findByRole('table', { name: 'Scheduled appointments' });
+    expect(within(tableA).getAllByRole('row')).toHaveLength(2); // header + legacy row
+
+    // Point the stubbed server at the other branch's data and swap in the
+    // complete switched session: the screen stays the single owner of its
+    // list and reloads it under the new context-bound token.
+    state.appointmentsList = APPOINTMENTS_AFTER_CREATE;
+    view.rerender(<AppointmentsPage session={sessionB} onSessionExpired={onSessionExpired} />);
+
+    const tableB = await screen.findByRole('table', { name: 'Scheduled appointments' });
+    expect(within(tableB).getAllByRole('row')).toHaveLength(3); // header + two branch-B rows
+    const calls = fetchMock.mock.calls.filter(([path, options = {}]) =>
+      path === '/api/appointments' && (options.method ?? 'GET') === 'GET');
+    expect(calls).toHaveLength(2);
+    expect(calls[0][1].headers.Authorization).toBe('Bearer branch-a-token');
+    expect(calls[1][1].headers.Authorization).toBe('Bearer branch-b-token');
+    expect(onSessionExpired).not.toHaveBeenCalled();
+  });
 });

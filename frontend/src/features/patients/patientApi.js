@@ -4,6 +4,11 @@ import { apiFetch } from '../../api.js';
 // Tasks 6-7). Every patient read and mutation goes through the shared
 // apiFetch so session headers, JSON parsing, 401 expiry handling, and error
 // mapping stay in one place. Components never call fetch directly.
+// Plan 3 Task 5: every request rides the acting context's bound bearer
+// token alone — the server derives the branch scope from that token, so
+// this adapter never sends branch/assignment headers or parameters, and a
+// successful context switch refreshes data simply because the shell hands
+// the new session's token to these functions.
 export function fetchPatients({ token, query = '', onUnauthorized } = {}) {
   const trimmed = typeof query === 'string' ? query.trim() : '';
   const path = trimmed

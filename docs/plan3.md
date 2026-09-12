@@ -1,5 +1,13 @@
 # MediCore — Phase 3 Plan: Multi-Branch Operations & Resource Coordination (Training/Portfolio)
 
+> ## Execution contract — read before every task
+>
+> - **Every numbered roadmap task is one complete execution stage with its own branch and one separate PR.** Never combine multiple roadmap tasks into one branch/PR, and never create separate PRs for backend/frontend/recovery slices inside the same task.
+> - Pi receives the complete current task: inspect its bounded scope, write behavior-first tests, implement backend/frontend/docs named by that task, run every stated gate, and write one `PASS | PARTIAL | BLOCKED` report. It then stops; it does not commit, push, open/merge PRs, use credentials, or start the next task.
+> - Yui stays thin: consume the report and scoped diff, perform the independent acceptance and deterministic Git publication, then launch the next task automatically from the verified predecessor. No per-file supervision, repeated polling, or mid-task micro-packets unless Pi reports a concrete blocker or independent review finds a real acceptance defect.
+> - A failed wrapper/timeout is classified from evidence. Preserve valid source changes, allow at most one narrow recovery for a concrete defect, and keep the final branch/PR at roadmap-task granularity.
+> - Continue in dependency order through Task 15, then enforce the formal stop gate. Do not begin a later phase, Pilot, real-data work, production deployment, or other scope expansion without a new explicit owner decision.
+
 > **Status:** Owner-approved planning target. This document defines proposed implementation work; none of the Phase 3 capabilities below are claimed as delivered until their acceptance evidence exists.
 >
 > **Boundary:** MediCore remains an educational, non-clinical Training/Portfolio system using synthetic data only. This phase demonstrates the architecture and workflows of one hospital organization with several branches; it is not SaaS multi-tenancy, certified medical software, a Pilot, or a production hospital deployment.

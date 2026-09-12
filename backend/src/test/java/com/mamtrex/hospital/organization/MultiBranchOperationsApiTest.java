@@ -1,5 +1,9 @@
 package com.mamtrex.hospital.organization;
 
+import com.mamtrex.hospital.admission.Admission;
+import com.mamtrex.hospital.admission.AdmissionBedAssignment;
+import com.mamtrex.hospital.admission.AdmissionBedAssignmentRepository;
+import com.mamtrex.hospital.admission.AdmissionRepository;
 import com.mamtrex.hospital.auth.ActingAssignment;
 import com.mamtrex.hospital.auth.ActingAssignmentRepository;
 import com.mamtrex.hospital.auth.AssignmentScope;
@@ -149,6 +153,12 @@ class MultiBranchOperationsApiTest {
 
     @Autowired
     BedRepository beds;
+
+    @Autowired
+    AdmissionRepository admissions;
+
+    @Autowired
+    AdmissionBedAssignmentRepository bedAssignments;
 
     /** Unique synthetic suffix per test instance keeps every record disposable and scoped. */
     private final String suffix = UUID.randomUUID().toString().substring(0, 8);
@@ -1101,6 +1111,353 @@ class MultiBranchOperationsApiTest {
         } finally {
             transitionPool.shutdownNow();
         }
+    }
+
+    // ------------------------------------------------------------------
+    // 18b. Task 7: atomic admission bed assignment, transfer, and release.
+    // ------------------------------------------------------------------
+
+    /** Task 7 admission create body over a verified same-branch patient. */
+    private Map<String, Object> admissionCreatePayload(String tag, String patientId) {
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("patientId", patientId);
+        payload.put("admittedAt", "2031-04-01T08:00:00");
+        payload.put("reason", "synthetic admission " + suffix + " " + tag);
+        return payload;
+    }
+
+    /** Reads one bed's occupancy through the Task 6 DTO contract. */
+    private String bedOccupancy(String token, Object bedId) {
+        ResponseEntity<Map<String, Object>> bed = getJson("/api/beds/" + bedId, token);
+        assertEquals(HttpStatus.OK, bed.getStatusCode(), "the bed fixture must stay readable");
+        assertNotNull(bed.getBody());
+        return String.valueOf(bed.getBody().get("occupancyStatus"));
+    }
+
+    /**
+     * Task 7 branch contract: every admission bed reference resolves inside
+     * the acting branch — a cross-branch bed at creation, a cross-branch
+     * patient at creation, a cross-branch admission id, and a cross-branch
+     * target bed on the bed command all answer the generic 404,
+     * indistinguishable from a nonexistent row — while the successful
+     * command exposes only the allowlisted branchId plus the current-bed
+     * summary and owns exactly one existing-format audit event; every
+     * refusal records none and mutates nothing.
+     */
+    @Test
+    void admissionBedCommandsResolveReferencesOnlyInsideTheActingBranch() {
+        Branch branchA = createdBranch(suffix + "-adma");
+        Branch branchB = createdBranch(suffix + "-admb");
+        String tokenA = adminTokenActingOn(branchA);
+        String tokenB = adminTokenActingOn(branchB);
+
+        Map<String, Object> bedA1 = createBed(tokenA, "WARD-ADM-" + suffix, "ROOM-ADM-A1", "BED-A1");
+        Map<String, Object> bedA2 = createBed(tokenA, "WARD-ADM-" + suffix, "ROOM-ADM-A2", "BED-A2");
+        Map<String, Object> bedB1 = createBed(tokenB, "WARD-ADM-" + suffix, "ROOM-ADM-B1", "BED-B1");
+        String patientA = createVerifiedPatientId(tokenA, "adma");
+        String patientB = createVerifiedPatientId(tokenB, "admb");
+        long admissionsBefore = admissions.count();
+
+        // Cross-branch bed at creation: generic 404, nothing persists.
+        Map<String, Object> crossBed = admissionCreatePayload("xbed", patientA);
+        crossBed.put("bedId", String.valueOf(bedB1.get("id")));
+        assertEquals(HttpStatus.NOT_FOUND, postJson("/api/admissions", tokenA, crossBed).getStatusCode(),
+                "a cross-branch bed reference at creation must be the generic 404");
+        assertEquals(admissionsBefore, admissions.count(), "the refused create must persist nothing");
+
+        // Cross-branch patient at creation: generic 404, nothing persists.
+        Map<String, Object> crossPatient = admissionCreatePayload("xpat", patientB);
+        crossPatient.put("bedId", String.valueOf(bedA1.get("id")));
+        assertEquals(HttpStatus.NOT_FOUND, postJson("/api/admissions", tokenA, crossPatient).getStatusCode(),
+                "a cross-branch patient reference at creation must be the generic 404");
+        assertEquals(admissionsBefore, admissions.count(), "the refused create must persist nothing");
+
+        // Successful create with a branch-local bed.
+        Map<String, Object> localCreate = admissionCreatePayload("local", patientA);
+        localCreate.put("bedId", String.valueOf(bedA1.get("id")));
+        ResponseEntity<Map<String, Object>> created = postJson("/api/admissions", tokenA, localCreate);
+        assertTrue(created.getStatusCode().is2xxSuccessful(), "the branch-local create must succeed");
+        Map<String, Object> admission = created.getBody();
+        assertNotNull(admission);
+        assertEquals(branchA.getId().toString(), String.valueOf(admission.get("branchId")),
+                "branchId derives from the admission's verified patient inside the acting branch");
+        assertEquals(bedA1.get("id"), ((Map<?, ?>) admission.get("currentBed")).get("bedId"),
+                "the current-bed summary must name the occupied bed");
+        String admissionId = String.valueOf(admission.get("id"));
+        assertEquals("OCCUPIED", bedOccupancy(tokenA, bedA1.get("id")));
+        assertEquals(1, auditEventsFor("Admission", admissionId, "CREATE"),
+                "the create must own exactly one CREATE audit event");
+        assertEquals(0, auditEventsFor("Admission", admissionId, "UPDATE"),
+                "no command has touched the admission yet");
+
+        // Cross-branch admission id on the bed command: generic 404.
+        assertEquals(HttpStatus.NOT_FOUND,
+                putJson("/api/admissions/" + admissionId + "/bed", tokenB, Map.of("bedId", String.valueOf(bedB1.get("id")))).getStatusCode(),
+                "a cross-branch admission id must be the generic 404 on the bed command");
+
+        // Cross-branch target bed on the bed command: generic 404 too.
+        assertEquals(HttpStatus.NOT_FOUND,
+                putJson("/api/admissions/" + admissionId + "/bed", tokenA, Map.of("bedId", String.valueOf(bedB1.get("id")))).getStatusCode(),
+                "a cross-branch target bed must be the generic 404 on the bed command");
+        assertEquals("OCCUPIED", bedOccupancy(tokenA, bedA1.get("id")),
+                "the refused commands must not release the held bed");
+        assertEquals(0, auditEventsFor("Admission", admissionId, "UPDATE"),
+                "the refused commands must record no audit event");
+
+        // Successful branch-local transfer: source released, target occupied, one event.
+        ResponseEntity<Map<String, Object>> transferred = putJson("/api/admissions/" + admissionId + "/bed", tokenA,
+                Map.of("bedId", String.valueOf(bedA2.get("id"))));
+        assertTrue(transferred.getStatusCode().is2xxSuccessful(), "the branch-local transfer must succeed");
+        assertEquals("AVAILABLE", bedOccupancy(tokenA, bedA1.get("id")), "the transfer must release the source bed");
+        assertEquals("OCCUPIED", bedOccupancy(tokenA, bedA2.get("id")), "the transfer must occupy the target bed");
+        assertEquals(bedA2.get("id"), ((Map<?, ?>) transferred.getBody().get("currentBed")).get("bedId"));
+        assertEquals(1, auditEventsFor("Admission", admissionId, "UPDATE"),
+                "the transfer must own exactly one UPDATE audit event");
+
+        // Discharge releases the branch-local bed transactionally.
+        ResponseEntity<Map<String, Object>> discharged = putJson("/api/admissions/" + admissionId + "/status", tokenA,
+                Map.of("status", "DISCHARGED"));
+        assertTrue(discharged.getStatusCode().is2xxSuccessful(), "the discharge must succeed");
+        assertNull(discharged.getBody().get("currentBed"), "discharge must close the current-bed summary");
+        assertEquals("AVAILABLE", bedOccupancy(tokenA, bedA2.get("id")), "discharge must release the held bed");
+        assertEquals(2, auditEventsFor("Admission", admissionId, "UPDATE"),
+                "exactly the transfer and discharge UPDATE events may exist");
+
+        // The live-assignment table must be empty for this admission: no closed row lingers.
+        assertEquals(0, bedAssignments.findAll().stream()
+                        .filter(assignment -> assignment.getAdmissionId().toString().equals(admissionId))
+                        .count(),
+                "a released admission must leave no assignment row behind");
+    }
+
+    /**
+     * Task 7 concurrency proof: two admissions racing through the real HTTP
+     * bed command for the same AVAILABLE bed produce exactly one winner and
+     * one safe 409 (the service AVAILABLE pre-check plus the assignment
+     * table's (bedId) DB unique constraint and the bed row's optimistic
+     * lock), the winner alone holds the bed and owns exactly one audit
+     * event, the loser records none, and a direct repository write against
+     * the occupied bed fails on the same constraint.
+     */
+    @Test
+    void concurrentAdmissionsClaimingOneBedProduceExactlyOneWinner() throws Exception {
+        Branch branch = createdBranch(suffix + "-admrace");
+        String token = adminTokenActingOn(branch);
+        String patientId = createVerifiedPatientId(token, "admrace");
+        Map<String, Object> bed = createBed(token, "WARD-RACE2-" + suffix, "ROOM-RACE2", "BED-RACE2");
+        String bedId = String.valueOf(bed.get("id"));
+        String admission1 = String.valueOf(postJson("/api/admissions", token,
+                admissionCreatePayload("race1", patientId)).getBody().get("id"));
+        String admission2 = String.valueOf(postJson("/api/admissions", token,
+                admissionCreatePayload("race2", patientId)).getBody().get("id"));
+
+        int racers = 2;
+        ExecutorService pool = Executors.newFixedThreadPool(racers);
+        String winner;
+        try {
+            CountDownLatch start = new CountDownLatch(1);
+            java.util.List<java.util.concurrent.Future<ResponseEntity<Map<String, Object>>>> claims =
+                    new java.util.ArrayList<>();
+            for (String admission : List.of(admission1, admission2)) {
+                claims.add(pool.submit(() -> {
+                    start.await();
+                    return putJson("/api/admissions/" + admission + "/bed", token, Map.of("bedId", bedId));
+                }));
+            }
+            start.countDown();
+            int wins = 0;
+            winner = null;
+            for (var future : claims) {
+                ResponseEntity<Map<String, Object>> outcome = future.get(30, java.util.concurrent.TimeUnit.SECONDS);
+                if (outcome.getStatusCode().is2xxSuccessful()) {
+                    wins++;
+                    winner = String.valueOf(outcome.getBody().get("id"));
+                } else {
+                    assertEquals(HttpStatus.CONFLICT, outcome.getStatusCode(),
+                            "a losing racing claim must be the safe 409, never a 5xx");
+                    assertNotNull(outcome.getBody());
+                    assertEquals(API_ERROR_KEYS, outcome.getBody().keySet(),
+                            "the losing claim must carry the shared safe contract");
+                }
+            }
+            assertEquals(1, wins, "exactly one racing claim may win");
+            assertNotNull(winner);
+        } finally {
+            pool.shutdownNow();
+        }
+        String loser = winner.equals(admission1) ? admission2 : admission1;
+
+        assertEquals("OCCUPIED", bedOccupancy(token, bedId), "the raced bed must end occupied by the winner");
+        Map<String, Object> winnerDetail = getJson("/api/admissions/" + winner, token).getBody();
+        assertNotNull(winnerDetail);
+        assertEquals(bed.get("id"), ((Map<?, ?>) winnerDetail.get("currentBed")).get("bedId"),
+                "the winner must expose the raced bed as its current bed");
+        Map<String, Object> loserDetail = getJson("/api/admissions/" + loser, token).getBody();
+        assertNotNull(loserDetail);
+        assertNull(loserDetail.get("currentBed"), "the loser must still hold no bed");
+        assertEquals(1, auditEventsFor("Admission", winner, "UPDATE"),
+                "the winning claim alone must own exactly one UPDATE audit event");
+        assertEquals(0, auditEventsFor("Admission", loser, "UPDATE"),
+                "the losing claim must record no audit event");
+
+        // The DB constraint is the backstop: a direct write against the occupied bed cannot persist.
+        assertThrows(DataIntegrityViolationException.class,
+                () -> bedAssignments.save(new AdmissionBedAssignment(
+                        admissions.save(new Admission(patientId, "2031-04-02T08:00", null,
+                                "synthetic constraint probe " + suffix, "ADMITTED")).getId(),
+                        java.util.UUID.fromString(bedId))),
+                "the (bedId) DB unique constraint must backstop the service pre-check");
+        assertEquals(1, bedAssignments.findAll().stream()
+                        .filter(assignment -> assignment.getBedId().toString().equals(bedId))
+                        .count(),
+                "exactly one live assignment may exist for the raced bed");
+    }
+
+    // ------------------------------------------------------------------
+    // 18c. Task 7A: admission list/detail/commands are branch-scoped.
+    // ------------------------------------------------------------------
+
+    /**
+     * Task 7A branch-isolation regression: a branch token cannot list,
+     * detail, assign/transfer, discharge, or delete another branch's
+     * admission — every denial is the generic 404, indistinguishable from a
+     * nonexistent row — and after the whole denial sweep the other branch's
+     * persisted admission row, live assignment, bed occupancy, and audit
+     * success counts are unchanged. Ownership is server-stamped from the
+     * acting branch (a stray client branchId is ignored), and a legacy
+     * null-ownership admission stays invisible and untouchable while its
+     * row remains untouched in the store.
+     */
+    @Test
+    void admissionListDetailAndCommandsAreScopedToTheActingBranch() {
+        Branch branchA = createdBranch(suffix + "-isoa");
+        Branch branchB = createdBranch(suffix + "-isob");
+        String tokenA = adminTokenActingOn(branchA);
+        String tokenB = adminTokenActingOn(branchB);
+
+        String patientA = createVerifiedPatientId(tokenA, "isoa");
+        String patientB = createVerifiedPatientId(tokenB, "isob");
+        Map<String, Object> bedA1 = createBed(tokenA, "WARD-ISO-" + suffix, "ROOM-ISO-A1", "BED-A1");
+        Map<String, Object> bedB1 = createBed(tokenB, "WARD-ISO-" + suffix, "ROOM-ISO-B1", "BED-B1");
+        Map<String, Object> bedB2 = createBed(tokenB, "WARD-ISO-" + suffix, "ROOM-ISO-B2", "BED-B2");
+
+        // Branch B owns a bed-holding admission; branch A owns a plain one.
+        Map<String, Object> createB = admissionCreatePayload("isob", patientB);
+        createB.put("bedId", String.valueOf(bedB1.get("id")));
+        ResponseEntity<Map<String, Object>> createdB = postJson("/api/admissions", tokenB, createB);
+        assertTrue(createdB.getStatusCode().is2xxSuccessful(), "the branch-B fixture must create cleanly");
+        assertNotNull(createdB.getBody());
+        String admissionB = String.valueOf(createdB.getBody().get("id"));
+        ResponseEntity<Map<String, Object>> createdA = postJson("/api/admissions", tokenA,
+                admissionCreatePayload("isoa", patientA));
+        assertTrue(createdA.getStatusCode().is2xxSuccessful(), "the branch-A fixture must create cleanly");
+        assertNotNull(createdA.getBody());
+        String admissionA = String.valueOf(createdA.getBody().get("id"));
+
+        // A stray client branchId can never choose ownership: the server
+        // stamps the acting branch, so the row created from A stays A's.
+        Map<String, Object> hijack = admissionCreatePayload("hijack", patientA);
+        hijack.put("branchId", branchB.getId().toString());
+        ResponseEntity<Map<String, Object>> hijacked = postJson("/api/admissions", tokenA, hijack);
+        assertTrue(hijacked.getStatusCode().is2xxSuccessful(), "the create itself must succeed");
+        assertNotNull(hijacked.getBody());
+        assertEquals(branchA.getId().toString(), String.valueOf(hijacked.getBody().get("branchId")),
+                "ownership is server-stamped from the acting branch; a client branchId is ignored");
+        assertFalse(listOfIds(getList("/api/admissions", tokenB))
+                        .contains(String.valueOf(hijacked.getBody().get("id"))),
+                "the branchId-hijack attempt must not surface in branch B's list either");
+
+        // List: each branch sees exactly its own admissions, never the other's.
+        List<String> idsA = listOfIds(getList("/api/admissions", tokenA));
+        assertTrue(idsA.contains(admissionA), "branch A lists its own admission");
+        assertFalse(idsA.contains(admissionB), "branch A must never list branch B's admission");
+        List<String> idsB = listOfIds(getList("/api/admissions", tokenB));
+        assertTrue(idsB.contains(admissionB), "branch B lists its own admission");
+        assertFalse(idsB.contains(admissionA), "the isolation is symmetric");
+
+        // Frozen baseline before the denial sweep.
+        long createsB = auditEventsFor("Admission", admissionB, "CREATE");
+        assertEquals(1, createsB, "the branch-B create must own exactly one CREATE audit event");
+        long updatesB = auditEventsFor("Admission", admissionB, "UPDATE");
+        long deletesB = auditEventsFor("Admission", admissionB, "DELETE");
+        long assignmentsB = bedAssignments.findAll().stream()
+                .filter(assignment -> assignment.getAdmissionId().toString().equals(admissionB))
+                .count();
+        assertEquals(1, assignmentsB, "the branch-B admission must hold exactly one live assignment");
+
+        // Detail denial: branch A cannot read branch B's admission.
+        assertEquals(HttpStatus.NOT_FOUND, getJson("/api/admissions/" + admissionB, tokenA).getStatusCode(),
+                "a cross-branch detail read must be the generic 404");
+
+        // Bed command denial: neither a branch-A nor a branch-B target bed.
+        assertEquals(HttpStatus.NOT_FOUND,
+                putJson("/api/admissions/" + admissionB + "/bed", tokenA,
+                        Map.of("bedId", String.valueOf(bedA1.get("id")))).getStatusCode(),
+                "a cross-branch bed assignment must be the generic 404");
+        assertEquals(HttpStatus.NOT_FOUND,
+                putJson("/api/admissions/" + admissionB + "/bed", tokenA,
+                        Map.of("bedId", String.valueOf(bedB2.get("id")))).getStatusCode(),
+                "a cross-branch transfer attempt must be the generic 404");
+
+        // Discharge denial.
+        assertEquals(HttpStatus.NOT_FOUND,
+                putJson("/api/admissions/" + admissionB + "/status", tokenA,
+                        Map.of("status", "DISCHARGED")).getStatusCode(),
+                "a cross-branch discharge must be the generic 404");
+
+        // Delete denial.
+        assertEquals(HttpStatus.NOT_FOUND, delete("/api/admissions/" + admissionB, tokenA).getStatusCode(),
+                "a cross-branch delete must be the generic 404");
+
+        // Nothing moved: the branch-B admission row, live assignment, bed
+        // occupancy, and audit success counts are all unchanged.
+        Admission persistedB = admissions.findById(UUID.fromString(admissionB)).orElseThrow();
+        assertEquals("ADMITTED", persistedB.getStatus(), "the denied discharge must not change the status");
+        assertNull(persistedB.getDischargedAt(), "the denied discharge must not stamp a discharge time");
+        assertEquals(branchB.getId(), persistedB.getBranchId(), "ownership must stay with branch B");
+        assertEquals(assignmentsB, bedAssignments.findAll().stream()
+                        .filter(assignment -> assignment.getAdmissionId().toString().equals(admissionB))
+                        .count(),
+                "the denied commands must not create or close any assignment row");
+        assertEquals("OCCUPIED", bedOccupancy(tokenB, bedB1.get("id")),
+                "the denied bed command must not release or move the held bed");
+        assertEquals("AVAILABLE", bedOccupancy(tokenA, bedA1.get("id")),
+                "the denied bed command must not occupy the branch-A target");
+        assertEquals(createsB, auditEventsFor("Admission", admissionB, "CREATE"),
+                "the denied commands must not add a CREATE event");
+        assertEquals(updatesB, auditEventsFor("Admission", admissionB, "UPDATE"),
+                "the denied commands must record no UPDATE audit event");
+        assertEquals(deletesB, auditEventsFor("Admission", admissionB, "DELETE"),
+                "the denied commands must record no DELETE audit event");
+
+        // Positive control: each branch keeps full authority over its own row.
+        assertEquals(HttpStatus.OK, getJson("/api/admissions/" + admissionB, tokenB).getStatusCode(),
+                "branch B still reads its own admission");
+        assertEquals(HttpStatus.OK,
+                putJson("/api/admissions/" + admissionA + "/status", tokenA,
+                        Map.of("status", "DISCHARGED")).getStatusCode(),
+                "branch A still discharges its own admission");
+
+        // Legacy null-ownership admission: invisible and untouchable from
+        // every branch, and the row itself stays untouched in the store.
+        Admission legacy = admissions.save(new Admission(patientA, "2031-05-01T08:00", null,
+                "synthetic legacy admission " + suffix, "ADMITTED"));
+        assertFalse(listOfIds(getList("/api/admissions", tokenA)).contains(legacy.getId().toString()),
+                "the list must never disclose a null-ownership legacy admission");
+        assertFalse(listOfIds(getList("/api/admissions", tokenB)).contains(legacy.getId().toString()),
+                "no other branch discloses it either");
+        assertEquals(HttpStatus.NOT_FOUND, getJson("/api/admissions/" + legacy.getId(), tokenA).getStatusCode(),
+                "get must not disclose a null-ownership legacy admission");
+        assertEquals(HttpStatus.NOT_FOUND,
+                putJson("/api/admissions/" + legacy.getId() + "/status", tokenA,
+                        Map.of("status", "DISCHARGED")).getStatusCode(),
+                "discharge must not touch a null-ownership legacy admission");
+        assertEquals(HttpStatus.NOT_FOUND, delete("/api/admissions/" + legacy.getId(), tokenA).getStatusCode(),
+                "delete must not remove a null-ownership legacy admission");
+        Admission reloadedLegacy = admissions.findById(legacy.getId()).orElseThrow();
+        assertEquals("ADMITTED", reloadedLegacy.getStatus(), "the legacy row must stay untouched");
+        assertNull(reloadedLegacy.getDischargedAt(), "the legacy row must keep no discharge time");
+        assertNull(reloadedLegacy.getBranchId(), "the legacy row must remain unowned");
     }
 
     // ------------------------------------------------------------------

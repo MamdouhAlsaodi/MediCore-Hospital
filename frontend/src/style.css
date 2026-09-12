@@ -671,6 +671,39 @@ button.appointment-cancel:focus-visible {
 .admission-save { background: var(--gold, #b8860b); color: #fff; }
 .admission-save:disabled { opacity: 0.6; cursor: not-allowed; }
 .admission-cancel { background: transparent; border: 1px solid var(--line); color: inherit; }
+/* Task 7 bed integration: the inline assign/transfer confirmation inside an
+   admission row and the held-bed cell reuse the shared vocabulary — no new
+   palette, and the touch targets stay at the same size as the discharge
+   controls. */
+.admission-bed-cell { white-space: nowrap; }
+.admission-bed-command {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 240px;
+  white-space: normal;
+}
+.admission-bed-command label { font-size: 13px; color: var(--muted); }
+.admission-bed-target {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+}
+.admission-bed-command-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.admission-bed-confirm {
+  border-color: var(--gold, #b8860b);
+  color: var(--gold, #b8860b);
+  font-weight: 600;
+}
+.admission-bed-cancel { color: var(--muted); }
+
 
 @media (max-width: 560px) {
   /* The admissions list keeps its columns readable on narrow screens: values

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { can } from '../../authorization.js';
-import { AdmissionForm } from '../admissions/AdmissionsPage.jsx';
+import { AdmissionForm } from '../admissions/AdmissionForm.jsx';
 import AppointmentForm from '../appointments/AppointmentForm.jsx';
 
 // Read-only detail view of the selected patient (plan1.md Tasks 7-8). It

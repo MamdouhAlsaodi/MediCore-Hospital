@@ -2,164 +2,56 @@ import React, { useEffect, useState } from 'react';
 import { ApiError } from '../../api.js';
 import { can } from '../../authorization.js';
 import { fetchPatients } from '../patients/patientApi.js';
-import { createAdmission, dischargeAdmission, fetchAdmissions } from './admissionApi.js';
+import { fetchBeds } from '../beds/bedApi.js';
+import { assignAdmissionBed, dischargeAdmission, fetchAdmissions } from './admissionApi.js';
+import { AdmissionForm } from './AdmissionForm.jsx';
+import AdmissionsTable from './AdmissionsTable.jsx';
 
-// Registration form (docs/plan2.md Task 2). Patients arrive as already-loaded
-// domain records (the host screen's list or the single preselected record
-// from the patient detail view); there is no free-typed reference anywhere.
-// The submitted body mirrors CreateAdmissionRequest exactly — patientId,
-// admittedAt, reason — because the server owns the lifecycle: it sets
-// status=ADMITTED and stamps the discharge itself. Server errors render
-// inline with zero field loss; 401 is ownership of the shell.
-export function AdmissionForm({
-  session,
-  patients,
-  preselectedPatientId = '',
-  onCreated,
-  onCancel,
-  onSessionExpired,
-}) {
-  const [patientId, setPatientId] = useState(preselectedPatientId ?? '');
-  const [admittedAt, setAdmittedAt] = useState('');
-  const [reason, setReason] = useState('');
-  const [pending, setPending] = useState(false);
-  const [validationError, setValidationError] = useState('');
-  const [serverError, setServerError] = useState('');
-
-  async function handleSubmit(event) {
-    event.preventDefault();
-    if (pending) return;
-    setValidationError('');
-    setServerError('');
-    const patient = patients.find((record) => record.id === patientId);
-    const trimmedReason = reason.trim();
-    if (!patient || !admittedAt || !trimmedReason) {
-      setValidationError('Select a patient and provide the admission date and time and a reason.');
-      return;
-    }
-    setPending(true);
-    try {
-      const created = await createAdmission({
-        token: session.token,
-        admission: { patientId: patient.id, admittedAt, reason: trimmedReason },
-        onUnauthorized: onSessionExpired,
-      });
-      onCreated(created);
-    } catch (error) {
-      // 401 is ownership of the shell: no local error on top of it.
-      if (error instanceof ApiError && error.status === 401) return;
-      setServerError(
-        error instanceof ApiError ? error.message : 'The admission could not be registered.'
-      );
-    } finally {
-      setPending(false);
-    }
-  }
-
-  return (
-    <form
-      className="panel admission-form"
-      aria-label="Register an admission"
-      aria-busy={pending}
-      onSubmit={handleSubmit}
-    >
-      <h3>Register an admission</h3>
-      <p className="panel-hint">
-        Choose the patient from the loaded records, then pick the admission
-        date and time and describe the reason. No identifiers are typed by
-        hand, and the server owns the admission status and the discharge.
-      </p>
-
-      {validationError && (
-        <p className="notice error" role="alert">{validationError}</p>
-      )}
-      {serverError && (
-        <p className="notice error" role="alert">{serverError}</p>
-      )}
-
-      <div className="admission-form-grid">
-        <div className="admission-field">
-          <label htmlFor="admission-patient">Patient</label>
-          <select
-            id="admission-patient"
-            value={patientId}
-            onChange={(event) => setPatientId(event.target.value)}
-          >
-            <option value="">Select a patient</option>
-            {patients.map((patient) => (
-              <option key={patient.id} value={patient.id}>
-                {patient.fullName} (MRN {patient.medicalRecordNumber})
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="admission-field">
-          <label htmlFor="admission-admitted-at">Admitted at</label>
-          <input
-            id="admission-admitted-at"
-            type="datetime-local"
-            value={admittedAt}
-            onChange={(event) => setAdmittedAt(event.target.value)}
-          />
-        </div>
-
-        <div className="admission-field">
-          <label htmlFor="admission-reason">Reason</label>
-          <input
-            id="admission-reason"
-            type="text"
-            value={reason}
-            onChange={(event) => setReason(event.target.value)}
-          />
-        </div>
-      </div>
-
-      <div className="admission-form-actions">
-        <button
-          type="submit"
-          className="admission-save"
-          disabled={pending}
-        >
-          {pending ? 'Registering…' : 'Register admission'}
-        </button>
-        <button
-          type="button"
-          className="admission-cancel"
-          onClick={onCancel}
-          disabled={pending}
-        >
-          Cancel
-        </button>
-      </div>
-    </form>
-  );
-}
-
-// Admissions screen (docs/plan2.md Task 2): the admissions list over
-// GET /api/admissions, the registration flow over POST /api/admissions, and
-// the deliberate discharge flow over PUT /api/admissions/{id}/status. The
-// list resolves patient names against the loaded records and renders honest
-// "Unknown record" placeholders for references it cannot resolve — raw
-// reference values are never displayed. Discharge is a two-step confirmation:
-// nothing is sent until Confirm is clicked. All transport goes through the
-// feature adapter — components never call fetch directly.
+// Admissions screen (docs/plan2.md Task 2, extended by docs/plan3.md
+// Task 7): the admissions list over GET /api/admissions, the registration
+// flow over POST /api/admissions, the atomic bed assignment/transfer over
+// PUT /api/admissions/{id}/bed, and the deliberate discharge flow over
+// PUT /api/admissions/{id}/status (the server releases a held bed on that
+// transition). The list resolves patient names against the loaded records
+// and renders honest "Unknown record" placeholders for references it cannot
+// resolve — raw reference values are never displayed. Every active admission
+// shows its held bed or an explicit "No bed assigned"; assignment and
+// transfer are two-step confirmations whose target choices contain only the
+// beds the server reports AVAILABLE, never the currently held bed. Nothing
+// is patched optimistically: after every successful create, assignment,
+// transfer, or discharge the admissions list AND the branch bed inventory
+// are refetched so both views reflect server truth; a failed command
+// changes nothing on screen. All transport goes through the feature adapter
+// — components never call fetch directly. The page owns the authoritative
+// state and every mutation; the table (AdmissionsTable.jsx) and the
+// registration form (AdmissionForm.jsx) are presentation only.
 export default function AdmissionsPage({ session, onSessionExpired }) {
   const [patients, setPatients] = useState([]);
   const [admissions, setAdmissions] = useState([]);
+  const [beds, setBeds] = useState([]);
   const [status, setStatus] = useState('loading');
   const [loadError, setLoadError] = useState('');
   // 'list' | 'form'
   const [view, setView] = useState('list');
   const [confirmation, setConfirmation] = useState('');
-  // Bumped after a successful mutation so the list refetches instead of
-  // showing a result set that cannot contain the new state.
+  // Bumped after a successful mutation so the admissions list, the loaded
+  // patients, and the branch bed inventory all refetch instead of showing a
+  // result set that cannot contain the new state.
   const [listRefresh, setListRefresh] = useState(0);
   // The id of the admission awaiting its discharge confirmation, or null.
   const [dischargePendingId, setDischargePendingId] = useState(null);
   // The id of the admission whose discharge request is in flight, or null.
   const [dischargingId, setDischargingId] = useState(null);
   const [dischargeError, setDischargeError] = useState('');
+  // The id of the admission with an open bed command (assignment when it
+  // holds no bed, transfer when it holds one), or null.
+  const [bedCommandId, setBedCommandId] = useState(null);
+  // The selected target bed id inside the open bed command.
+  const [bedTarget, setBedTarget] = useState('');
+  // Whether a bed command request is in flight.
+  const [bedBusy, setBedBusy] = useState(false);
+  const [bedValidationError, setBedValidationError] = useState('');
+  const [bedCommandError, setBedCommandError] = useState('');
 
   useEffect(() => {
     let active = true;
@@ -173,11 +65,16 @@ export default function AdmissionsPage({ session, onSessionExpired }) {
       token: session.token,
       onUnauthorized: onSessionExpired,
     });
-    Promise.all([loadPatients, loadAdmissions])
-      .then(([loadedPatients, loadedAdmissions]) => {
+    const loadBeds = fetchBeds({
+      token: session.token,
+      onUnauthorized: onSessionExpired,
+    });
+    Promise.all([loadPatients, loadAdmissions, loadBeds])
+      .then(([loadedPatients, loadedAdmissions, loadedBeds]) => {
         if (!active) return;
         setPatients(Array.isArray(loadedPatients) ? loadedPatients : []);
         setAdmissions(Array.isArray(loadedAdmissions) ? loadedAdmissions : []);
+        setBeds(Array.isArray(loadedBeds) ? loadedBeds : []);
         setStatus('ready');
       })
       .catch((error) => {
@@ -194,6 +91,7 @@ export default function AdmissionsPage({ session, onSessionExpired }) {
   function openForm() {
     setConfirmation('');
     setDischargeError('');
+    setBedCommandError('');
     setView('form');
   }
 
@@ -206,13 +104,18 @@ export default function AdmissionsPage({ session, onSessionExpired }) {
   function handleRegistered() {
     setConfirmation('Admission registered.');
     setView('list');
-    // Server-side state cannot be honestly patched locally: refetch.
+    // Server-side state cannot be honestly patched locally: refetch the
+    // admissions list and the bed inventory (the optional create bed may
+    // now be OCCUPIED).
     setListRefresh((n) => n + 1);
   }
 
   function requestDischarge(admissionId) {
     setConfirmation('');
     setDischargeError('');
+    setBedValidationError('');
+    setBedCommandError('');
+    setBedCommandId(null);
     setDischargePendingId(admissionId);
   }
 
@@ -232,7 +135,9 @@ export default function AdmissionsPage({ session, onSessionExpired }) {
       });
       setDischargePendingId(null);
       setConfirmation('Admission discharged.');
-      // Server-side state cannot be honestly patched locally: refetch.
+      // Server-side state cannot be honestly patched locally: refetch the
+      // admissions list and the bed inventory (a released bed is AVAILABLE
+      // again only there).
       setListRefresh((n) => n + 1);
     } catch (error) {
       setDischargePendingId(null);
@@ -243,6 +148,68 @@ export default function AdmissionsPage({ session, onSessionExpired }) {
       );
     } finally {
       setDischargingId(null);
+    }
+  }
+
+  function requestBedCommand(admissionId) {
+    setConfirmation('');
+    setDischargeError('');
+    setBedValidationError('');
+    setBedCommandError('');
+    setBedTarget('');
+    setDischargePendingId(null);
+    setBedCommandId(admissionId);
+  }
+
+  function cancelBedCommand() {
+    setBedCommandId(null);
+    setBedTarget('');
+    setBedValidationError('');
+    setBedCommandError('');
+  }
+
+  // Selection inside the open bed command: remember the choice and clear
+  // any stale validation error, exactly as before the extraction.
+  function handleBedTargetChange(value) {
+    setBedTarget(value);
+    setBedValidationError('');
+  }
+
+  async function confirmBedCommand(admission) {
+    if (bedBusy) return;
+    if (!bedTarget) {
+      setBedValidationError('Select an available bed.');
+      return;
+    }
+    setBedBusy(true);
+    setBedCommandError('');
+    try {
+      // The same narrow command performs assignment and transfer; the
+      // response body is deliberately not patched into the list — the
+      // refetch below is the only source of the new state.
+      await assignAdmissionBed({
+        token: session.token,
+        id: admission.id,
+        bedId: bedTarget,
+        onUnauthorized: onSessionExpired,
+      });
+      const wasTransfer = Boolean(admission.currentBed);
+      setBedCommandId(null);
+      setBedTarget('');
+      setConfirmation(wasTransfer ? 'Bed transferred.' : 'Bed assigned.');
+      // Refetch admissions AND beds so both views show server truth (the
+      // previous bed — on a transfer — is AVAILABLE again only there).
+      setListRefresh((n) => n + 1);
+    } catch (error) {
+      // 401 is ownership of the shell: no local error on top of it. Any
+      // other failure (403/404/409/network) keeps the confirmation open
+      // with the selection intact and the row untouched.
+      if (error instanceof ApiError && error.status === 401) return;
+      setBedCommandError(
+        error instanceof ApiError ? error.message : 'The bed could not be assigned.'
+      );
+    } finally {
+      setBedBusy(false);
     }
   }
 
@@ -275,6 +242,10 @@ export default function AdmissionsPage({ session, onSessionExpired }) {
                 <p className="notice error" role="alert">{dischargeError}</p>
               )}
 
+              {bedCommandError && (
+                <p className="notice error" role="alert">{bedCommandError}</p>
+              )}
+
               {canRegister && (
                 <div className="admissions-actions">
                   <button
@@ -298,68 +269,25 @@ export default function AdmissionsPage({ session, onSessionExpired }) {
                   </p>
                 </div>
               ) : (
-                <div className="admissions-table-wrap">
-                  <table className="admissions-table" aria-label="Registered admissions">
-                    <thead>
-                      <tr>
-                        <th scope="col">Patient</th>
-                        <th scope="col">Admitted at</th>
-                        <th scope="col">Discharged at</th>
-                        <th scope="col">Reason</th>
-                        <th scope="col">Status</th>
-                        <th scope="col">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {admissions.map((admission) => (
-                        <tr key={admission.id}>
-                          <td>{patientNameById.get(admission.patientId) ?? 'Unknown record'}</td>
-                          <td>{admission.admittedAt}</td>
-                          <td>{admission.dischargedAt || '—'}</td>
-                          <td>{admission.reason}</td>
-                          <td>
-                            <span className={`status-badge status-${String(admission.status).toLowerCase()}`}>
-                              {admission.status}
-                            </span>
-                          </td>
-                          <td className="admission-row-actions">
-                            {canDischarge
-                              && admission.status === 'ADMITTED'
-                              && dischargePendingId !== admission.id && (
-                              <button
-                                type="button"
-                                className="admission-discharge"
-                                onClick={() => requestDischarge(admission.id)}
-                              >
-                                Discharge
-                              </button>
-                            )}
-                            {dischargePendingId === admission.id && (
-                              <>
-                                <button
-                                  type="button"
-                                  className="admission-discharge-confirm"
-                                  disabled={dischargingId === admission.id}
-                                  onClick={() => confirmDischarge(admission.id)}
-                                >
-                                  {dischargingId === admission.id ? 'Discharging…' : 'Confirm discharge'}
-                                </button>
-                                <button
-                                  type="button"
-                                  className="admission-discharge-cancel"
-                                  disabled={dischargingId === admission.id}
-                                  onClick={cancelDischarge}
-                                >
-                                  Cancel
-                                </button>
-                              </>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <AdmissionsTable
+                  admissions={admissions}
+                  beds={beds}
+                  patientNameById={patientNameById}
+                  canDischarge={canDischarge}
+                  bedCommandId={bedCommandId}
+                  bedTarget={bedTarget}
+                  bedBusy={bedBusy}
+                  bedValidationError={bedValidationError}
+                  dischargePendingId={dischargePendingId}
+                  dischargingId={dischargingId}
+                  onRequestBedCommand={requestBedCommand}
+                  onCancelBedCommand={cancelBedCommand}
+                  onConfirmBedCommand={confirmBedCommand}
+                  onBedTargetChange={handleBedTargetChange}
+                  onRequestDischarge={requestDischarge}
+                  onCancelDischarge={cancelDischarge}
+                  onConfirmDischarge={confirmDischarge}
+                />
               )}
             </>
           )}

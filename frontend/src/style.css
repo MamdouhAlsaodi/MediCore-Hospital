@@ -179,6 +179,11 @@ button.logout:hover { background: var(--navy-2); }
 main { padding: 32px; min-width: 0; }
 header { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 header h2 { margin: 0; }
+/* Shell focus management (docs/plan3.md Task 13): the screen heading receives
+   programmatic focus after navigation and acting-context switches. It is a
+   non-interactive landmark, so it never draws a focus ring; every interactive
+   control keeps the :focus-visible outlines defined throughout this file. */
+header h2[tabindex="-1"]:focus { outline: none; }
 header span { color: var(--muted); }
 
 .notice {
@@ -206,6 +211,8 @@ header span { color: var(--muted); }
     align-items: center;
     gap: 4px 12px;
     padding: 10px 14px;
+    width: 100%;
+    min-width: 0;
     overflow: visible;
     /* Reset the desktop sticky pin: the top nav joins normal document flow. */
     position: static;
@@ -215,19 +222,22 @@ header span { color: var(--muted); }
   }
   aside h1 { font-size: 20px; }
   aside > p { display: none; }
-  .whoami { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; margin: 0; }
+  .whoami { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; margin: 0; min-width: 0; }
   .whoami-roles { font-size: 11px; }
-  .whoami-context { font-size: 11px; }
+  .whoami-context { font-size: 11px; overflow-wrap: anywhere; }
   /* The selector joins the top bar as one full-width row under the identity. */
-  .branch-selector { flex: 1 0 100%; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin: 0; }
-  .branch-selector select { width: auto; min-width: 220px; max-width: 100%; flex: 1 1 220px; padding: 6px 8px; }
+  .branch-selector { flex: 1 1 100%; min-width: 0; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin: 0; }
+  .branch-selector select { width: 100%; min-width: 0; max-width: 100%; flex: 1 1 220px; padding: 6px 8px; }
   .branch-selector-help, .branch-selector-empty { display: none; }
   .branch-selector-status, .branch-selector-denial { flex: 1 0 100%; }
   button.logout { margin: 0 0 0 auto; padding: 7px 12px; }
 
   /* Navigation stays on one horizontal line with controlled overflow. */
   aside nav {
-    flex: 1 0 100%;
+    flex: 1 1 100%;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
     flex-direction: row;
     gap: 6px;
     overflow-x: auto;
@@ -780,10 +790,49 @@ button.availability-retry:focus-visible {
 
 
 @media (max-width: 560px) {
-  /* The admissions list keeps its columns readable on narrow screens: values
-     wrap (overflow-wrap) and the wrap scrolls horizontally if needed. */
-  .admissions-table th,
-  .admissions-table td { padding: 8px; font-size: 13px; }
+  /* Admissions become labelled cards rather than compressing seven columns
+     into unreadable vertical fragments. Native table markup remains intact. */
+  .admissions-table-wrap { overflow: visible; }
+  .admissions-table,
+  .admissions-table tbody,
+  .admissions-table tr,
+  .admissions-table td { display: block; width: 100%; }
+  .admissions-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+  .admissions-table tbody { display: grid; gap: 14px; }
+  .admissions-table tr {
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+  }
+  .admissions-table td {
+    display: grid;
+    grid-template-columns: minmax(92px, 0.38fr) minmax(0, 1fr);
+    gap: 10px;
+    align-items: start;
+    padding: 7px 0;
+    overflow-wrap: anywhere;
+  }
+  .admissions-table td::before {
+    content: attr(data-label);
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .admission-row-actions,
+  .admission-bed-cell { white-space: normal; }
+  .admission-bed-command { min-width: 0; }
   .admission-form-grid { grid-template-columns: 1fr; gap: 0; }
   .admission-form-actions,
   .admissions-actions { flex-direction: column; align-items: stretch; }

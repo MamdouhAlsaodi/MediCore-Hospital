@@ -98,9 +98,50 @@ cd backend && mvn test                        # 162 tests (MultiBranchOperations
                                               # DevAdminInitializerTest 13,
                                               # DashboardApiTest 7,
                                               # ArchitectureSmokeTest 1)
-cd ../frontend && npm test && npm run build   # 125 tests across 12 files + production build
+cd ../frontend && npm test && npm run build   # 237 tests across 15 files + production build
+cd ../frontend && npm run test:e2e            # real-browser journey; see "Browser evidence" above
 cd .. && git diff --check                     # whitespace/conflict-marker gate
 ```
+
+## Browser evidence (Playwright e2e)
+
+The Task 13 browser journey proves the multi-branch workflow in a real Chromium browser at two viewports (desktop 1280×720, mobile 375×812) against the disposable loopback review pair. It is part of the Phase 3 acceptance gate, not a manual step:
+
+```bash
+cd frontend
+npm test && npm run build && npm run test:e2e
+```
+
+Prerequisites (in addition to the Java 21 + Maven backend toolchain and Node):
+
+```bash
+cd frontend
+npm install                 # installs the pinned @playwright/test 1.61.0
+npx playwright install chromium   # one-time local browser download
+```
+
+Environment (names only — supply disposable values at invocation, never in tracked files):
+
+- `HOSPITAL_ADMIN_PASSWORD` — required; the synthetic `admin` login used by the journey.
+- `HOSPITAL_JWT_SECRET` — required; the backend refuses to boot without it.
+- If either variable is missing, the runner fails before anything starts; no other configuration is read.
+
+Dedicated review ports (collision-free by construction):
+
+- The runner binds the backend to `http://127.0.0.1:5591` and the frontend to `http://127.0.0.1:5592` — dedicated loopback review ports that no other MediCore workflow uses. The ports are passed to both servers explicitly (`SERVER_PORT` for Spring Boot; `REVIEW_FRONTEND_PORT` and `REVIEW_API_PROXY_TARGET` for Vite), so nothing falls back to the shared development ports.
+- `reuseExistingServer` is unconditionally `false` for both servers: the runner never attaches to an already-running service and never reuses one of its own previous instances. If either dedicated port is occupied by a foreign process, the run fails instead of reaching the wrong instance. Existing services on any other port are left untouched.
+
+Startup order and endpoints (both servers are managed by `frontend/playwright.config.js`; nothing else needs to be started):
+
+1. The config wipes the disposable H2 store under `/tmp/medicore-e2e-h2` (outside the repository), then starts the Spring Boot backend on `http://127.0.0.1:5591` (explicit `SERVER_PORT`) with `MEDICORE_DEMO_SEED=true` and `SPRING_DATASOURCE_URL` pointed at that store, waiting for `/actuator/health`.
+2. It then starts the Vite dev server on `http://127.0.0.1:5592` (explicit `REVIEW_FRONTEND_PORT`, proxying `/api` to `http://127.0.0.1:5591` via `REVIEW_API_PROXY_TARGET`) and runs one sequential journey per viewport against `http://127.0.0.1:5592` only.
+
+Cleanup and evidence discipline:
+
+- Global teardown removes `/tmp/medicore-e2e-h2`, so the disposable database never outlives the run.
+- Playwright screenshots, video, and authenticated network traces are disabled for failure artifacts; traces can persist login request bodies. The list reporter and a password field cleared immediately after request dispatch provide diagnostics without retaining credential values.
+- The runner deletes any pre-existing images under `docs/evidence/phase3/` once per run before the servers start, and the final (mobile) viewport run copies the complete three-image set there only after every assertion of both viewport runs has passed; a failed or partial run ships no images.
+- Screenshots show only synthetic demo data (`Demo*`/`DEMO-*`); credentials appear nowhere in the output. Automated checks supplement, not replace, direct visual inspection.
 
 ## Patient Journey smoke and performance evidence
 

@@ -96,12 +96,9 @@ import java.util.UUID;
  * {@code AdmissionService}). The events are context-aware system events:
  * because no acting assignment exists during startup, the seeder records
  * each event under a system principal whose {@link ActingContext} carries
- * exactly the owning branch id of the resource the event describes — never
- * a fabricated assignment, role, scope, organization, or department (those
- * columns stay null, so no dangling ownership is invented and the rows
- * surface through the branch-scoped audit slices while remaining honestly
- * marked {@code legacy/unassigned} to organization-scoped ADMIN). The
- * organization's own event keeps the fully context-less shape, and the
+ * exactly the organization and owning branch of the resource it describes —
+ * never a fabricated assignment, role, scope, or department (those columns
+ * stay null). The organization's own event keeps the fully context-less shape, and the
  * security context is cleared immediately after every recording. Startup
  * events carry no correlation id (no request boundary exists). Reused
  * records record nothing — the absence of events for existing rows is
@@ -611,17 +608,15 @@ public class DemoDataInitializer implements ApplicationRunner {
      * context holder, and no authenticated user exists during startup — so
      * this seeder installs, for the duration of one recording, a system
      * principal whose {@link ActingContext} carries exactly the owning
-     * branch of the resource the event describes. Every other context value
-     * (assignment, role, scope, organization, department) stays null: no
-     * acting assignment exists at startup and ownership is never guessed
-     * beyond the resource's own branch, so no dangling reference is ever
-     * invented. The context is cleared immediately after the recording, the
+     * branch of the resource the event describes. Assignment, role, scope,
+     * and department stay null: no acting assignment exists at startup, while
+     * organization ownership is derived directly from that branch. The context is cleared immediately after the recording, the
      * actor stays {@code system}, and no correlation id is fabricated.
      */
     private void recordSystemEvent(Branch owningBranch, String action, String resourceType,
                                    String resourceId, String details) {
-        ActingContext context = new ActingContext("system", null, null, null, null,
-                owningBranch.getId(), null);
+        ActingContext context = new ActingContext("system", null, null, null,
+                owningBranch.getOrganization().getId(), owningBranch.getId(), null);
         SecurityContextHolder.getContext().setAuthentication(
                 UsernamePasswordAuthenticationToken.authenticated(context, null, List.of()));
         try {

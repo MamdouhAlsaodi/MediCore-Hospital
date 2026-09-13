@@ -563,12 +563,11 @@ class DemoDataInitializerTest {
      * bed-assignment actions recorded with the AdmissionService UPDATE
      * convention. Every event stays attributed to the {@code system} actor
      * and is context-aware without fabrication: each event tied to a
-     * branch-owned resource carries exactly that owning branch's id as its
-     * only acting-context value (assignment, role, scope, organization, and
-     * department stay null because no acting assignment exists at startup
-     * and ownership is never guessed beyond the resource's own branch), and
-     * the organization's own event keeps the fully context-less legacy
-     * shape. No event ever carries a correlation id (no request boundary).
+     * branch-owned resource carries its owning organization and branch ids.
+     * Assignment, role, scope, and department stay null because no acting
+     * assignment exists at startup; the organization's own event keeps the
+     * fully context-less legacy shape. No event ever carries a correlation id
+     * (no request boundary).
      */
     @Test
     void seededActionsProduceContextAwareSystemActorAuditEvents() {
@@ -585,18 +584,22 @@ class DemoDataInitializerTest {
         assertTrue(events.stream().allMatch(e -> e.getCorrelationId() == null),
                 "startup events have no request boundary, so no correlation id may appear");
         assertTrue(events.stream().allMatch(e -> e.getAssignmentId() == null && e.getRole() == null
-                        && e.getScope() == null && e.getOrganizationId() == null && e.getDepartmentId() == null),
-                "startup events must never fabricate an assignment, role, scope, organization, or department");
+                        && e.getScope() == null && e.getDepartmentId() == null),
+                "startup events must never fabricate an assignment, role, scope, or department");
 
         // Context-awareness: every event tied to a branch-owned seeded row
-        // carries exactly the owning branch id; the organization event alone
-        // keeps the context-less legacy shape.
+        // carries the owning organization and branch; the organization event
+        // alone keeps the context-less legacy shape.
         Map<String, List<AuditEvent>> byType = events.stream()
                 .collect(Collectors.groupingBy(AuditEvent::getResourceType));
         assertEquals(Set.of("Patient", "StaffMember", "Appointment", "StaffAvailability", "Admission",
                         "EmergencyVisit", "Invoice", "Bed", "HospitalOrganization", "Branch", "Department"),
                 byType.keySet(), "event resource types must follow the conventions the services use");
+        UUID organizationId = organizations.findByCode(DEMO_ORG_CODE).orElseThrow().getId();
         Set<UUID> branchIds = branches.findAll().stream().map(Branch::getId).collect(Collectors.toSet());
+        assertTrue(events.stream().filter(e -> e.getBranchId() != null)
+                        .allMatch(e -> organizationId.equals(e.getOrganizationId())),
+                "every branch-attributed seed event must carry its owning organization");
         for (Map.Entry<String, List<AuditEvent>> entry : byType.entrySet()) {
             String type = entry.getKey();
             List<AuditEvent> typed = entry.getValue();

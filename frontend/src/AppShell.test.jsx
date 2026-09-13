@@ -511,6 +511,43 @@ describe('AppShell', () => {
     expect(screen.getByRole('heading', { name: 'Appointments' })).toBeInTheDocument();
   });
 
+  it('moves keyboard focus to the selected screen heading on mount and after navigation', async () => {
+    const user = userEvent.setup();
+    renderShell(['DOCTOR']);
+    await waitForDashboardStats();
+
+    // On mount the shell places focus on the dashboard heading so keyboard
+    // users start inside the selected screen (docs/plan3.md Task 13).
+    const dashboardHeading = screen.getByRole('heading', { name: 'Operations Dashboard' });
+    expect(dashboardHeading).toHaveAttribute('tabindex', '-1');
+    expect(document.activeElement).toBe(dashboardHeading);
+
+    await user.click(screen.getByRole('button', { name: 'Patients' }));
+
+    const patientsHeading = screen.getByRole('heading', { name: 'Patients' });
+    expect(patientsHeading).toHaveAttribute('tabindex', '-1');
+    expect(document.activeElement).toBe(patientsHeading);
+  });
+
+  it('returns keyboard focus to the current navigation control after the focused element is removed', async () => {
+    const user = userEvent.setup();
+    renderShell(['DOCTOR']);
+    await waitForDashboardStats();
+
+    await user.click(screen.getByRole('button', { name: 'Patients' }));
+    const patientList = await screen.findByRole('list', { name: 'Patient results' });
+    // Clicking a patient row focuses the row control; selecting it replaces
+    // the list with the detail view, removing the focused element from the
+    // DOM. The shell must return focus to a predictable, visible location:
+    // the current screen's navigation control (docs/plan3.md Task 13).
+    await user.click(within(patientList).getByRole('button', { name: /Synthetic Patient/ }));
+
+    await waitFor(() => expect(document.activeElement).toBe(
+      screen.getByRole('button', { name: 'Patients' })
+    ));
+    expect(document.activeElement).toHaveAttribute('aria-current', 'page');
+  });
+
   it('opens the beds screen for a clinical-administrative role and loads its list once', async () => {
     const user = userEvent.setup();
     renderShell(['NURSE']);

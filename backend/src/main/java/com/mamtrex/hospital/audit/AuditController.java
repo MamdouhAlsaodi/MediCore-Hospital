@@ -43,7 +43,7 @@ import java.util.stream.Stream;
   Stream<AuditEvent> scoped=switch(context.scope()){
    case ORGANIZATION -> Stream.concat(
      repo.findByOrganizationIdOrderByOccurredAtDesc(context.organizationId()).stream(),
-     repo.findByAssignmentIdIsNullOrderByOccurredAtDesc().stream())
+     repo.findByAssignmentIdIsNullAndOrganizationIdIsNullAndBranchIdIsNullAndDepartmentIdIsNullOrderByOccurredAtDesc().stream())
     .sorted(Comparator.comparing(AuditEvent::getOccurredAt).reversed());
    case BRANCH -> repo.findByBranchIdOrderByOccurredAtDesc(context.branchId()).stream();
    case DEPARTMENT -> repo.findByDepartmentIdOrderByOccurredAtDesc(context.departmentId()).stream();
@@ -67,7 +67,12 @@ import java.util.stream.Stream;
    e.getDetails(),e.getOccurredAt(),e.getAssignmentId(),
    e.getRole()==null?null:e.getRole().name(),e.getScope()==null?null:e.getScope().name(),
    e.getOrganizationId(),e.getBranchId(),e.getDepartmentId(),e.getCorrelationId(),
-   e.getAssignmentId()==null?LEGACY_UNASSIGNED:null);
+   isContextless(e)?LEGACY_UNASSIGNED:null);
+ }
+
+ private static boolean isContextless(AuditEvent event){
+  return event.getAssignmentId()==null&&event.getOrganizationId()==null
+   &&event.getBranchId()==null&&event.getDepartmentId()==null;
  }
 
  private static ActingContext currentContext(){

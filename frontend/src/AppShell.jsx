@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ApiError } from './api.js';
 import DashboardPage from './DashboardPage.jsx';
 import AdmissionsPage from './features/admissions/AdmissionsPage.jsx';
@@ -90,6 +90,11 @@ export default function AppShell({ session, onLogout, onSessionExpired, onContex
   // dashboard because the selection is intentionally not persisted.
   const [selectedId, setSelectedId] = useState(defaultDestination().id);
 
+  // Shell focus management (docs/plan3.md Task 13 accessibility contract):
+  // the shell owns the persistent chrome, so it owns predictable focus.
+  const screenHeadingRef = useRef(null);
+  const screenNavRef = useRef(null);
+
   const assignments = Array.isArray(session.assignments) ? session.assignments : [];
   // The server-owned active-branch list is needed exactly when the session
   // carries an ORGANIZATION-scope assignment: it names the current branch of
@@ -129,6 +134,53 @@ export default function AppShell({ session, onLogout, onSessionExpired, onContex
     return () => { active = false; };
   }, [session.token, needsOrganization, onSessionExpired]);
 
+  const contextKeyValue = actingContextKey(session);
+
+  // Predictable focus after a screen change: navigation and a successful
+  // acting-context switch both remount the selected screen, which would
+  // otherwise leave keyboard focus on a stale control or dropped on <body>.
+  // The shell moves focus to the selected screen's heading — a visible,
+  // labeled, non-interactive landmark (no focus ring; see style.css) from
+  // which the next Tab continues inside the freshly loaded screen.
+  useEffect(() => {
+    screenHeadingRef.current?.focus();
+  }, [selectedId, contextKeyValue]);
+
+  // Predictable focus return after a dialog/form closes: transient forms and
+  // two-step confirmations unmount their controls after a cancel or submit,
+  // which would leave keyboard focus on a detached node or <body> with no
+  // visible location. When the shell observes focus on a lost node right
+  // after such a removal, it returns focus to the current screen's
+  // navigation control — a stable, visible, labeled location. Ordinary focus
+  // changes inside still-mounted UI (clicks, Tab order, page interactions)
+  // are never redirected.
+  useEffect(() => {
+    let lastFocused = null;
+    const rememberFocus = (event) => {
+      const target = event.target;
+      lastFocused = target instanceof Element && target.isConnected ? target : null;
+    };
+    const observer = new MutationObserver(() => {
+      const active = document.activeElement;
+      const focusLost = active === null
+        || active === document.body
+        || active === document.documentElement
+        || (active instanceof Element && !active.isConnected);
+      if (focusLost && lastFocused && !lastFocused.isConnected) {
+        const nav = screenNavRef.current;
+        const current = nav?.querySelector('button[aria-current="page"]')
+          ?? nav?.querySelector('button');
+        current?.focus();
+      }
+    });
+    document.addEventListener('focusin', rememberFocus, true);
+    observer.observe(document.body, { childList: true, subtree: true });
+    return () => {
+      document.removeEventListener('focusin', rememberFocus, true);
+      observer.disconnect();
+    };
+  }, []);
+
   const destinations = permittedDestinations(session.roles);
   const selected =
     destinations.find((destination) => destination.id === selectedId) ?? defaultDestination();
@@ -157,7 +209,7 @@ export default function AppShell({ session, onLogout, onSessionExpired, onContex
           onContextSwitch={onContextSwitch}
           onSessionExpired={onSessionExpired}
         />
-        <nav aria-label="Screens permitted for your roles">
+        <nav ref={screenNavRef} aria-label="Screens permitted for your roles">
           {destinations.map((destination) => (
             <button
               key={destination.id}
@@ -176,7 +228,9 @@ export default function AppShell({ session, onLogout, onSessionExpired, onContex
       <main>
         <header>
           <div>
-            <h2>{selected.heading}</h2>
+            {/* Non-interactive landmark: receives programmatic focus after
+                navigation/context switches (no focus ring; see style.css). */}
+            <h2 ref={screenHeadingRef} tabIndex={-1}>{selected.heading}</h2>
             <span>Training build</span>
           </div>
         </header>

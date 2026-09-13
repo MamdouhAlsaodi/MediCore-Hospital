@@ -17,6 +17,7 @@ import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.*;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.core.context.SecurityContextHolder;
 
@@ -1663,6 +1664,14 @@ class SecurityAuthorizationTest {
         auditService.record("CREATE", "LegacyAuditFixture", UUID.randomUUID().toString(),
                 "system-seeded legacy evidence " + suffix);
 
+        ActingContext branchSeedContext = new ActingContext("system", null, null, null,
+                testOrg().getId(), defaultBranch.getId(), null);
+        SecurityContextHolder.getContext().setAuthentication(
+                UsernamePasswordAuthenticationToken.authenticated(branchSeedContext, null, List.of()));
+        auditService.record("CREATE", "BranchSeedAuditFixture", UUID.randomUUID().toString(),
+                "system-seeded branch evidence " + suffix);
+        SecurityContextHolder.clearContext();
+
         // Branch-scoped ADMIN acting on the default branch: its patient-create event lands there.
         UserAccount branchAdmin = newDedicatedAccount("audit-branch-admin", Role.ADMIN,
                 AssignmentScope.BRANCH, testOrg(), defaultBranch, null);
@@ -1730,6 +1739,13 @@ class SecurityAuthorizationTest {
         List<Map<String, Object>> orgView = auditList(orgToken);
         assertTrue(orgView.stream().anyMatch(e -> String.valueOf(otherPatient.get("id")).equals(e.get("resourceId"))),
                 "the organization ADMIN sees other branches' evidence");
+        List<Map<String, Object>> branchSeedRows = orgView.stream()
+                .filter(e -> "BranchSeedAuditFixture".equals(e.get("resourceType"))).toList();
+        assertEquals(1, branchSeedRows.size(), "branch-attributed startup evidence remains organization-visible");
+        assertNull(branchSeedRows.get(0).get("branchAttribution"),
+                "a branch-attributed startup event is not legacy merely because it has no assignment");
+        assertEquals(defaultBranch.getId().toString(), branchSeedRows.get(0).get("branchId"));
+        assertEquals(testOrg().getId().toString(), branchSeedRows.get(0).get("organizationId"));
         List<Map<String, Object>> legacyRows = orgView.stream()
                 .filter(e -> "LegacyAuditFixture".equals(e.get("resourceType"))).toList();
         assertEquals(1, legacyRows.size(), "exactly the fabricated legacy fixture is marked");

@@ -60,17 +60,17 @@ export default function AdmissionsTable({
             const bedCommandOpen = bedCommandId === admission.id;
             return (
               <tr key={admission.id}>
-                <td>{patientNameById.get(admission.patientId) ?? 'Unknown record'}</td>
-                <td>{admission.admittedAt}</td>
-                <td>{admission.dischargedAt || '—'}</td>
-                <td>{admission.reason}</td>
-                <td className="admission-bed-cell">{currentBedText(admission)}</td>
-                <td>
+                <td data-label="Patient">{patientNameById.get(admission.patientId) ?? 'Unknown record'}</td>
+                <td data-label="Admitted at">{admission.admittedAt}</td>
+                <td data-label="Discharged at">{admission.dischargedAt || '—'}</td>
+                <td data-label="Reason">{admission.reason}</td>
+                <td data-label="Current bed" className="admission-bed-cell">{currentBedText(admission)}</td>
+                <td data-label="Status">
                   <span className={`status-badge status-${String(admission.status).toLowerCase()}`}>
                     {admission.status}
                   </span>
                 </td>
-                <td className="admission-row-actions">
+                <td data-label="Actions" className="admission-row-actions">
                   {bedCommandOpen ? (
                     <div className="admission-bed-command" aria-busy={bedBusy}>
                       {bedValidationError && (

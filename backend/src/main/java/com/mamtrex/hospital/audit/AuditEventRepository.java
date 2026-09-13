@@ -18,6 +18,6 @@ public interface AuditEventRepository extends JpaRepository<AuditEvent,UUID>{
 
  List<AuditEvent> findByDepartmentIdOrderByOccurredAtDesc(UUID departmentId);
 
- /** Context-less rows (no acting assignment): legacy/unassigned, never guessed into any scope. */
- List<AuditEvent> findByAssignmentIdIsNullOrderByOccurredAtDesc();
+ /** Truly context-less rows: no assignment or organization/branch/department attribution. */
+ List<AuditEvent> findByAssignmentIdIsNullAndOrganizationIdIsNullAndBranchIdIsNullAndDepartmentIdIsNullOrderByOccurredAtDesc();
 }

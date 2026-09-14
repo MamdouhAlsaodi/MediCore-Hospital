@@ -1,8 +1,17 @@
+# Phase 4 PostgreSQL review profile (plan Task 2). Schema authority is
+# Flyway; Hibernate only validates. All connection values are environment
+# placeholders WITHOUT defaults: the profile fails closed when a required
+# variable is missing instead of silently connecting somewhere. Secrets and
+# credential values never belong in this tracked file (FR-001).
 spring:
   datasource:
-    url: ${DB_URL:jdbc:postgresql://localhost:5432/medicore}
-    username: ${DB_USER:medicore}
-    password: ${DB_PASSWORD:medicore}
+    url: ${DB_URL}
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
   jpa:
     hibernate:
       ddl-auto: validate
+    open-in-view: false
+  flyway:
+    enabled: true
+    locations: classpath:db/migration

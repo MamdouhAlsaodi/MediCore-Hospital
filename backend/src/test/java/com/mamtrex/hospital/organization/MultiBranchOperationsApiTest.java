@@ -625,22 +625,18 @@ class MultiBranchOperationsApiTest {
         assertFalse(suiteCodes.contains(suffix + "-legacy"),
                 "the unassigned legacy row must never be disclosed by the list");
 
-        ResponseEntity<List<Map<String, Object>>> scopedA = getList("/api/departments?branchId=" + branchA, token);
-        assertEquals(HttpStatus.OK, scopedA.getStatusCode());
-        assertNotNull(scopedA.getBody());
-        assertEquals(List.of(suffix + "-da"),
-                scopedA.getBody().stream().map(row -> String.valueOf(row.get("code"))).toList(),
-                "the branch filter must scope to exactly that branch's rows");
-
-        ResponseEntity<List<Map<String, Object>>> scopedB = getList("/api/departments?branchId=" + branchB, token);
-        assertNotNull(scopedB.getBody());
-        assertEquals(List.of(suffix + "-db"),
-                scopedB.getBody().stream().map(row -> String.valueOf(row.get("code"))).toList(),
+        // Phase 4 (FR-013) supersession: a query-string branchId is never
+        // authority. The organization-scoped ADMIN list stays organization-
+        // wide regardless of any query parameter, and branch-scope reads
+        // are pinned by DepartmentScopeApiTest.
+        ResponseEntity<List<Map<String, Object>>> withParam =
+                getList("/api/departments?branchId=" + branchA, token);
+        assertEquals(HttpStatus.OK, withParam.getStatusCode());
+        assertNotNull(withParam.getBody());
+        assertTrue(withParam.getBody().stream().anyMatch(row -> (suffix + "-da").equals(row.get("code"))),
+                "the query param never narrows the organization-scoped read");
+        assertTrue(withParam.getBody().stream().anyMatch(row -> (suffix + "-db").equals(row.get("code"))),
                 "the same code on a different branch is a distinct row (cross-branch codes allowed)");
-
-        assertEquals(HttpStatus.NOT_FOUND,
-                rawExchange(HttpMethod.GET, "/api/departments?branchId=" + UUID.randomUUID(), token, null).getStatusCode(),
-                "an unknown branch filter must be the shared 404, never a silently empty list");
     }
 
     // ------------------------------------------------------------------
@@ -1343,7 +1339,7 @@ class MultiBranchOperationsApiTest {
         // The DB constraint is the backstop: a direct write against the occupied bed cannot persist.
         assertThrows(DataIntegrityViolationException.class,
                 () -> bedAssignments.save(new AdmissionBedAssignment(
-                        admissions.save(new Admission(patientId, "2031-04-02T08:00", null,
+                        admissions.save(new Admission(patientId, java.time.Instant.parse("2031-04-02T08:00:00Z"), null,
                                 "synthetic constraint probe " + suffix, "ADMITTED")).getId(),
                         java.util.UUID.fromString(bedId))),
                 "the (bedId) DB unique constraint must backstop the service pre-check");
@@ -1480,7 +1476,7 @@ class MultiBranchOperationsApiTest {
 
         // Legacy null-ownership admission: invisible and untouchable from
         // every branch, and the row itself stays untouched in the store.
-        Admission legacy = admissions.save(new Admission(patientA, "2031-05-01T08:00", null,
+        Admission legacy = admissions.save(new Admission(patientA, java.time.Instant.parse("2031-05-01T08:00:00Z"), null,
                 "synthetic legacy admission " + suffix, "ADMITTED"));
         assertFalse(listOfIds(getList("/api/admissions", tokenA)).contains(legacy.getId().toString()),
                 "the list must never disclose a null-ownership legacy admission");
@@ -1634,7 +1630,7 @@ class MultiBranchOperationsApiTest {
         // Legacy null-ownership visit: invisible and untouchable from every
         // branch, and the row itself stays untouched in the store.
         EmergencyVisit legacy = emergencyVisits.save(new EmergencyVisit(patientA,
-                "2031-06-02T10:00", "2", "synthetic legacy visit " + suffix, "WAITING"));
+                java.time.Instant.parse("2031-06-02T10:00:00Z"), "2", "synthetic legacy visit " + suffix, "WAITING"));
         assertFalse(listOfIds(getList("/api/emergency-visits", tokenA)).contains(legacy.getId().toString()),
                 "the list must never disclose a null-ownership legacy visit");
         assertFalse(listOfIds(getList("/api/emergency-visits", tokenB)).contains(legacy.getId().toString()),
@@ -1766,7 +1762,7 @@ class MultiBranchOperationsApiTest {
         // Legacy null-ownership invoice: invisible and untouchable from
         // every branch, and the row itself stays untouched in the store.
         Invoice legacy = invoices.save(new Invoice(patientA, "INV-T8-LEGACY-" + suffix,
-                "30.00", "USD", "DRAFT"));
+                new java.math.BigDecimal("30.00"), "USD", "DRAFT"));
         assertFalse(listOfIds(getList("/api/invoices", tokenA)).contains(legacy.getId().toString()),
                 "the list must never disclose a null-ownership legacy invoice");
         assertFalse(listOfIds(getList("/api/invoices", tokenB)).contains(legacy.getId().toString()),
@@ -1881,7 +1877,7 @@ class MultiBranchOperationsApiTest {
         String patientId = createVerifiedPatientId(token, "legacy-ovl");
         String professionalId = createVerifiedSchedulableStaffId(token, "legacy-ovl");
         appointments.save(new Appointment(branch, patientId, professionalId,
-                "2036-07-08T10:30", "consultation", "scheduled"));
+                java.time.Instant.parse("2036-07-08T14:30:00Z"), "consultation", "scheduled"));
         assertTrue(postJson("/api/appointments", token, appointmentPayload(patientId, professionalId))
                         .getStatusCode().is2xxSuccessful(),
                 "the legacy row without a computed window must not block the new create");
@@ -2328,7 +2324,7 @@ class MultiBranchOperationsApiTest {
                 "internal medicine"));
         Appointment legacyAppointment = appointments.save(new Appointment(null,
                 legacyPatient.getId().toString(), legacyStaff.getId().toString(),
-                "2031-09-09T09:00", "consultation", "scheduled"));
+                java.time.Instant.parse("2031-09-09T09:00:00Z"), "consultation", "scheduled"));
 
         assertEquals(HttpStatus.NOT_FOUND, getJson("/api/patients/" + legacyPatient.getId(), token).getStatusCode(),
                 "get must not disclose an unassigned legacy patient");

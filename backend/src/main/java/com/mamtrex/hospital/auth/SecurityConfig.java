@@ -56,7 +56,11 @@ public class SecurityConfig {
         return http.csrf(csrf -> csrf.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(authorize -> authorize
-                        .requestMatchers("/actuator/health").permitAll()
+                        // Phase 4 (FR-008/FR-010): the health probes are the
+                        // only anonymous actuator surface — liveness stays
+                        // process-only and readiness proves dependencies;
+                        // every other actuator endpoint stays authenticated.
+                        .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/auth/login").permitAll()
                         .requestMatchers("/api/auth/**").authenticated()
                         .requestMatchers("/api/audit/**").hasRole("ADMIN")

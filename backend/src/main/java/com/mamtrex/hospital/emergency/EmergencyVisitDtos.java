@@ -44,8 +44,11 @@ public final class EmergencyVisitDtos {
     public record EmergencyVisitResponse(UUID id, UUID branchId, String patientId, String arrivalAt,
                                          String triageLevel, String chiefComplaint, String status) {
 
-        public static EmergencyVisitResponse from(EmergencyVisit v) {
-            return new EmergencyVisitResponse(v.getId(), v.getBranchId(), v.getPatientId(), v.getArrivalAt(),
+        public static EmergencyVisitResponse from(EmergencyVisit v, java.time.ZoneId branchZone) {
+            // Phase 4 (FR-015): typed instant; branch-local wire string.
+            String arrivalAt = v.getArrivalAt() == null ? null
+                    : com.mamtrex.hospital.organization.BranchTimeService.render(branchZone, v.getArrivalAt()).toString();
+            return new EmergencyVisitResponse(v.getId(), v.getBranchId(), v.getPatientId(), arrivalAt,
                     v.getTriageLevel(), v.getChiefComplaint(), v.getStatus());
         }
     }

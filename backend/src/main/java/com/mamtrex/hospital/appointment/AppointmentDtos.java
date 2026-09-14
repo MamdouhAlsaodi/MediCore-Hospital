@@ -48,9 +48,16 @@ public final class AppointmentDtos {
                                       String type, String status) {
 
         public static AppointmentResponse from(Appointment a) {
+            // Phase 4 (FR-015): the wire keeps the Phase 3 branch-local ISO
+            // strings; storage is the unambiguous instant pair.
+            java.time.ZoneId zone = a.getBranch() == null ? null : a.getBranch().getTimeZone();
+            String scheduledAt = a.getScheduledAt() == null ? null
+                    : com.mamtrex.hospital.organization.BranchTimeService.render(zone, a.getScheduledAt()).toString();
+            String endsAt = a.getEndsAt() == null ? null
+                    : com.mamtrex.hospital.organization.BranchTimeService.render(zone, a.getEndsAt()).toString();
             return new AppointmentResponse(a.getId(), a.getBranch() == null ? null : a.getBranch().getId(),
                     a.getPatientId(), a.getProfessionalId(),
-                    a.getScheduledAt(), a.getDurationMinutes(), a.getEndsAt(),
+                    scheduledAt, a.getDurationMinutes(), endsAt,
                     a.getType(), a.getStatus());
         }
     }

@@ -30,6 +30,17 @@ backend/data/
 *.crt
 *.cer
 
+# Phase 4 local operational evidence (never tracked)
+/artifacts/
+
+# Local runtime env files and Phase 4 backup/restore outputs (never tracked)
+*.env.local
+runtime.env
+/artifacts/phase4/backups/
+*.sql.gz
+*.dump
+*.backup
+
 # Archives and OS debris
 *.zip
 *.tar

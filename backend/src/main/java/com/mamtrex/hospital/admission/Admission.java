@@ -41,9 +41,10 @@ public class Admission extends BaseEntity {
 
     private String patientId;
 
-    private String admittedAt;
+    /** Phase 4 (FR-015): unambiguous instant; rendered branch-locally by the DTO mapper. */
+    private java.time.Instant admittedAt;
 
-    private String dischargedAt;
+    private java.time.Instant dischargedAt;
 
     private String reason;
 
@@ -64,7 +65,7 @@ public class Admission extends BaseEntity {
      * A new admission is owned by the acting branch (server-stamped, never
      * client input), starts ADMITTED, and carries no discharge time.
      */
-    public Admission(UUID branchId, String patientId, String admittedAt, String reason) {
+    public Admission(UUID branchId, String patientId, java.time.Instant admittedAt, String reason) {
         this.branchId = branchId;
         this.patientId = patientId;
         this.admittedAt = admittedAt;
@@ -73,7 +74,7 @@ public class Admission extends BaseEntity {
     }
 
     /** Legacy constructor for pre-Task-7A rows: no ownership, hidden from branch-scoped reads. */
-    public Admission(String patientId, String admittedAt, String dischargedAt, String reason, String status) {
+    public Admission(String patientId, java.time.Instant admittedAt, java.time.Instant dischargedAt, String reason, String status) {
         this.patientId = patientId;
         this.admittedAt = admittedAt;
         this.dischargedAt = dischargedAt;
@@ -85,11 +86,11 @@ public class Admission extends BaseEntity {
         return patientId;
     }
 
-    public String getAdmittedAt() {
+    public java.time.Instant getAdmittedAt() {
         return admittedAt;
     }
 
-    public String getDischargedAt() {
+    public java.time.Instant getDischargedAt() {
         return dischargedAt;
     }
 
@@ -112,12 +113,12 @@ public class Admission extends BaseEntity {
      * source state — including a repeated discharge — is refused. A refused
      * mutation leaves the row untouched.
      */
-    public void dischargeAt(String serverDischargeTime) {
+    public void dischargeAt(java.time.Instant serverDischargeTime) {
         if (!STATUS_ADMITTED.equals(status)) {
             throw new InvalidStateTransitionException(
                     "Admission " + getId() + " cannot be discharged: it is already " + status);
         }
-        if (serverDischargeTime == null || serverDischargeTime.isBlank()) {
+        if (serverDischargeTime == null) {
             throw new InvalidStateTransitionException("Discharge requires the server-stamped time");
         }
         this.status = STATUS_DISCHARGED;

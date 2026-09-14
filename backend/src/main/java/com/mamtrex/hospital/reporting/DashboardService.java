@@ -116,7 +116,7 @@ public class DashboardService {
     public DashboardDtos.BranchSummary branchSummary() {
         Branch branch = branches.findById(currentContext().branchId())
                 .orElseThrow(() -> new AccessDeniedException("The acting branch is not available"));
-        return toSummary(branch, accumulate(List.of(branch.getId())));
+        return toSummary(branch, accumulate(List.of(branch)));
     }
 
     /**
@@ -135,7 +135,7 @@ public class DashboardService {
                 branches.findByOrganizationIdAndActiveTrueOrderByCodeAsc(organization.getId());
         // One fold over the whole authorized branch set — the query count is
         // bounded by the number of tables, never by the number of branches.
-        Acc acc = accumulate(branchIds(activeBranches));
+        Acc acc = accumulate(activeBranches);
         List<DashboardDtos.BranchSummary> summaries = activeBranches.stream()
                 .map(branch -> toSummary(branch, acc))
                 .toList();
@@ -182,7 +182,7 @@ public class DashboardService {
         Branch defaultBranch = branches.findByOrganizationIdAndActiveTrueOrderByCodeAsc(organization.getId())
                 .stream().findFirst()
                 .orElseThrow(() -> new AccessDeniedException("No active branch is available"));
-        Acc.Branch value = accumulate(List.of(defaultBranch.getId()))
+        Acc.Branch value = accumulate(List.of(defaultBranch))
                 .byBranch.getOrDefault(defaultBranch.getId(), new Acc.Branch());
         Map<String, Long> counts = new LinkedHashMap<>();
         counts.put("patients", value.patients);
@@ -219,11 +219,14 @@ public class DashboardService {
     }
 
     /**
-     * Folds the grouped per-table counts of one explicit branch-id set into
-     * one accumulator per branch — one query per table plus the today
-     * window, never per card.
+     * Folds the grouped per-table counts of one explicit authorized branch
+     * set into one accumulator per branch — one query per table plus the
+     * per-branch today window, never per card. Phase 4 (FR-012): each
+     * branch's "today" derives from its own IANA zone as exact half-open
+     * instants; the server clock supplies the instant, never the zone.
      */
-    private Acc accumulate(Collection<UUID> branchIds) {
+    private Acc accumulate(List<Branch> branchList) {
+        Collection<UUID> branchIds = branchIds(branchList);
         Acc acc = new Acc();
         for (PatientRepository.BranchMetric metric : patients.countByBranchIdInGrouped(branchIds)) {
             acc.of(metric.getBranchId()).patients += metric.getTotal();
@@ -231,10 +234,10 @@ public class DashboardService {
         for (AppointmentRepository.BranchMetric metric : appointments.countByBranchIdInGrouped(branchIds)) {
             acc.of(metric.getBranchId()).appointments += metric.getTotal();
         }
-        Window today = todayWindow();
-        for (AppointmentRepository.BranchMetric metric : appointments
-                .countByBranchIdAndScheduledAtRangeGrouped(branchIds, today.start(), today.end())) {
-            acc.of(metric.getBranchId()).todayAppointments += metric.getTotal();
+        for (Branch branch : branchList) {
+            Window today = todayWindow(branch);
+            acc.of(branch.getId()).todayAppointments += appointments.countByBranchIdAndScheduledAtRange(
+                    branch.getId(), today.start(), today.end());
         }
         for (AdmissionRepository.BranchStatusCount row : admissions.countByBranchIdInGroupedByStatus(branchIds)) {
             Acc.Branch value = acc.of(row.getBranchId());
@@ -277,18 +280,22 @@ public class DashboardService {
     }
 
     /**
-     * Today's half-open [start, end) window in the same canonical
-     * LocalDateTime.toString() representation the appointment service
-     * writes, derived from the server's explicit clock — never client
-     * input. Legacy rows without a canonical value stay honestly outside
-     * the window instead of being reinterpreted.
+     * Today's half-open [start, end) window for one branch, in that
+     * branch's own IANA zone (FR-012), as exact instants derived from the
+     * server's explicit clock — never client input, never the JVM default
+     * zone. A legacy branch without a configured zone fails closed.
      */
-    private Window todayWindow() {
-        LocalDate today = LocalDate.now(clock);
-        return new Window(today.atStartOfDay().toString(), today.plusDays(1).atStartOfDay().toString());
+    private Window todayWindow(Branch branch) {
+        java.time.ZoneId zone = branch.getTimeZone();
+        if (zone == null) {
+            throw new IllegalStateException(
+                    "Branch " + branch.getCode() + " has no configured time zone; unknown legacy rows are never guessed");
+        }
+        LocalDate today = LocalDate.now(clock.withZone(zone));
+        return new Window(today.atStartOfDay(zone).toInstant(), today.plusDays(1).atStartOfDay(zone).toInstant());
     }
 
-    private record Window(String start, String end) {
+    private record Window(java.time.Instant start, java.time.Instant end) {
     }
 
     private static DashboardDtos.BranchSummary toSummary(Branch branch, Acc acc) {

@@ -9,13 +9,13 @@ import com.mamtrex.hospital.shared.BaseEntity; import jakarta.persistence.*; imp
  * emergency-visit read and command.
  */
 @Column private UUID branchId;
-private String patientId; private String arrivalAt; private String triageLevel; private String chiefComplaint; private String status;
+private String patientId; /* Phase 4 (FR-015): unambiguous instant; rendered branch-locally. */ private java.time.Instant arrivalAt; private String triageLevel; private String chiefComplaint; private String status;
 protected EmergencyVisit(){}
 /** A new visit is owned by the acting branch (server-stamped, never client input). */
-public EmergencyVisit(UUID branchId, String patientId, String arrivalAt, String triageLevel, String chiefComplaint, String status){this.branchId=branchId; this.patientId=patientId; this.arrivalAt=arrivalAt; this.triageLevel=triageLevel; this.chiefComplaint=chiefComplaint; this.status=status;}
+public EmergencyVisit(UUID branchId, String patientId, java.time.Instant arrivalAt, String triageLevel, String chiefComplaint, String status){this.branchId=branchId; this.patientId=patientId; this.arrivalAt=arrivalAt; this.triageLevel=triageLevel; this.chiefComplaint=chiefComplaint; this.status=status;}
 /** Legacy constructor for pre-Task-8 rows: no ownership, hidden from branch-scoped reads. */
-public EmergencyVisit(String patientId, String arrivalAt, String triageLevel, String chiefComplaint, String status){this.patientId=patientId; this.arrivalAt=arrivalAt; this.triageLevel=triageLevel; this.chiefComplaint=chiefComplaint; this.status=status;}
-public String getPatientId(){return patientId;} public String getArrivalAt(){return arrivalAt;} public String getTriageLevel(){return triageLevel;} public String getChiefComplaint(){return chiefComplaint;} public String getStatus(){return status;} public UUID getBranchId(){return branchId;}
+public EmergencyVisit(String patientId, java.time.Instant arrivalAt, String triageLevel, String chiefComplaint, String status){this.patientId=patientId; this.arrivalAt=arrivalAt; this.triageLevel=triageLevel; this.chiefComplaint=chiefComplaint; this.status=status;}
+public String getPatientId(){return patientId;} public java.time.Instant getArrivalAt(){return arrivalAt;} public String getTriageLevel(){return triageLevel;} public String getChiefComplaint(){return chiefComplaint;} public String getStatus(){return status;} public UUID getBranchId(){return branchId;}
 /**
  * Server-owned lifecycle mutation (docs/plan2.md Task 3): applies an
  * already-validated target state chosen by the EmergencyVisitService

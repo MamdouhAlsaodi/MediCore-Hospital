@@ -216,7 +216,8 @@ public class DemoDataInitializer implements ApplicationRunner {
         Branch main = branchRepository
                 .findByOrganizationIdAndCode(organization.getId(), DEMO_BRANCH_CODE)
                 .orElseGet(() ->
-                        createBranch(organization, DEMO_BRANCH_CODE, "Demo Main Branch", "1 Demo Campus"));
+                        createBranch(organization, DEMO_BRANCH_CODE, "Demo Main Branch", "1 Demo Campus",
+                                java.time.ZoneId.of("UTC")));
         seedDemoDepartment(main, "DEMO-DEP-0001", "Demo Internal Medicine", "internal medicine", "Demo Tower A");
         seedDemoDepartment(main, "DEMO-DEP-0002", "Demo Emergency Care", "emergency medicine", "Demo Tower B");
         return main;
@@ -230,16 +231,28 @@ public class DemoDataInitializer implements ApplicationRunner {
     private Branch seedBranch(HospitalOrganization organization, String branchCode, String branchName,
                               String location, String departmentCode, String departmentName,
                               String specialty, String departmentLocation) {
+        // Phase 4 (FR-012): each demo branch carries its own documented,
+        // stable IANA zone (main=UTC, north=America/New_York,
+        // harbor=Asia/Tokyo) so branch-local time semantics are provably
+        // exercised. The zone comes from this fixture table — never from
+        // host time. Legacy rows keep a null zone and are never guessed.
+        java.time.ZoneId zone = switch (branchCode) {
+            case DEMO_BRANCH_CODE -> java.time.ZoneId.of("UTC");
+            case DEMO_BRANCH_NORTH_CODE -> java.time.ZoneId.of("America/New_York");
+            case DEMO_BRANCH_HARBOR_CODE -> java.time.ZoneId.of("Asia/Tokyo");
+            default -> null;
+        };
         Branch branch = branchRepository
                 .findByOrganizationIdAndCode(organization.getId(), branchCode)
-                .orElseGet(() -> createBranch(organization, branchCode, branchName, location));
+                .orElseGet(() -> createBranch(organization, branchCode, branchName, location, zone));
         seedDemoDepartment(branch, departmentCode, departmentName, specialty, departmentLocation);
         return branch;
     }
 
     /** Branch insert plus its CREATE event attributed to the branch itself. */
-    private Branch createBranch(HospitalOrganization organization, String code, String name, String location) {
-        Branch saved = branchRepository.save(new Branch(organization, code, name, location));
+    private Branch createBranch(HospitalOrganization organization, String code, String name,
+                                String location, java.time.ZoneId zone) {
+        Branch saved = branchRepository.save(new Branch(organization, code, name, location, zone));
         recordSystemEvent(saved, "CREATE", "Branch", saved.getId().toString(), "created");
         return saved;
     }
@@ -463,16 +476,19 @@ public class DemoDataInitializer implements ApplicationRunner {
                                  LocalDateTime scheduledAt, int durationMinutes, String type, String status) {
         String patientKey = patient.getId().toString();
         String professionalKey = professional.getId().toString();
-        String scheduledAtKey = scheduledAt.toString();
+        // Phase 4 (FR-012): the fixture wall-clock value is resolved
+        // through the branch's own zone into the stored unambiguous instant
+        // window; the idempotency key compares instants.
+        java.time.Instant start = com.mamtrex.hospital.organization.BranchTimeService.toInstant(branch, scheduledAt);
+        java.time.Instant end = start.plusSeconds(durationMinutes * 60L);
         boolean alreadySeeded = appointmentRepository.findAll().stream().anyMatch(appointment ->
                 patientKey.equals(appointment.getPatientId())
                         && professionalKey.equals(appointment.getProfessionalId())
-                        && scheduledAtKey.equals(appointment.getScheduledAt())
+                        && start.equals(appointment.getScheduledAt())
                         && type.equals(appointment.getType()));
         if (!alreadySeeded) {
             Appointment saved = appointmentRepository.save(new Appointment(branch, patientKey, professionalKey,
-                    scheduledAtKey, durationMinutes, scheduledAt.plusMinutes(durationMinutes).toString(),
-                    type, status));
+                    start, durationMinutes, end, type, status));
             recordSystemEvent(branch, "CREATE", "Appointment", saved.getId().toString(), "created");
         }
     }
@@ -516,18 +532,25 @@ public class DemoDataInitializer implements ApplicationRunner {
      */
     private Admission seedAdmission(Branch branch, Patient patient, AdmissionFixture fixture) {
         String patientKey = patient.getId().toString();
+        // Phase 4 (FR-012): fixture wall-clock strings resolve through the
+        // branch's zone into the stored unambiguous instants.
+        java.time.Instant admittedAt = com.mamtrex.hospital.organization.BranchTimeService
+                .toInstant(branch, LocalDateTime.parse(fixture.admittedAt()));
+        java.time.Instant dischargedAt = fixture.dischargedAt() == null ? null
+                : com.mamtrex.hospital.organization.BranchTimeService
+                        .toInstant(branch, LocalDateTime.parse(fixture.dischargedAt()));
         return admissionRepository.findAll().stream()
                 .filter(admission -> patientKey.equals(admission.getPatientId())
-                        && fixture.admittedAt().equals(admission.getAdmittedAt())
+                        && admittedAt.equals(admission.getAdmittedAt())
                         && fixture.reason().equals(admission.getReason()))
                 .findFirst()
                 .orElseGet(() -> {
                     Admission admission = new Admission(
-                            branch.getId(), patientKey, fixture.admittedAt(), fixture.reason());
+                            branch.getId(), patientKey, admittedAt, fixture.reason());
                     // The lifecycle mutation is applied before the insert, so
                     // the row is never persisted in an intermediate state.
-                    if (fixture.dischargedAt() != null) {
-                        admission.dischargeAt(fixture.dischargedAt());
+                    if (dischargedAt != null) {
+                        admission.dischargeAt(dischargedAt);
                     }
                     Admission saved = admissionRepository.save(admission);
                     recordSystemEvent(branch, "CREATE", "Admission", saved.getId().toString(), "created");
@@ -571,13 +594,15 @@ public class DemoDataInitializer implements ApplicationRunner {
      */
     private void seedEmergencyVisit(Branch branch, Patient patient, EmergencyVisitFixture fixture) {
         String patientKey = patient.getId().toString();
+        java.time.Instant arrivalAt = com.mamtrex.hospital.organization.BranchTimeService
+                .toInstant(branch, LocalDateTime.parse(fixture.arrivalAt()));
         boolean alreadySeeded = emergencyVisitRepository.findAll().stream().anyMatch(visit ->
                 patientKey.equals(visit.getPatientId())
-                        && fixture.arrivalAt().equals(visit.getArrivalAt())
+                        && arrivalAt.equals(visit.getArrivalAt())
                         && fixture.chiefComplaint().equals(visit.getChiefComplaint()));
         if (!alreadySeeded) {
             EmergencyVisit saved = emergencyVisitRepository.save(new EmergencyVisit(branch.getId(),
-                    patientKey, fixture.arrivalAt(), fixture.triageLevel(),
+                    patientKey, arrivalAt, fixture.triageLevel(),
                     fixture.chiefComplaint(), fixture.status()));
             recordSystemEvent(branch, "CREATE", "EmergencyVisit", saved.getId().toString(), "created");
         }
@@ -598,7 +623,7 @@ public class DemoDataInitializer implements ApplicationRunner {
             return;
         }
         Invoice saved = invoiceRepository.save(new Invoice(branch.getId(), patient.getId().toString(),
-                fixture.invoiceNumber(), fixture.amount(), fixture.currency(), fixture.status()));
+                fixture.invoiceNumber(), new java.math.BigDecimal(fixture.amount()), fixture.currency(), fixture.status()));
         recordSystemEvent(branch, "CREATE", "Invoice", saved.getId().toString(), "created");
     }
 

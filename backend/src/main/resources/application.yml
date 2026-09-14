@@ -12,6 +12,13 @@ spring:
   h2:
     console:
       enabled: false
+  # Phase 4 isolation (plan Task 2, step 5): the lightweight H2 developer
+  # profile keeps Hibernate schema management and explicitly disables
+  # Flyway. The PostgreSQL review profile (application-postgres.yml) is the
+  # only Flyway-managed profile; no profile silently inherits migration
+  # behavior from another.
+  flyway:
+    enabled: false
 management:
   endpoints:
     web:

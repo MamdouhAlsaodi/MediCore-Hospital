@@ -4,6 +4,7 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.slf4j.MDC;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
@@ -27,7 +28,14 @@ import java.util.regex.Pattern;
  * <p>The filter validates and labels only: it never reads bodies, never
  * authenticates, never rejects a request, and changes no endpoint behavior.
  * The bounded shape keeps stored correlation ids to a fixed maximum length
- * and keeps header/log-injection characters out of the evidence chain.</p>
+ * and keeps header/log-injection characters out of the evidence chain.
+ *
+ * <p>Phase 4 observability (plan Task 8, T054; FR-007): the same validated
+ * value is also placed on the SLF4J MDC as {@code correlationId} — the log
+ * surface of the SAME single correlation authority, not a second system —
+ * so every structured log line emitted during the request carries exactly
+ * the id the caller could observe in the response header. The MDC entry is
+ * cleared in the same {@code finally} block as the thread-local holder.</p>
  */
 @Component
 public class CorrelationIdFilter extends OncePerRequestFilter {
@@ -40,6 +48,9 @@ public class CorrelationIdFilter extends OncePerRequestFilter {
 
     /** The exact accepted inbound shape: bounded, no separators beyond dot/underscore/hyphen. */
     private static final Pattern VALID = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]{0,63}");
+
+    /** The MDC key carrying the validated correlation id for the log surface. */
+    public static final String MDC_KEY = "correlationId";
 
     /** Request-scoped holder; set and always cleared by this filter on the request thread. */
     private static final ThreadLocal<String> CURRENT = new ThreadLocal<>();
@@ -61,11 +72,13 @@ public class CorrelationIdFilter extends OncePerRequestFilter {
                 ? candidate
                 : UUID.randomUUID().toString();
         CURRENT.set(correlationId);
+        MDC.put(MDC_KEY, correlationId);
         try {
             response.setHeader(HEADER, correlationId);
             chain.doFilter(request, response);
         } finally {
             CURRENT.remove();
+            MDC.remove(MDC_KEY);
         }
     }
 }

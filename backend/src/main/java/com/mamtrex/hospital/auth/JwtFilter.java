@@ -4,6 +4,8 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -34,6 +36,8 @@ import java.util.List;
 @Component
 public class JwtFilter extends OncePerRequestFilter {
 
+    private static final Logger REJECTION_LOG = LoggerFactory.getLogger(JwtFilter.class);
+
     private final JwtService jwt;
     private final ActingContextService contexts;
 
@@ -53,7 +57,12 @@ public class JwtFilter extends OncePerRequestFilter {
                                 new UsernamePasswordAuthenticationToken(context, null,
                                         List.of(new SimpleGrantedAuthority("ROLE_" + context.role().name())))));
             } catch (RuntimeException invalidToken) {
-                // Intentional fail-closed boundary: the request stays anonymous.
+                // Intentional fail-closed boundary: the request stays anonymous and
+                // no details are ever thrown to the client. Phase 4 (T054, FR-007):
+                // exactly one bounded WARN line is emitted on the structured log —
+                // the exception CLASS name only (never its message, values, or stack
+                // trace) — so operators can see the rejection without any leakage.
+                REJECTION_LOG.warn("authentication rejected: {}", invalidToken.getClass().getSimpleName());
             }
         }
         chain.doFilter(request, response);

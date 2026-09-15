@@ -77,13 +77,13 @@
 
 ## Phase 8 — Observability
 
-- [ ] T051 RED: liveness survives DB loss while readiness fails; readiness recovers after DB returns.
-- [ ] T052 Add Actuator Prometheus dependencies and explicit minimal endpoint exposure.
-- [ ] T053 RED: structured log captures required bounded fields and rejects token/password/body/patient/resource canaries.
-- [ ] T054 Implement structured JSON logging using existing correlation boundary; no duplicate correlation authority.
-- [ ] T055 Add only low-cardinality HTTP/business metrics; add tests forbidding sensitive/unbounded labels.
-- [ ] T056 Run live DB loss/recovery plus captured log/metrics leakage tests.
-- [ ] T057 Write `docs/runbooks/observability.md` from actual endpoints/commands.
+- [x] T051 RED: liveness survives DB loss while readiness fails; readiness recovers after DB returns.
+- [x] T052 Add Actuator Prometheus dependencies and explicit minimal endpoint exposure.
+- [x] T053 RED: structured log captures required bounded fields and rejects token/password/body/patient/resource canaries.
+- [x] T054 Implement structured JSON logging using existing correlation boundary; no duplicate correlation authority.
+- [x] T055 Add only low-cardinality HTTP/business metrics; add tests forbidding sensitive/unbounded labels.
+- [x] T056 Run live DB loss/recovery plus captured log/metrics leakage tests.
+- [x] T057 Write `docs/runbooks/observability.md` from actual endpoints/commands.
 
 ## Phase 9 — Security hardening
 

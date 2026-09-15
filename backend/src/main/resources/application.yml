@@ -1,6 +1,12 @@
 spring:
   application:
     name: medicore-hospital
+  main:
+    # Phase 4 observability (plan Task 8, T054; FR-007): the console is the
+    # single structured log stream; the startup banner prints directly to
+    # stdout OUTSIDE the logging system and would inject one non-JSON line
+    # into it, so it stays off and the stream remains purely structured.
+    banner-mode: off
   datasource:
     url: jdbc:h2:file:./data/medicore;MODE=PostgreSQL;AUTO_SERVER=TRUE
     username: sa
@@ -19,11 +25,24 @@ spring:
   # behavior from another.
   flyway:
     enabled: false
+# Phase 4 observability (plan Task 8, T051/T052/T055; FR-008/FR-010):
+# liveness stays process-only, readiness requires the database, and exactly
+# the required review endpoints (health + Prometheus) are web-exposed —
+# every other actuator endpoint remains unexposed AND authenticated.
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        include: health,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      group:
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState,db
 hospital:
   jwt:
     secret: ${HOSPITAL_JWT_SECRET}

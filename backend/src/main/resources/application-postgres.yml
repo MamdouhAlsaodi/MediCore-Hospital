@@ -8,6 +8,11 @@ spring:
     url: ${DB_URL}
     username: ${DB_USER}
     password: ${DB_PASSWORD}
+    hikari:
+      # Phase 4 (plan Task 8, T051): database acquisition is bounded so the
+      # readiness probe answers responsively while PostgreSQL is unavailable
+      # instead of hanging on the pool's long default wait.
+      connection-timeout: 2000
   jpa:
     hibernate:
       ddl-auto: validate
@@ -15,3 +20,16 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
+# Phase 4 (plan Task 8, T051): on the PostgreSQL review profile readiness
+# requires the database in addition to the process readiness state; liveness
+# stays process-only (inherited from application.yml) so dependency loss
+# never turns into a false dead process. Migration state gates STARTUP
+# itself: Flyway runs before the application context (and therefore before
+# readiness exists to answer), and Boot 3.5 ships no Flyway health
+# contributor, so there is nothing further to add to the group.
+management:
+  endpoint:
+    health:
+      group:
+        readiness:
+          include: readinessState,db

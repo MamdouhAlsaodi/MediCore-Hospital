@@ -1,6 +1,7 @@
 package com.mamtrex.hospital.auth;
 
 import com.mamtrex.hospital.audit.CorrelationIdFilter;
+import com.mamtrex.hospital.infrastructure.RequestObservationLogFilter;
 import org.springframework.context.annotation.*;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
@@ -117,6 +118,12 @@ public class SecurityConfig {
                 // every request — validating/generating the bounded id and echoing it
                 // in the X-Correlation-Id response header — before authentication.
                 .addFilterBefore(correlationIdFilter, JwtFilter.class)
+                // Phase 4 (plan Task 8, T054): the bounded request observation runs
+                // immediately after the correlation boundary so its structured line
+                // carries exactly the correlation id issued above. It is registered
+                // ONLY here (never as a standalone servlet bean) and never alters a
+                // request or response.
+                .addFilterAfter(new RequestObservationLogFilter(), CorrelationIdFilter.class)
                 .build();
     }
 

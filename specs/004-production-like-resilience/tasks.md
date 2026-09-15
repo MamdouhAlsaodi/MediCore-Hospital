@@ -87,15 +87,15 @@
 
 ## Phase 9 — Security hardening
 
-- [ ] T058 Inventory all frontend POST/PUT/PATCH/DELETE callers and shared/raw fetch paths before global policy changes.
-- [ ] T059 RED matrix: anonymous, permitted roles, denied roles, forged role/branch headers, tampered/expired JWT, disabled user/assignment.
-- [ ] T060 RED matrix: generic login failure, repeated failures/rate limit, bounded-store eviction/expiry, recovery after window.
-- [ ] T061 Implement bounded expiring login rate limiter using direct socket address unless explicit trusted-proxy config exists.
-- [ ] T062 RED/GREEN explicit CORS allowlist/preflight and fail-closed production-like profile.
-- [ ] T063 RED/GREEN API and Nginx security headers; do not break same-origin review path.
-- [ ] T064 Verify actuator exposure and ensure denied requests create zero mutations and zero success audit events.
-- [ ] T065 Write `docs/security/threat-model-phase4.md`, including limitations and excluded refresh/MFA/SSO work.
-- [ ] T066 Run focused and full backend/frontend security regressions.
+- [x] T058 Inventory all frontend POST/PUT/PATCH/DELETE callers and shared/raw fetch paths before global policy changes.
+- [x] T059 RED matrix: anonymous, permitted roles, denied roles, forged role/branch headers, tampered/expired JWT, disabled user/assignment.
+- [x] T060 RED matrix: generic login failure, repeated failures/rate limit, bounded-store eviction/expiry, recovery after window.
+- [x] T061 Implement bounded expiring login rate limiter using direct socket address unless explicit trusted-proxy config exists.
+- [x] T062 RED/GREEN explicit CORS allowlist/preflight and fail-closed production-like profile.
+- [x] T063 RED/GREEN API and Nginx security headers; do not break same-origin review path.
+- [x] T064 Verify actuator exposure and ensure denied requests create zero mutations and zero success audit events.
+- [x] T065 Write `docs/security/threat-model-phase4.md`, including limitations and excluded refresh/MFA/SSO work.
+- [x] T066 Run focused and full backend/frontend security regressions.
 
 ## Phase 10 — OpenAPI and typed frontend contract
 

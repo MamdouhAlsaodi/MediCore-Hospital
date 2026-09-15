@@ -33,3 +33,13 @@ management:
       group:
         readiness:
           include: readinessState,db
+# Phase 4 security hardening (plan Task 9, T062; FR-010): the review profile
+# states its cross-origin policy EXPLICITLY and fail-closed — the allowlist
+# is empty unless an operator deliberately sets MEDICORE_CORS_ALLOWED_ORIGINS.
+# The review frontend is same-origin (nginx /api route), so no cross-origin
+# origin is required for the demonstrated journey. The bounded login rate
+# limiter inherits the profile-independent defaults from application.yml.
+hospital:
+  security:
+    cors:
+      allowed-origins: ${MEDICORE_CORS_ALLOWED_ORIGINS:}

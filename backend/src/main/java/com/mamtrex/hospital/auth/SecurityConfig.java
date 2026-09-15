@@ -2,6 +2,7 @@ package com.mamtrex.hospital.auth;
 
 import com.mamtrex.hospital.audit.CorrelationIdFilter;
 import com.mamtrex.hospital.infrastructure.RequestObservationLogFilter;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.*;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
@@ -14,6 +15,9 @@ import org.springframework.security.crypto.bcrypt.*;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.*;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 /**
  * Stateless JWT security. Only {@code POST /api/auth/login} and actuator
@@ -36,6 +40,18 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
  * filter on every request: it validates or server-generates one bounded
  * correlation id and echoes it in the {@code X-Correlation-Id} response
  * header, without ever authenticating, rejecting, or altering a request.
+ *
+ * <p>Phase 4 (T062/T063, FR-010): cross-origin access is governed by an
+ * EXPLICIT allowlist — {@code hospital.security.cors.allowed-origins}, empty
+ * by default in every shipped profile, so the production-like review
+ * deployment is fail-closed (the real frontend is same-origin in every mode:
+ * Vite dev/preview proxy and the review nginx {@code /api} route — no
+ * cross-origin call is needed for any demonstrated workflow). Every response
+ * also carries the hardened API header set: {@code X-Content-Type-Options},
+ * {@code X-Frame-Options: DENY}, {@code Referrer-Policy: no-referrer}, and a
+ * strict {@code Content-Security-Policy} with no active content — an API
+ * serves JSON, never pages. The SPA-appropriate nginx header set is verified
+ * live by {@code scripts/phase4/check-security-headers.sh}.</p>
  */
 @Configuration
 @EnableMethodSecurity
@@ -51,11 +67,51 @@ public class SecurityConfig {
         return configuration.getAuthenticationManager();
     }
 
+    /**
+     * T062: the explicit CORS allowlist. Origins come only from the
+     * environment-configurable {@code hospital.security.cors.allowed-origins}
+     * property; the default (and every shipped profile default) is EMPTY,
+     * which refuses every cross-origin preflight with 403 and no
+     * {@code Access-Control-Allow-*} headers — fail-closed. Methods and
+     * headers are themselves explicit allowlists of exactly what the API
+     * contract uses; credentials are never allowed (the API is bearer-token
+     * authenticated, never cookie-authenticated).
+     */
     @Bean
-    SecurityFilterChain chain(HttpSecurity http, JwtFilter jwtFilter, CorrelationIdFilter correlationIdFilter)
+    CorsConfigurationSource corsConfigurationSource(
+            @Value("${hospital.security.cors.allowed-origins:}") java.util.List<String> allowedOrigins) {
+        CorsConfiguration configuration = new CorsConfiguration();
+        configuration.setAllowedOrigins(allowedOrigins.stream()
+                .filter(origin -> origin != null && !origin.isBlank())
+                .toList());
+        configuration.setAllowedMethods(java.util.List.of("GET", "POST", "PUT", "DELETE"));
+        configuration.setAllowedHeaders(java.util.List.of("Authorization", "Content-Type", "X-Correlation-Id"));
+        configuration.setExposedHeaders(java.util.List.of("X-Correlation-Id", "Retry-After"));
+        configuration.setAllowCredentials(false);
+        configuration.setMaxAge(3600L);
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", configuration);
+        return source;
+    }
+
+    @Bean
+    SecurityFilterChain chain(HttpSecurity http, JwtFilter jwtFilter, CorrelationIdFilter correlationIdFilter,
+                              CorsConfigurationSource corsConfigurationSource)
             throws Exception {
-        return http.csrf(csrf -> csrf.disable())
+        return http.cors(cors -> cors.configurationSource(corsConfigurationSource))
+                .csrf(csrf -> csrf.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                // Phase 4 (T063): the hardened API header set on every response.
+                // X-Content-Type-Options/X-Frame-Options/Cache-Control keep their
+                // Spring Security defaults; the explicit additions are the strict
+                // no-active-content CSP and no-referrer. This cannot affect the
+                // same-origin review path: nginx proxies /api bodies untouched and
+                // only adds its own SPA-appropriate headers.
+                .headers(headers -> headers
+                        .contentSecurityPolicy(csp -> csp.policyDirectives("default-src 'none'; frame-ancestors 'none'"))
+                        .referrerPolicy(referrer -> referrer.policy(
+                                org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter
+                                        .ReferrerPolicy.NO_REFERRER)))
                 .authorizeHttpRequests(authorize -> authorize
                         // Phase 4 (FR-008/FR-010): the health probes are the
                         // only anonymous actuator surface — liveness stays

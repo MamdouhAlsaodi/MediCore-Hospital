@@ -23,15 +23,29 @@ import java.util.UUID;
  * credentials, disabled accounts, and accounts without a valid assignment
  * share one non-enumerating 401; context refusals share one controlled 403
  * in the shared ApiError shape.
+ *
+ * <p>Phase 4 (T061, FR-009): the login surface is bounded by the
+ * {@link LoginRateLimiter}, keyed by the request's direct socket address.
+ * A blocked address receives one generic, non-enumerating 429 with a
+ * {@code Retry-After} hint before any credential work happens; failures are
+ * recorded per address and a success clears them, so recovery is both
+ * immediate (after success) and automatic (after the configured window).
+ * Rejections and failures create no audit events and leak nothing.</p>
  */
 @RestController
 @RequestMapping("/api/auth")
 public class AuthController {
 
-    private final ActingContextService sessions;
+    /** Generic rate-limit refusal: one controlled exception shape for the 429 mapping. */
+    static final class LoginRateLimitedException extends RuntimeException {
+    }
 
-    public AuthController(ActingContextService sessions) {
+    private final ActingContextService sessions;
+    private final LoginRateLimiter loginRateLimiter;
+
+    public AuthController(ActingContextService sessions, LoginRateLimiter loginRateLimiter) {
         this.sessions = sessions;
+        this.loginRateLimiter = loginRateLimiter;
     }
 
     public record LoginRequest(@NotBlank String username, @NotBlank String password) {}
@@ -39,8 +53,22 @@ public class AuthController {
     public record ContextSwitchRequest(@NotNull UUID assignmentId, UUID branchId) {}
 
     @PostMapping("/login")
-    public ActingContextService.Session login(@Valid @RequestBody LoginRequest request) {
-        return sessions.login(request.username(), request.password());
+    public ActingContextService.Session login(@Valid @RequestBody LoginRequest request,
+                                              HttpServletRequest httpRequest) {
+        // Direct socket address only — no trusted-proxy configuration exists
+        // in this system, so forwarded headers are never consulted (T061).
+        String address = httpRequest.getRemoteAddr();
+        if (loginRateLimiter.isBlocked(address)) {
+            throw new LoginRateLimitedException();
+        }
+        try {
+            ActingContextService.Session session = sessions.login(request.username(), request.password());
+            loginRateLimiter.recordSuccess(address);
+            return session;
+        } catch (IllegalArgumentException invalidCredentials) {
+            loginRateLimiter.recordFailure(address);
+            throw invalidCredentials;
+        }
     }
 
     /** Authenticated: only the bearer token selects whose assignments may be targeted. */
@@ -55,6 +83,19 @@ public class AuthController {
     ResponseEntity<Map<String, String>> invalidCredentials() {
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                 .body(Map.of("error", "Invalid username or password."));
+    }
+
+    /**
+     * Maps a blocked direct address to one generic, non-enumerating 429 with
+     * a {@code Retry-After} hint of the configured window in seconds. The
+     * body is identical for every blocked caller and carries no account or
+     * count information.
+     */
+    @ExceptionHandler(LoginRateLimitedException.class)
+    ResponseEntity<Map<String, String>> loginRateLimited() {
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header("Retry-After", String.valueOf(Math.max(1, loginRateLimiter.windowSeconds())))
+                .body(Map.of("error", "Too many failed attempts. Try again later."));
     }
 
     /** Maps context refusals to the shared ApiError shape with the controlled non-enumerating message. */

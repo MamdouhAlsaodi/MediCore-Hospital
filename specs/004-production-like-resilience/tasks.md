@@ -99,15 +99,15 @@
 
 ## Phase 10 — OpenAPI and typed frontend contract
 
-- [ ] T067 RED expected OpenAPI paths/schemas/statuses for auth, patient, appointment, admission, dashboard, audit.
-- [ ] T068 Add compatible springdoc integration and narrow annotations without duplicating business validation.
-- [ ] T069 Implement safe isolated `generate-openapi.sh` and write `api/openapi/medicore-v1.yaml` deterministically.
-- [ ] T070 Prove two consecutive generation runs are byte-stable; do not hide semantic drift.
-- [ ] T071 Add deterministic TypeScript client generation under `frontend/src/generated/api/`; generated files are read-only outputs.
-- [ ] T072 RED/GREEN transport tests for method/path/header/body and `400/401/403/404/409` contracts.
-- [ ] T073 Adapt existing shared API boundary and representative demonstrated callers; no broad UI rewrite.
-- [ ] T074 Implement `check-openapi-drift.sh`; prove stale artifact fails and regenerated artifact passes.
-- [ ] T075 Run backend contract tests, frontend tests/typecheck/build, and representative real HTTP contract tests.
+- [x] T067 RED expected OpenAPI paths/schemas/statuses for auth, patient, appointment, admission, dashboard, audit. (R1 written; R2 fresh `OpenApiContractTest` 4/4 GREEN)
+- [x] T068 Add compatible springdoc integration and narrow annotations without duplicating business validation. (R1 written; R2 fresh GREEN)
+- [x] T069 Implement safe isolated `generate-openapi.sh` and write `api/openapi/medicore-v1.yaml` deterministically. (R1 written; R2 fresh exit 0)
+- [x] T070 Prove two consecutive generation runs are byte-stable; do not hide semantic drift. (R2: two runs sha256-identical, 4 artifacts)
+- [x] T071 Add deterministic TypeScript client generation under `frontend/src/generated/api/`; generated files are read-only outputs. (R1 written; R2 regenerated + `tsc --strict` exit 0)
+- [x] T072 RED/GREEN transport tests for method/path/header/body and `400/401/403/404/409` contracts. (R1 written; R2 green in fresh frontend suite)
+- [x] T073 Adapt existing shared API boundary and representative demonstrated callers; no broad UI rewrite. (R1 written; R2 green in fresh frontend suite)
+- [x] T074 Implement `check-openapi-drift.sh`; prove stale artifact fails and regenerated artifact passes. (R2: stale exit 1 with diff, restored byte-identical, fresh exit 0)
+- [ ] T075 Run backend contract tests, frontend tests/typecheck/build, and representative real HTTP contract tests. (R2: contract tests 4/4, frontend 251/251 + typecheck + build GREEN, live HTTP statuses proven; full backend suite 237 run / 1 error — pre-existing Phase 8 `LivenessReadinessDbLossIntegrationTest` PostgreSQL-container death, reproducible 3/3 on this memory-constrained host, untouched by the OpenAPI diff; see R2 report)
 
 ## Phase 11 — Full container journey and recovery
 

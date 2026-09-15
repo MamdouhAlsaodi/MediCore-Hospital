@@ -1,0 +1,1547 @@
+openapi: 3.1.0
+info:
+  title: MediCore Hospital API
+  description: "Generated contract for the demonstrated MediCore route families: auth,\
+    \ patients, appointments, admissions, command-center dashboard, and audit. MediCore\
+    \ is an educational Training/Portfolio system operating on synthetic data only:\
+    \ it is non-clinical and makes no production, regulatory, or availability claim.\
+    \ Every authenticated operation rides the single server-issued bearer token; scope\
+    \ and authority are server-owned. Client errors use the shared ApiError body;\
+    \ security refusals (401/403) use one generic non-enumerating error body."
+  version: v1
+servers:
+- url: /
+  description: Same-origin review deployment
+security:
+- bearerAuth: []
+tags:
+- name: auth
+  description: Login and authenticated acting-context switch
+- name: patients
+  description: Patient registry within the acting branch
+- name: appointments
+  description: Booked appointment windows within the acting branch
+- name: admissions
+  description: Admission lifecycle and atomic bed assignment
+- name: dashboard
+  description: Command-center reads for the acting branch/organization
+- name: audit
+  description: Scope-aware audit evidence reads (ADMIN only)
+paths:
+  /api/patients/{id}:
+    get:
+      tags:
+      - patient-controller
+      operationId: getPatient
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/PatientResponse"
+        "401":
+          description: "Missing, invalid, or expired bearer token; the acting session\
+            \ is gone. The body is one generic non-enumerating error field."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
+        "403":
+          description: The authenticated acting context is not permitted to use this
+            operation. The body is one generic non-enumerating error field.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
+        "400":
+          description: A path value is malformed for its typed target (shared ApiError
+            body).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: No resource referenced by the path exists inside the acting
+            scope (shared ApiError body).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+    put:
+      tags:
+      - patient-controller
+      operationId: updatePatient
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePatientRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/PatientResponse"
+        "401":
+          description: "Missing, invalid, or expired bearer token; the acting session\
+            \ is gone. The body is one generic non-enumerating error field."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
+        "403":
+          description: The authenticated acting context is not permitted to use this
+            operation. The body is one generic non-enumerating error field.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
+        "400":
+          description: "Malformed request body, malformed field value, or a failed\
+            \ validation constraint (shared ApiError body)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: No resource referenced by the path exists inside the acting
+            scope (shared ApiError body).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /api/admissions/{id}/status:
+    put:
+      tags:
+      - admission-controller
+      operationId: dischargeAdmission
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateAdmissionStatusRequest"
+        required: true
+      responses:
+        "200":
+          description: "The discharged admission (status DISCHARGED, held bed released)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdmissionResponse"
+        "409":
+          description: The requested transition is not legal from the admission's
+            current status (shared ApiError body; the admission is unchanged).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          description: "Missing, invalid, or expired bearer token; the acting session\
+            \ is gone. The body is one generic non-enumerating error field."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
+        "403":
+          description: The authenticated acting context is not permitted to use this
+            operation. The body is one generic non-enumerating error field.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
+        "400":
+          description: "Malformed request body, malformed field value, or a failed\
+            \ validation constraint (shared ApiError body)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: No resource referenced by the path exists inside the acting
+            scope (shared ApiError body).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /api/admissions/{id}/bed:
+    put:
+      tags:
+      - admission-controller
+      operationId: assignAdmissionBed
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssignBedRequest"
+        required: true
+      responses:
+        "200":
+          description: The admission now holding the assigned bed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdmissionResponse"
+        "409":
+          description: The target bed is not AVAILABLE or the admission already holds
+            it (shared ApiError body; the previous bed state is unchanged).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          description: "Missing, invalid, or expired bearer token; the acting session\
+            \ is gone. The body is one generic non-enumerating error field."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
+        "403":
+          description: The authenticated acting context is not permitted to use this
+            operation. The body is one generic non-enumerating error field.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
+        "400":
+          description: "Malformed request body, malformed field value, or a failed\
+            \ validation constraint (shared ApiError body)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: No resource referenced by the path exists inside the acting
+            scope (shared ApiError body).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /api/patients:
+    get:
+      tags:
+      - patient-controller
+      operationId: listPatients
+      parameters:
+      - name: q
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PatientResponse"
+        "401":
+          description: "Missing, invalid, or expired bearer token; the acting session\
+            \ is gone. The body is one generic non-enumerating error field."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
+        "403":
+          description: The authenticated acting context is not permitted to use this
+            operation. The body is one generic non-enumerating error field.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
+    post:
+      tags:
+      - patient-controller
+      operationId: createPatient
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePatientRequest"
+        required: true
+      responses:
+        "200":
+          description: The created patient
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PatientResponse"
+        "409":
+          description: A patient with this medical record number already exists (shared
+            ApiError body; no partial write and no overwrite).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          description: "Missing, invalid, or expired bearer token; the acting session\
+            \ is gone. The body is one generic non-enumerating error field."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
+        "403":
+          description: The authenticated acting context is not permitted to use this
+            operation. The body is one generic non-enumerating error field.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
+        "400":
+          description: "Malformed request body, malformed field value, or a failed\
+            \ validation constraint (shared ApiError body)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /api/auth/login:
+    post:
+      tags:
+      - auth-controller
+      operationId: login
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+        required: true
+      responses:
+        "200":
+          description: The verified acting-context session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "401":
+          description: "Invalid credentials, disabled account, or no valid acting\
+            \ assignment. The body is one generic non-enumerating error field."
+          content:
+            application/json:
+              schema:
+                type: object
+        "429":
+          description: Too many failed attempts from the requesting address. The body
+            is one generic non-enumerating error field.
+          headers:
+            Retry-After:
+              description: Seconds until the address may retry
+              style: simple
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: "Malformed request body, malformed field value, or a failed\
+            \ validation constraint (shared ApiError body)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+      security: []
+  /api/auth/context:
+    post:
+      tags:
+      - auth-controller
+      operationId: switchActingContext
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContextSwitchRequest"
+        required: true
+      responses:
+        "200":
+          description: The replacement acting-context session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "403":
+          description: "The switch to the requested assignment is refused (unknown,\
+            \ disabled, or out-of-scope target). Shared ApiError body with a controlled,\
+            \ non-widening message."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          description: "Missing, invalid, or expired bearer token; the acting session\
+            \ is gone. The body is one generic non-enumerating error field."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
+        "400":
+          description: "Malformed request body, malformed field value, or a failed\
+            \ validation constraint (shared ApiError body)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /api/appointments:
+    get:
+      tags:
+      - appointment-controller
+      operationId: listAppointments
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AppointmentResponse"
+        "401":
+          description: "Missing, invalid, or expired bearer token; the acting session\
+            \ is gone. The body is one generic non-enumerating error field."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
+        "403":
+          description: The authenticated acting context is not permitted to use this
+            operation. The body is one generic non-enumerating error field.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
+    post:
+      tags:
+      - appointment-controller
+      operationId: createAppointment
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAppointmentRequest"
+        required: true
+      responses:
+        "200":
+          description: The created appointment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppointmentResponse"
+        "404":
+          description: The referenced patient or professional does not exist inside
+            the acting branch (shared ApiError body; cross-branch references answer
+            the same 404).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "409":
+          description: The requested window is not contained in one availability interval
+            or overlaps an existing non-cancelled appointment (shared ApiError body;
+            no partial write).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          description: "Missing, invalid, or expired bearer token; the acting session\
+            \ is gone. The body is one generic non-enumerating error field."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
+        "403":
+          description: The authenticated acting context is not permitted to use this
+            operation. The body is one generic non-enumerating error field.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
+        "400":
+          description: "Malformed request body, malformed field value, or a failed\
+            \ validation constraint (shared ApiError body)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /api/admissions:
+    get:
+      tags:
+      - admission-controller
+      operationId: listAdmissions
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AdmissionResponse"
+        "401":
+          description: "Missing, invalid, or expired bearer token; the acting session\
+            \ is gone. The body is one generic non-enumerating error field."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
+        "403":
+          description: The authenticated acting context is not permitted to use this
+            operation. The body is one generic non-enumerating error field.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
+    post:
+      tags:
+      - admission-controller
+      operationId: createAdmission
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAdmissionRequest"
+        required: true
+      responses:
+        "200":
+          description: "The created admission (status ADMITTED, any selected bed held)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdmissionResponse"
+        "404":
+          description: The referenced patient or bed does not exist inside the acting
+            branch (shared ApiError body).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "409":
+          description: "The selected bed is not AVAILABLE, so the admission was not\
+            \ created (shared ApiError body; no partial write)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          description: "Missing, invalid, or expired bearer token; the acting session\
+            \ is gone. The body is one generic non-enumerating error field."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
+        "403":
+          description: The authenticated acting context is not permitted to use this
+            operation. The body is one generic non-enumerating error field.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
+        "400":
+          description: "Malformed request body, malformed field value, or a failed\
+            \ validation constraint (shared ApiError body)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /api/dashboard:
+    get:
+      tags:
+      - dashboard-controller
+      operationId: getBranchSummaryAlias
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/BranchSummary"
+        "401":
+          description: "Missing, invalid, or expired bearer token; the acting session\
+            \ is gone. The body is one generic non-enumerating error field."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
+      deprecated: true
+  /api/dashboard/network:
+    get:
+      tags:
+      - dashboard-controller
+      operationId: getNetworkSummary
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/NetworkSummary"
+        "401":
+          description: "Missing, invalid, or expired bearer token; the acting session\
+            \ is gone. The body is one generic non-enumerating error field."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
+        "403":
+          description: The authenticated acting context is not permitted to use this
+            operation. The body is one generic non-enumerating error field.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
+  /api/dashboard/branch:
+    get:
+      tags:
+      - dashboard-controller
+      operationId: getBranchSummary
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/BranchSummary"
+        "401":
+          description: "Missing, invalid, or expired bearer token; the acting session\
+            \ is gone. The body is one generic non-enumerating error field."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
+  /api/audit:
+    get:
+      tags:
+      - audit-controller
+      operationId: listAuditEvents
+      parameters:
+      - name: branchId
+        in: query
+        required: false
+        schema:
+          type: string
+          format: uuid
+      - name: resourceType
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: actor
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: correlationId
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        "200":
+          description: The scope-visible audit evidence rows
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AuditEventView"
+        "400":
+          description: A typed filter value (e.g. branchId) is malformed for its target
+            type (shared ApiError body).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          description: "Missing, invalid, or expired bearer token; the acting session\
+            \ is gone. The body is one generic non-enumerating error field."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
+        "403":
+          description: The authenticated acting context is not permitted to use this
+            operation. The body is one generic non-enumerating error field.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
+  /api/appointments/{id}:
+    get:
+      tags:
+      - appointment-controller
+      operationId: getAppointment
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/AppointmentResponse"
+        "401":
+          description: "Missing, invalid, or expired bearer token; the acting session\
+            \ is gone. The body is one generic non-enumerating error field."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
+        "403":
+          description: The authenticated acting context is not permitted to use this
+            operation. The body is one generic non-enumerating error field.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
+        "400":
+          description: A path value is malformed for its typed target (shared ApiError
+            body).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: No resource referenced by the path exists inside the acting
+            scope (shared ApiError body).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+    delete:
+      tags:
+      - appointment-controller
+      operationId: deleteAppointment
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+        "401":
+          description: "Missing, invalid, or expired bearer token; the acting session\
+            \ is gone. The body is one generic non-enumerating error field."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
+        "403":
+          description: The authenticated acting context is not permitted to use this
+            operation. The body is one generic non-enumerating error field.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
+        "400":
+          description: A path value is malformed for its typed target (shared ApiError
+            body).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: No resource referenced by the path exists inside the acting
+            scope (shared ApiError body).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /api/admissions/{id}:
+    get:
+      tags:
+      - admission-controller
+      operationId: getAdmission
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/AdmissionResponse"
+        "401":
+          description: "Missing, invalid, or expired bearer token; the acting session\
+            \ is gone. The body is one generic non-enumerating error field."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
+        "403":
+          description: The authenticated acting context is not permitted to use this
+            operation. The body is one generic non-enumerating error field.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
+        "400":
+          description: A path value is malformed for its typed target (shared ApiError
+            body).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: No resource referenced by the path exists inside the acting
+            scope (shared ApiError body).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+    delete:
+      tags:
+      - admission-controller
+      operationId: deleteAdmission
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+        "401":
+          description: "Missing, invalid, or expired bearer token; the acting session\
+            \ is gone. The body is one generic non-enumerating error field."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
+        "403":
+          description: The authenticated acting context is not permitted to use this
+            operation. The body is one generic non-enumerating error field.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
+        "400":
+          description: A path value is malformed for its typed target (shared ApiError
+            body).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: No resource referenced by the path exists inside the acting
+            scope (shared ApiError body).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+components:
+  schemas:
+    UpdatePatientRequest:
+      type: object
+      properties:
+        fullName:
+          type: string
+          minLength: 1
+        phone:
+          type: string
+        email:
+          type: string
+        address:
+          type: string
+      required:
+      - fullName
+    PatientResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        branchId:
+          type: string
+          format: uuid
+        medicalRecordNumber:
+          type: string
+        fullName:
+          type: string
+        dateOfBirth:
+          type: string
+          format: date
+        sex:
+          type: string
+        phone:
+          type: string
+        email:
+          type: string
+        nationalId:
+          type: string
+        address:
+          type: string
+        active:
+          type: boolean
+    UpdateAdmissionStatusRequest:
+      type: object
+      properties:
+        status:
+          type: string
+          minLength: 1
+      required:
+      - status
+    AdmissionResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        branchId:
+          type: string
+          format: uuid
+        patientId:
+          type: string
+        admittedAt:
+          type: string
+        dischargedAt:
+          type: string
+        reason:
+          type: string
+        status:
+          type: string
+        currentBed:
+          $ref: "#/components/schemas/CurrentBed"
+    CurrentBed:
+      type: object
+      properties:
+        bedId:
+          type: string
+          format: uuid
+        ward:
+          type: string
+        room:
+          type: string
+        bedNumber:
+          type: string
+    ApiError:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        status:
+          type: integer
+          format: int32
+        error:
+          type: string
+        message:
+          type: string
+        path:
+          type: string
+    AssignBedRequest:
+      type: object
+      properties:
+        bedId:
+          type: string
+          format: uuid
+      required:
+      - bedId
+    CreatePatientRequest:
+      type: object
+      properties:
+        medicalRecordNumber:
+          type: string
+          minLength: 1
+        fullName:
+          type: string
+          minLength: 1
+        dateOfBirth:
+          type: string
+          format: date
+        sex:
+          type: string
+        phone:
+          type: string
+        email:
+          type: string
+        nationalId:
+          type: string
+        address:
+          type: string
+      required:
+      - fullName
+      - medicalRecordNumber
+    LoginRequest:
+      type: object
+      properties:
+        username:
+          type: string
+          minLength: 1
+        password:
+          type: string
+          minLength: 1
+      required:
+      - password
+      - username
+    ActingContextView:
+      type: object
+      properties:
+        username:
+          type: string
+        assignmentId:
+          type: string
+          format: uuid
+        role:
+          type: string
+        scope:
+          type: string
+        organizationId:
+          type: string
+          format: uuid
+        branchId:
+          type: string
+          format: uuid
+        departmentId:
+          type: string
+          format: uuid
+    AssignmentView:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        role:
+          type: string
+        scope:
+          type: string
+        organizationId:
+          type: string
+          format: uuid
+        organizationLabel:
+          type: string
+        branchId:
+          type: string
+          format: uuid
+        branchLabel:
+          type: string
+        departmentId:
+          type: string
+          format: uuid
+        departmentLabel:
+          type: string
+        enabled:
+          type: boolean
+    Session:
+      type: object
+      properties:
+        accessToken:
+          type: string
+        tokenType:
+          type: string
+        username:
+          type: string
+        roles:
+          type: array
+          items:
+            type: string
+        assignments:
+          type: array
+          items:
+            $ref: "#/components/schemas/AssignmentView"
+        actingContext:
+          $ref: "#/components/schemas/ActingContextView"
+    ContextSwitchRequest:
+      type: object
+      properties:
+        assignmentId:
+          type: string
+          format: uuid
+        branchId:
+          type: string
+          format: uuid
+      required:
+      - assignmentId
+    CreateAppointmentRequest:
+      type: object
+      properties:
+        patientId:
+          type: string
+          format: uuid
+        professionalId:
+          type: string
+          format: uuid
+        scheduledAt:
+          type: string
+          format: date-time
+        durationMinutes:
+          type: integer
+          format: int32
+          maximum: 480
+          minimum: 5
+        type:
+          type: string
+          minLength: 1
+        status:
+          type: string
+          minLength: 1
+          pattern: scheduled|confirmed|completed|cancelled
+      required:
+      - durationMinutes
+      - patientId
+      - professionalId
+      - scheduledAt
+      - status
+      - type
+    AppointmentResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        branchId:
+          type: string
+          format: uuid
+        patientId:
+          type: string
+        professionalId:
+          type: string
+        scheduledAt:
+          type: string
+        durationMinutes:
+          type: integer
+          format: int32
+        endsAt:
+          type: string
+        type:
+          type: string
+        status:
+          type: string
+    CreateAdmissionRequest:
+      type: object
+      properties:
+        patientId:
+          type: string
+          format: uuid
+        admittedAt:
+          type: string
+          format: date-time
+        reason:
+          type: string
+          minLength: 1
+        bedId:
+          type: string
+          format: uuid
+      required:
+      - admittedAt
+      - patientId
+      - reason
+    BranchSummary:
+      type: object
+      properties:
+        branchId:
+          type: string
+          format: uuid
+        branchCode:
+          type: string
+        branchName:
+          type: string
+        patients:
+          type: integer
+          format: int64
+        appointments:
+          type: integer
+          format: int64
+        admissions:
+          type: integer
+          format: int64
+        emergencyVisits:
+          type: integer
+          format: int64
+        invoices:
+          type: integer
+          format: int64
+        openAdmissions:
+          type: integer
+          format: int64
+        activeEmergencyVisits:
+          type: integer
+          format: int64
+        bedsAvailable:
+          type: integer
+          format: int64
+        bedsOccupied:
+          type: integer
+          format: int64
+        bedsMaintenance:
+          type: integer
+          format: int64
+        bedsOutOfService:
+          type: integer
+          format: int64
+        todayAppointments:
+          type: integer
+          format: int64
+        invoicesDraft:
+          type: integer
+          format: int64
+        invoicesIssued:
+          type: integer
+          format: int64
+        invoicesPaid:
+          type: integer
+          format: int64
+        invoicesVoid:
+          type: integer
+          format: int64
+    NetworkSummary:
+      type: object
+      properties:
+        organizationId:
+          type: string
+          format: uuid
+        organizationName:
+          type: string
+        patients:
+          type: integer
+          format: int64
+        appointments:
+          type: integer
+          format: int64
+        admissions:
+          type: integer
+          format: int64
+        emergencyVisits:
+          type: integer
+          format: int64
+        invoices:
+          type: integer
+          format: int64
+        openAdmissions:
+          type: integer
+          format: int64
+        activeEmergencyVisits:
+          type: integer
+          format: int64
+        bedsAvailable:
+          type: integer
+          format: int64
+        bedsOccupied:
+          type: integer
+          format: int64
+        bedsMaintenance:
+          type: integer
+          format: int64
+        bedsOutOfService:
+          type: integer
+          format: int64
+        todayAppointments:
+          type: integer
+          format: int64
+        invoicesDraft:
+          type: integer
+          format: int64
+        invoicesIssued:
+          type: integer
+          format: int64
+        invoicesPaid:
+          type: integer
+          format: int64
+        invoicesVoid:
+          type: integer
+          format: int64
+        branches:
+          type: array
+          items:
+            $ref: "#/components/schemas/BranchSummary"
+    AuditEventView:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        actor:
+          type: string
+        action:
+          type: string
+        resourceType:
+          type: string
+        resourceId:
+          type: string
+        details:
+          type: string
+        occurredAt:
+          type: string
+          format: date-time
+        assignmentId:
+          type: string
+          format: uuid
+        role:
+          type: string
+        scope:
+          type: string
+        organizationId:
+          type: string
+          format: uuid
+        branchId:
+          type: string
+          format: uuid
+        departmentId:
+          type: string
+          format: uuid
+        correlationId:
+          type: string
+        branchAttribution:
+          type: string
+  securitySchemes:
+    bearerAuth:
+      type: http
+      description: The access token issued by POST /api/auth/login (or a successful
+        acting-context switch); it alone selects the acting context.
+      scheme: bearer
+      bearerFormat: JWT

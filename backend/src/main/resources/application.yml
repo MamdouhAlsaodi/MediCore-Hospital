@@ -63,6 +63,13 @@ hospital:
   jwt:
     secret: ${HOSPITAL_JWT_SECRET}
     ttl-minutes: 60
+# Phase 4 (plan Task 10, T068; FR-016): the generated contract covers the
+# six demonstrated route families (auth, patients, appointments, admissions,
+# command-center dashboard, audit) — exactly the domains the frontend
+# generated typed client consumes. Legacy module routes stay undocumented;
+# documenting them would widen the contract surface without any consumer.
+springdoc:
+  packages-to-scan: com.mamtrex.hospital.auth,com.mamtrex.hospital.patient,com.mamtrex.hospital.appointment,com.mamtrex.hospital.admission,com.mamtrex.hospital.reporting,com.mamtrex.hospital.audit
 server:
   address: 127.0.0.1
   port: 5501

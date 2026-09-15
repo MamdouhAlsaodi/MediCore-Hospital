@@ -1,4 +1,13 @@
 import { apiFetch, ApiError } from '../../api.js';
+// Phase 4 (plan Task 10, T073; FR-017): the two read shapes come from the
+// generated typed contract. The screen keeps consuming the retained
+// '/api/dashboard' compatibility alias (its body is server-pinned to be
+// exactly the typed branch summary); the generated client marks that
+// operation deprecated so new callers can see the explicit branch path.
+import {
+  getBranchSummaryAlias as getBranchSummaryAliasHttpRequest,
+  getNetworkSummary as getNetworkSummaryHttpRequest,
+} from '../../generated/api/index';
 
 // Command-center transport (docs/plan3.md Task 10, §4.7). Two server-owned
 // reads, both through the shared apiFetch adapter — components never call
@@ -57,7 +66,8 @@ export function parseBranchSummary(payload) {
 }
 
 export async function fetchBranchSummary({ token, onUnauthorized } = {}) {
-  return apiFetch('/api/dashboard', { token, onUnauthorized })
+  const request = getBranchSummaryAliasHttpRequest();
+  return apiFetch(request.path, { method: request.method, token, onUnauthorized })
     .then((payload) => parseBranchSummary(payload));
 }
 
@@ -97,6 +107,7 @@ export function parseNetworkSummary(payload) {
 }
 
 export async function fetchNetworkSummary({ token, onUnauthorized } = {}) {
-  return apiFetch('/api/dashboard/network', { token, onUnauthorized })
+  const request = getNetworkSummaryHttpRequest();
+  return apiFetch(request.path, { method: request.method, token, onUnauthorized })
     .then((payload) => parseNetworkSummary(payload));
 }

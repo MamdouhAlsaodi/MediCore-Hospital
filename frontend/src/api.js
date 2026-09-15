@@ -1,3 +1,9 @@
+// Phase 4 (plan Task 10, T073; FR-017): the login request shape now comes
+// from the GENERATED typed contract (frontend/src/generated/api — see
+// scripts/phase4/generate-openapi-client.mjs), executed through this module's
+// own transport so the failure surface and messages stay exactly as pinned.
+import { login as loginHttpRequest } from './generated/api/index';
+
 export class ApiError extends Error {
   constructor(status, message) {
     super(message);
@@ -103,12 +109,15 @@ export function parseActingSessionPayload(payload) {
 // role/branch/department and offer the server-issued switch targets. The
 // failure surface is the same non-enumerating ApiError for every bad status.
 export async function authenticate(username, password) {
+  // The descriptor is the generated contract for POST /api/auth/login:
+  // method, path, and JSON body are no longer hand-maintained here.
+  const request = loginHttpRequest({ username, password });
   let response;
   try {
-    response = await fetch('/api/auth/login', {
-      method: 'POST',
+    response = await fetch(request.path, {
+      method: request.method,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify(request.body),
     });
   } catch {
     throw new ApiError(0, 'Network error: the server is unreachable.');

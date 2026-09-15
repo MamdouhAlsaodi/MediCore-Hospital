@@ -1,5 +1,10 @@
 package com.mamtrex.hospital.appointment;
 
+import com.mamtrex.hospital.shared.ApiError;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.*;
 
@@ -24,6 +29,26 @@ public class AppointmentController {
         this.service = service;
     }
 
+    /**
+     * T068: the reference and scheduling conflicts are owned by this
+     * workflow (404 unknown verified reference; 409 outside availability
+     * or overlapping window), so both are documented on the operation.
+     */
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "The created appointment",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = AppointmentDtos.AppointmentResponse.class))),
+            @ApiResponse(responseCode = "404", description = "The referenced patient or professional does not "
+                    + "exist inside the acting branch (shared ApiError body; cross-branch references answer "
+                    + "the same 404).",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = ApiError.class))),
+            @ApiResponse(responseCode = "409", description = "The requested window is not contained in one "
+                    + "availability interval or overlaps an existing non-cancelled appointment (shared "
+                    + "ApiError body; no partial write).",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = ApiError.class)))
+    })
     @PostMapping
     public AppointmentDtos.AppointmentResponse create(@Valid @RequestBody AppointmentDtos.CreateAppointmentRequest r) {
         return service.create(r);

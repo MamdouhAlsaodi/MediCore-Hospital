@@ -1,5 +1,10 @@
 package com.mamtrex.hospital.patient;
 
+import com.mamtrex.hospital.shared.ApiError;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.*;
 
@@ -22,6 +27,20 @@ public class PatientController {
         this.service = service;
     }
 
+    /**
+     * T068: the duplicate natural-key conflict is owned by this workflow
+     * (DuplicateKeyException mapping), so the 409 is documented here; the
+     * explicit 200 keeps the derived PatientResponse success schema.
+     */
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "The created patient",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = PatientDtos.PatientResponse.class))),
+            @ApiResponse(responseCode = "409", description = "A patient with this medical record number already exists "
+                    + "(shared ApiError body; no partial write and no overwrite).",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = ApiError.class)))
+    })
     @PostMapping
     public PatientDtos.PatientResponse create(@Valid @RequestBody PatientDtos.CreatePatientRequest r) {
         return PatientDtos.PatientResponse.from(

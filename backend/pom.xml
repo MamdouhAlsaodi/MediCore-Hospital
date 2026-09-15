@@ -22,6 +22,13 @@
          verified by mvn dependency:list in the task evidence. -->
     <dependency><groupId>org.flywaydb</groupId><artifactId>flyway-core</artifactId></dependency>
     <dependency><groupId>org.flywaydb</groupId><artifactId>flyway-database-postgresql</artifactId><scope>runtime</scope></dependency>
+    <!-- Phase 4 (plan Task 10, T068; FR-016): springdoc generates the
+         OpenAPI contract from the demonstrated controllers/DTOs. The API
+         artifact (no swagger-ui) keeps the public surface minimal: only
+         /v3/api-docs[/yaml] is added, both authenticated like every other
+         non-health route. The version is verified against
+         spring-boot-starter-parent 3.5.5 (springdoc 2.8.x line). -->
+    <dependency><groupId>org.springdoc</groupId><artifactId>springdoc-openapi-starter-webmvc-api</artifactId><version>2.8.9</version></dependency>
     <dependency><groupId>io.jsonwebtoken</groupId><artifactId>jjwt-api</artifactId><version>0.12.6</version></dependency>
     <dependency><groupId>io.jsonwebtoken</groupId><artifactId>jjwt-impl</artifactId><version>0.12.6</version><scope>runtime</scope></dependency>
     <dependency><groupId>io.jsonwebtoken</groupId><artifactId>jjwt-jackson</artifactId><version>0.12.6</version><scope>runtime</scope></dependency>

@@ -121,7 +121,8 @@ class LoginRateLimiterTest {
         limiter = newLimiter(1, WINDOW, cap);
         List<String> addresses = new ArrayList<>();
         for (int i = 0; i < 50; i++) {
-            addresses.add("10.0." + (i / 256) + "." + (i % 256));
+            // TEST-NET-3 documentation addresses (RFC 5737): safe for public artifacts.
+            addresses.add("203.0.113." + (i % 256));
         }
         for (String address : addresses) {
             limiter.recordFailure(address);
@@ -143,14 +144,14 @@ class LoginRateLimiterTest {
     void expiryPurgeRunsBeforeEviction() {
         int cap = 2;
         limiter = newLimiter(1, WINDOW, cap);
-        limiter.recordFailure("10.0.0.1");
+        limiter.recordFailure("203.0.113.1");
         clock.advance(WINDOW.plusSeconds(1)); // first entry is now fully expired
-        limiter.recordFailure("10.0.0.2");
-        limiter.recordFailure("10.0.0.3");
+        limiter.recordFailure("203.0.113.2");
+        limiter.recordFailure("203.0.113.3");
         assertEquals(2, limiter.trackedAddresses());
-        assertFalse(limiter.isBlocked("10.0.0.1"),
+        assertFalse(limiter.isBlocked("203.0.113.1"),
                 "the expired entry was purged rather than evicting a live address");
-        assertTrue(limiter.isBlocked("10.0.0.2"), "the live older entry survives the purge");
-        assertTrue(limiter.isBlocked("10.0.0.3"), "the live newer entry survives the purge");
+        assertTrue(limiter.isBlocked("203.0.113.2"), "the live older entry survives the purge");
+        assertTrue(limiter.isBlocked("203.0.113.3"), "the live newer entry survives the purge");
     }
 }

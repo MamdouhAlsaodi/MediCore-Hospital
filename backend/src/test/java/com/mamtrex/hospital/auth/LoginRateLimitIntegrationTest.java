@@ -107,7 +107,7 @@ class LoginRateLimitIntegrationTest {
         MvcResult spoofed = mockMvc.perform(post(LOGIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"username\":\"admin\",\"password\":\"whatever\"}")
-                        .header("X-Forwarded-For", "8.8.8.8, 10.9.9.9")
+                        .header("X-Forwarded-For", "8.8.8.8, 192.0.2.99")
                         .with(fromAddress(address)))
                 .andReturn();
         status().isTooManyRequests().match(spoofed);

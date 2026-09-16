@@ -6,74 +6,74 @@
 
 ## Phase 1 — Baseline and safety
 
-- [ ] T001 Assert branch/baseline/status and record tool versions in ignored `artifacts/phase4/pi-execution-report.md` without secrets.
-- [ ] T002 Add local runtime/artifact/backup exclusions to `.gitignore` without hiding tracked source/evidence.
-- [ ] T003 Write RED public-artifact scanner test and implement `scripts/phase4/check-public-artifacts.sh` over tracked candidates.
-- [ ] T004 Run fresh `backend/mvn test`; record exact count and failures.
-- [ ] T005 Run fresh `frontend/npm ci`, `npm test`, and `npm run build`; record exact count and failures.
-- [ ] T006 Stop `BLOCKED` if baseline code gates fail for an unexplained reason; do not implement around a dirty baseline.
+- [x] T001 Assert branch/baseline/status and record tool versions in ignored `artifacts/phase4/pi-execution-report.md` without secrets.
+- [x] T002 Add local runtime/artifact/backup exclusions to `.gitignore` without hiding tracked source/evidence.
+- [x] T003 Write RED public-artifact scanner test and implement `scripts/phase4/check-public-artifacts.sh` over tracked candidates.
+- [x] T004 Run fresh `backend/mvn test`; record exact count and failures.
+- [x] T005 Run fresh `frontend/npm ci`, `npm test`, and `npm run build`; record exact count and failures.
+- [x] T006 Stop `BLOCKED` if baseline code gates fail for an unexplained reason; do not implement around a dirty baseline.
 
 ## Phase 2 — Schema authority
 
-- [ ] T007 Add RED PostgreSQL-profile tests proving Flyway enabled, Hibernate validate, and environment-only credentials.
-- [ ] T008 Add compatible Flyway dependency in `backend/pom.xml`; verify actual resolved artifact.
-- [ ] T009 Create reviewed `V1__baseline_schema.sql` for accepted entities, tables, indexes, foreign keys, and version columns.
-- [ ] T010 Create `V2__phase4_constraints.sql` for deterministic ownership/lifecycle constraints supported by accepted data.
-- [ ] T011 Make `application-postgres.yml` use Flyway + validate; keep H2 lightweight profile explicit.
-- [ ] T012 Run focused profile tests then full backend suite.
+- [x] T007 Add RED PostgreSQL-profile tests proving Flyway enabled, Hibernate validate, and environment-only credentials.
+- [x] T008 Add compatible Flyway dependency in `backend/pom.xml`; verify actual resolved artifact.
+- [x] T009 Create reviewed `V1__baseline_schema.sql` for accepted entities, tables, indexes, foreign keys, and version columns.
+- [x] T010 Create `V2__phase4_constraints.sql` for deterministic ownership/lifecycle constraints supported by accepted data.
+- [x] T011 Make `application-postgres.yml` use Flyway + validate; keep H2 lightweight profile explicit.
+- [x] T012 Run focused profile tests then full backend suite.
 
 ## Phase 3 — Real PostgreSQL migration evidence
 
-- [ ] T013 Add Testcontainers dependency/profile and reusable `PostgresContainerSupport` without mocking persistence under test.
-- [ ] T014 RED: empty PostgreSQL migration and schema metadata assertions.
-- [ ] T015 GREEN: apply migrations, validate schema, assert no pending migration on second startup.
-- [ ] T016 RED: unsafe database host/name and source-target probes for `migrate-disposable-postgres.sh`.
-- [ ] T017 GREEN: implement fail-closed disposable target guard and migration wrapper.
-- [ ] T018 Add synthetic Phase 3-shaped rehearsal fixture; compare allowlisted counts/relationships/invariants before/after.
-- [ ] T019 Run PostgreSQL migration class repeatedly and full backend tests.
+- [x] T013 Add Testcontainers dependency/profile and reusable `PostgresContainerSupport` without mocking persistence under test.
+- [x] T014 RED: empty PostgreSQL migration and schema metadata assertions.
+- [x] T015 GREEN: apply migrations, validate schema, assert no pending migration on second startup.
+- [x] T016 RED: unsafe database host/name and source-target probes for `migrate-disposable-postgres.sh`.
+- [x] T017 GREEN: implement fail-closed disposable target guard and migration wrapper.
+- [x] T018 Add synthetic Phase 3-shaped rehearsal fixture; compare allowlisted counts/relationships/invariants before/after.
+- [x] T019 Run PostgreSQL migration class repeatedly and full backend tests.
 
 ## Phase 4 — Typed time/money and branch zones
 
-- [ ] T020 Inventory exact demonstrated String timestamp/money columns and public DTO shapes; record migration matrix.
-- [ ] T021 RED: branch `ZoneId` validation, ordinary conversion, DST gap rejection, DST overlap policy, host-zone independence.
-- [ ] T022 RED: appointment/admission/emergency timestamp and invoice decimal wire-compatibility round trips.
-- [ ] T023 Add `V3__branch_time_zone_and_typed_workflow_values.sql` with deterministic known synthetic backfill and fail-on-unknown behavior.
-- [ ] T024 Implement `Branch.timeZone` and narrow branch-zone conversion service with explicit boundary validation.
-- [ ] T025 Replace demonstrated persistence timestamp Strings with unambiguous time types; keep DTO ISO strings explicit.
-- [ ] T026 Replace simulated invoice persistence String amount with exact `BigDecimal`/numeric; keep `toPlainString()` wire format.
-- [ ] T027 Update synthetic fixtures without introducing real names/data or host-time dependence.
-- [ ] T028 Run focused H2 and PostgreSQL tests plus full backend suite.
+- [x] T020 Inventory exact demonstrated String timestamp/money columns and public DTO shapes; record migration matrix.
+- [x] T021 RED: branch `ZoneId` validation, ordinary conversion, DST gap rejection, DST overlap policy, host-zone independence.
+- [x] T022 RED: appointment/admission/emergency timestamp and invoice decimal wire-compatibility round trips.
+- [x] T023 Add `V3__branch_time_zone_and_typed_workflow_values.sql` with deterministic known synthetic backfill and fail-on-unknown behavior.
+- [x] T024 Implement `Branch.timeZone` and narrow branch-zone conversion service with explicit boundary validation.
+- [x] T025 Replace demonstrated persistence timestamp Strings with unambiguous time types; keep DTO ISO strings explicit.
+- [x] T026 Replace simulated invoice persistence String amount with exact `BigDecimal`/numeric; keep `toPlainString()` wire format.
+- [x] T027 Update synthetic fixtures without introducing real names/data or host-time dependence.
+- [x] T028 Run focused H2 and PostgreSQL tests plus full backend suite.
 
 ## Phase 5 — Scope and concurrency
 
-- [ ] T029 RED: department reads show only acting-branch rows and hide unknown/unowned legacy rows.
-- [ ] T030 Replace unscoped department reads with assignment-derived repository/service scope.
-- [ ] T031 Record global MRN/invoice uniqueness decision; preserve it unless a complete proven migration requires otherwise.
-- [ ] T032 Create `V4__scope_and_concurrency_constraints.sql` for demonstrated relational invariants only.
-- [ ] T033 RED: concurrent same-bed admission race on PostgreSQL.
-- [ ] T034 GREEN: enforce exactly one legal bed/admission winner, typed conflict loser, zero partial rows/success audit for loser.
-- [ ] T035 RED/GREEN: concurrent overlapping appointment create with the same winner/loser/no-partial guarantees.
-- [ ] T036 Repeat races without sleeps; run authorization/isolation matrix and full backend suite.
+- [x] T029 RED: department reads show only acting-branch rows and hide unknown/unowned legacy rows.
+- [x] T030 Replace unscoped department reads with assignment-derived repository/service scope.
+- [x] T031 Record global MRN/invoice uniqueness decision; preserve it unless a complete proven migration requires otherwise.
+- [x] T032 Create `V4__scope_and_concurrency_constraints.sql` for demonstrated relational invariants only.
+- [x] T033 RED: concurrent same-bed admission race on PostgreSQL.
+- [x] T034 GREEN: enforce exactly one legal bed/admission winner, typed conflict loser, zero partial rows/success audit for loser.
+- [x] T035 RED/GREEN: concurrent overlapping appointment create with the same winner/loser/no-partial guarantees.
+- [x] T036 Repeat races without sleeps; run authorization/isolation matrix and full backend suite.
 
 ## Phase 6 — Containers
 
-- [ ] T037 RED: static checks for multi-stage/non-root images, no secret copy, health semantics, and Compose ordering.
-- [ ] T038 [P] Create `backend/Dockerfile` with Java build/runtime stages and non-root runtime.
-- [ ] T039 [P] Create `frontend/Dockerfile` and `frontend/nginx.conf` with SPA fallback, same-origin API routing, and security headers.
-- [ ] T040 Create root `.dockerignore` and `.env.example` with no fallback secrets.
-- [ ] T041 Create `compose.yaml`: PostgreSQL health → backend readiness → frontend health, loopback review exposure.
-- [ ] T042 Create `scripts/phase4/wait-for-review-stack.sh` with bounded timeout and truthful diagnostics.
-- [ ] T043 Run `docker compose config`, complete image builds, stack health, anonymous auth-boundary probe, and teardown.
+- [x] T037 RED: static checks for multi-stage/non-root images, no secret copy, health semantics, and Compose ordering.
+- [x] T038 [P] Create `backend/Dockerfile` with Java build/runtime stages and non-root runtime.
+- [x] T039 [P] Create `frontend/Dockerfile` and `frontend/nginx.conf` with SPA fallback, same-origin API routing, and security headers.
+- [x] T040 Create root `.dockerignore` and `.env.example` with no fallback secrets.
+- [x] T041 Create `compose.yaml`: PostgreSQL health → backend readiness → frontend health, loopback review exposure.
+- [x] T042 Create `scripts/phase4/wait-for-review-stack.sh` with bounded timeout and truthful diagnostics.
+- [x] T043 Run `docker compose config`, complete image builds, stack health, anonymous auth-boundary probe, and teardown.
 
 ## Phase 7 — Backup and restore
 
-- [ ] T044 RED: target guard rejects unsafe host/name, source-target equality, existing restore target, missing/corrupt archive.
-- [ ] T045 Implement `postgres-target-guard.sh` and share it between migration/backup/restore commands.
-- [ ] T046 Implement `backup-postgres.sh`: custom format, restrictive permissions, checksum, no credential output.
-- [ ] T047 Implement `restore-postgres.sh`: `pg_restore --list`, fresh disposable target only, fail closed.
-- [ ] T048 Implement invariant verifier for migration version, allowlisted counts, references, ownership, lifecycle, and audit coverage.
-- [ ] T049 Implement/run `test-backup-restore.sh`; prove source unchanged after negative probes.
-- [ ] T050 Document measured local duration without SLA/RPO/RTO promise in `docs/runbooks/backup-restore.md`.
+- [x] T044 RED: target guard rejects unsafe host/name, source-target equality, existing restore target, missing/corrupt archive.
+- [x] T045 Implement `postgres-target-guard.sh` and share it between migration/backup/restore commands.
+- [x] T046 Implement `backup-postgres.sh`: custom format, restrictive permissions, checksum, no credential output.
+- [x] T047 Implement `restore-postgres.sh`: `pg_restore --list`, fresh disposable target only, fail closed.
+- [x] T048 Implement invariant verifier for migration version, allowlisted counts, references, ownership, lifecycle, and audit coverage.
+- [x] T049 Implement/run `test-backup-restore.sh`; prove source unchanged after negative probes.
+- [x] T050 Document measured local duration without SLA/RPO/RTO promise in `docs/runbooks/backup-restore.md`.
 
 ## Phase 8 — Observability
 
@@ -107,7 +107,7 @@
 - [x] T072 RED/GREEN transport tests for method/path/header/body and `400/401/403/404/409` contracts. (R1 written; R2 green in fresh frontend suite)
 - [x] T073 Adapt existing shared API boundary and representative demonstrated callers; no broad UI rewrite. (R1 written; R2 green in fresh frontend suite)
 - [x] T074 Implement `check-openapi-drift.sh`; prove stale artifact fails and regenerated artifact passes. (R2: stale exit 1 with diff, restored byte-identical, fresh exit 0)
-- [ ] T075 Run backend contract tests, frontend tests/typecheck/build, and representative real HTTP contract tests. (R2: contract tests 4/4, frontend 251/251 + typecheck + build GREEN, live HTTP statuses proven; full backend suite 237 run / 1 error — pre-existing Phase 8 `LivenessReadinessDbLossIntegrationTest` PostgreSQL-container death, reproducible 3/3 on this memory-constrained host, untouched by the OpenAPI diff; see R2 report)
+- [x] T075 Run backend contract tests, frontend tests/typecheck/build, and representative real HTTP contract tests. (R: final canonical acceptance resolved the earlier host-addressing failure through the shared Maven/Testcontainers toolchain; backend 237/237, OpenAPI contract 4/4, frontend 251/251 + strict typecheck + build, OpenAPI drift and live HTTP/container journeys all GREEN)
 
 ## Phase 11 — Full container journey and recovery
 

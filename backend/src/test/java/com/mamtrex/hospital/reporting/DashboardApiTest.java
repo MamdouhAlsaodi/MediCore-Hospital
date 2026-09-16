@@ -504,25 +504,25 @@ class DashboardApiTest {
         seedAppointment(branch, "2037-01-05T00:00");
         seedAppointment(branch, TODAY + "T00:00:45");
 
-        admissions.save(new Admission(branch.getId(), firstId, "2038-01-01T08:00", "synthetic open stay A"));
-        admissions.save(new Admission(branch.getId(), firstId, "2038-01-02T08:00", "synthetic open stay B"));
-        Admission discharged = new Admission(branch.getId(), firstId, "2038-01-03T08:00", "synthetic discharged stay");
-        discharged.dischargeAt("2038-01-05T09:30");
+        admissions.save(new Admission(branch.getId(), firstId, java.time.Instant.parse("2038-01-01T08:00:00Z"), "synthetic open stay A"));
+        admissions.save(new Admission(branch.getId(), firstId, java.time.Instant.parse("2038-01-02T08:00:00Z"), "synthetic open stay B"));
+        Admission discharged = new Admission(branch.getId(), firstId, java.time.Instant.parse("2038-01-03T08:00:00Z"), "synthetic discharged stay");
+        discharged.dischargeAt(java.time.Instant.parse("2038-01-05T09:30:00Z"));
         admissions.save(discharged);
 
-        emergencyVisits.save(new EmergencyVisit(branch.getId(), firstId, "2038-01-01T09:00", "3",
+        emergencyVisits.save(new EmergencyVisit(branch.getId(), firstId, java.time.Instant.parse("2038-01-01T09:00:00Z"), "3",
                 "synthetic waiting visit", "WAITING"));
-        emergencyVisits.save(new EmergencyVisit(branch.getId(), firstId, "2038-01-02T09:00", "2",
+        emergencyVisits.save(new EmergencyVisit(branch.getId(), firstId, java.time.Instant.parse("2038-01-02T09:00:00Z"), "2",
                 "synthetic waiting visit", "WAITING"));
-        emergencyVisits.save(new EmergencyVisit(branch.getId(), firstId, "2038-01-03T09:00", "4",
+        emergencyVisits.save(new EmergencyVisit(branch.getId(), firstId, java.time.Instant.parse("2038-01-03T09:00:00Z"), "4",
                 "synthetic treated visit", "IN_TREATMENT"));
-        emergencyVisits.save(new EmergencyVisit(branch.getId(), firstId, "2038-01-04T09:00", "5",
+        emergencyVisits.save(new EmergencyVisit(branch.getId(), firstId, java.time.Instant.parse("2038-01-04T09:00:00Z"), "5",
                 "synthetic closed visit", "CLOSED"));
 
-        invoices.save(new Invoice(branch.getId(), firstId, "INV-DASH-DRAFT-" + suffix, "10.00", "USD", "DRAFT"));
-        invoices.save(new Invoice(branch.getId(), firstId, "INV-DASH-ISSUED-" + suffix, "20.00", "USD", "ISSUED"));
-        invoices.save(new Invoice(branch.getId(), firstId, "INV-DASH-PAID-" + suffix, "30.00", "USD", "PAID"));
-        invoices.save(new Invoice(branch.getId(), firstId, "INV-DASH-VOID-" + suffix, "40.00", "USD", "VOID"));
+        invoices.save(new Invoice(branch.getId(), firstId, "INV-DASH-DRAFT-" + suffix, new java.math.BigDecimal("10.00"), "USD", "DRAFT"));
+        invoices.save(new Invoice(branch.getId(), firstId, "INV-DASH-ISSUED-" + suffix, new java.math.BigDecimal("20.00"), "USD", "ISSUED"));
+        invoices.save(new Invoice(branch.getId(), firstId, "INV-DASH-PAID-" + suffix, new java.math.BigDecimal("30.00"), "USD", "PAID"));
+        invoices.save(new Invoice(branch.getId(), firstId, "INV-DASH-VOID-" + suffix, new java.math.BigDecimal("40.00"), "USD", "VOID"));
 
         beds.save(new Bed(branch, "Ward A", "101", "A-01"));
         Bed occupied = beds.save(new Bed(branch, "Ward A", "102", "A-02"));
@@ -537,10 +537,11 @@ class DashboardApiTest {
         beds.save(outOfService);
     }
 
-    /** Seeds one appointment in the canonical representation the service writes. */
+    /** Seeds one appointment: the branch-local window resolved to typed instants (UTC branch, UTC clock). */
     private void seedAppointment(Branch branch, String scheduledAt) {
+        java.time.Instant start = java.time.LocalDateTime.parse(scheduledAt).toInstant(java.time.ZoneOffset.UTC);
         appointments.save(new Appointment(branch, "raw-cohort-patient-ref", "raw-cohort-professional-ref",
-                scheduledAt, 30, java.time.LocalDateTime.parse(scheduledAt).plusMinutes(30).toString(),
+                start, 30, start.plusSeconds(30 * 60L),
                 "Consultation", "scheduled"));
     }
 

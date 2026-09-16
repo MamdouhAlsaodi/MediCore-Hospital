@@ -48,8 +48,11 @@ public final class InvoiceDtos {
                                   String amount, String currency, String status) {
 
         public static InvoiceResponse from(Invoice invoice) {
+            // Phase 4 (FR-015): exact numeric storage; the wire keeps the
+            // Phase 3 plain-string shape via toPlainString() (never exponent).
             return new InvoiceResponse(invoice.getId(), invoice.getBranchId(), invoice.getPatientId(),
-                    invoice.getInvoiceNumber(), invoice.getAmount(),
+                    invoice.getInvoiceNumber(),
+                    invoice.getAmount() == null ? null : invoice.getAmount().toPlainString(),
                     invoice.getCurrency(), invoice.getStatus());
         }
     }

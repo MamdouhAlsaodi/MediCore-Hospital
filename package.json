@@ -1,0 +1,13 @@
+{
+  "name": "medicore-phase4-e2e",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Phase 4 container E2E runner (T076-T084). Browser evidence over the disposable Compose review stack only.",
+  "scripts": {
+    "test:e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.61.0"
+  }
+}

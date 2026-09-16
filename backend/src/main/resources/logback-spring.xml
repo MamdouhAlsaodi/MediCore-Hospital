@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Phase 4 structured logging (plan Task 8, T054; FR-007). The console is
+     the single log output and every line is rendered by the production
+     StructuredJsonEncoder: one bounded JSON object per event (timestamp,
+     level, logger, thread, message, plus the request-scoped MDC fields:
+     correlationId from the existing CorrelationIdFilter and the bounded
+     http_* observation fields). The encoder renders message text only —
+     stack traces and raw exception bodies are intentionally excluded from
+     the structured stream, and no file appender exists. -->
+<configuration>
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+    <appender name="CONSOLE_JSON" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="com.mamtrex.hospital.infrastructure.StructuredJsonEncoder"/>
+    </appender>
+    <root level="INFO">
+        <appender-ref ref="CONSOLE_JSON"/>
+    </root>
+</configuration>

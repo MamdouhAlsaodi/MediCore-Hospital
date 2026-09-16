@@ -1,0 +1,26 @@
+# Phase 4 root build-context exclusions (plan Task 6): keep secrets, local
+# state, build outputs, and evidence out of every image build context.
+.git
+.agents
+.specify
+specs
+docs
+scripts
+artifacts
+backend/target
+frontend/node_modules
+frontend/dist
+frontend/test-results
+frontend/playwright-report
+**/.env
+**/.env.*
+!**/.env.example
+**/*.key
+**/*.pem
+**/*.p12
+**/*.pfx
+**/*.dump
+**/*.backup
+**/*.mv.db
+**/*.trace.db
+**/*.log

@@ -21,6 +21,13 @@ public class GlobalExceptionHandler {
  @ExceptionHandler(NotFoundException.class) ResponseEntity<ApiError> notFound(NotFoundException ex,HttpServletRequest r){return ResponseEntity.status(404).body(new ApiError(Instant.now(),404,"Not Found",ex.getMessage(),r.getRequestURI()));}
 
  /**
+  * Phase 4 (FR-012): a bound-but-meaningless client value — e.g. a
+  * branch-local time inside a DST gap or an unknown IANA zone — maps to
+  * the shared 400 Validation Error shape with a controlled message.
+  */
+ @ExceptionHandler(com.mamtrex.hospital.shared.InvalidParameterValueException.class) ResponseEntity<ApiError> invalidParameterValue(com.mamtrex.hospital.shared.InvalidParameterValueException ex,HttpServletRequest r){return ResponseEntity.badRequest().body(new ApiError(Instant.now(),400,"Validation Error",ex.getMessage(),r.getRequestURI()));}
+
+ /**
   * Conflict mapping for illegal lifecycle transitions (docs/plan2.md Task 2):
   * services throw InvalidStateTransitionException with a controlled
   * client-safe message and no cause, so the message passes through while

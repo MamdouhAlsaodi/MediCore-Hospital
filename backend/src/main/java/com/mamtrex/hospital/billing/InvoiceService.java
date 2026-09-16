@@ -101,10 +101,12 @@ public class InvoiceService {
         });
         // Ownership is server-stamped from the acting branch; the create
         // request carries no branch field, so client input can never choose
-        // it. Canonical plain-string store for the legacy amount column: no
-        // exponent notation can reach storage or responses (no migration).
+        // it. Phase 4 (FR-015): the amount is stored as an exact
+        // numeric(19,2) value, canonically scaled to 2 fraction digits
+        // (DTO validation already bounds the fraction); the wire renders
+        // the plain string — never exponent notation.
         Invoice saved = invoices.save(new Invoice(acting.getId(), patient.getId().toString(),
-                invoiceNumber, r.amount().toPlainString(), r.currency(), STATUS_DRAFT));
+                invoiceNumber, r.amount().setScale(2), r.currency(), STATUS_DRAFT));
         audit.record("CREATE", "Invoice", saved.getId().toString(), "created");
         return InvoiceDtos.InvoiceResponse.from(saved);
     }

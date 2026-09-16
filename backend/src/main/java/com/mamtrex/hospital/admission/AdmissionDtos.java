@@ -48,9 +48,16 @@ public final class AdmissionDtos {
                                     String dischargedAt, String reason, String status,
                                     CurrentBed currentBed) {
 
-        public static AdmissionResponse from(Admission a, UUID branchId, CurrentBed currentBed) {
-            return new AdmissionResponse(a.getId(), branchId, a.getPatientId(), a.getAdmittedAt(),
-                    a.getDischargedAt(), a.getReason(), a.getStatus(), currentBed);
+        public static AdmissionResponse from(Admission a, UUID branchId, CurrentBed currentBed,
+                                             java.time.ZoneId branchZone) {
+            // Phase 4 (FR-015): typed instants; the wire keeps the Phase 3
+            // branch-local ISO strings.
+            String admittedAt = a.getAdmittedAt() == null ? null
+                    : com.mamtrex.hospital.organization.BranchTimeService.render(branchZone, a.getAdmittedAt()).toString();
+            String dischargedAt = a.getDischargedAt() == null ? null
+                    : com.mamtrex.hospital.organization.BranchTimeService.render(branchZone, a.getDischargedAt()).toString();
+            return new AdmissionResponse(a.getId(), branchId, a.getPatientId(), admittedAt,
+                    dischargedAt, a.getReason(), a.getStatus(), currentBed);
         }
     }
 

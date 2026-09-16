@@ -36,17 +36,42 @@ public class Branch extends BaseEntity {
     @Column(name = "location_label", nullable = false)
     private String locationLabel;
 
+    /**
+     * The branch's validated IANA time zone (plan Task 4; FR-012). Every
+     * branch-local time rendering and every branch-local -> instant
+     * conversion for this branch's workflow rows flows through
+     * {@link BranchTimeService} with this zone. Nullable only as the
+     * deliberate legacy seam: pre-Phase-4 rows have no zone, are never
+     * guessed from host time, and fail closed on conversion until
+     * reconciled (the V3 migration blocks on unknown rows instead of
+     * backfilling them).
+     */
+    @Column(name = "time_zone", length = 60)
+    private java.time.ZoneId timeZone;
+
     @Column(nullable = false)
     private boolean active = true;
 
     protected Branch() {
     }
 
+    /**
+     * Legacy-shape constructor: kept so existing callers (tests, the demo
+     * initializer's legacy seams) stay deterministic. It assigns UTC —
+     * a fixed, documented, host-independent zone — never the JVM default.
+     */
     public Branch(HospitalOrganization organization, String code, String name, String locationLabel) {
+        this(organization, code, name, locationLabel, java.time.ZoneId.of("UTC"));
+    }
+
+    /** The full constructor: the zone is validated by the branch surface, never taken raw from a client. */
+    public Branch(HospitalOrganization organization, String code, String name, String locationLabel,
+                  java.time.ZoneId timeZone) {
         this.organization = organization;
         this.code = code;
         this.name = name;
         this.locationLabel = locationLabel;
+        this.timeZone = timeZone;
     }
 
     public HospitalOrganization getOrganization() {
@@ -63,6 +88,11 @@ public class Branch extends BaseEntity {
 
     public String getLocationLabel() {
         return locationLabel;
+    }
+
+    /** The branch's IANA zone; null only on legacy rows (never guessed). */
+    public java.time.ZoneId getTimeZone() {
+        return timeZone;
     }
 
     public boolean isActive() {

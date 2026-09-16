@@ -1,0 +1,70 @@
+# MediCore Phase 4 one-command synthetic review stack (plan Task 6):
+# PostgreSQL (healthy) -> backend (readiness-gated) -> frontend (health-gated).
+# All published ports bind to loopback only. Every credential arrives from
+# the runtime environment with required-variable (${VAR:?}) syntax — the
+# stack refuses to start with a missing value and contains no fallback
+# password anywhere. Synthetic/training review only.
+name: medicore-review
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${REVIEW_DB_NAME:?REVIEW_DB_NAME is required}
+      POSTGRES_USER: ${REVIEW_DB_USER:?REVIEW_DB_USER is required}
+      POSTGRES_PASSWORD: ${REVIEW_DB_PASSWORD:?REVIEW_DB_PASSWORD is required}
+    ports:
+      - "127.0.0.1:${REVIEW_PG_HOST_PORT:-55432}:5432"
+    volumes:
+      - medicore-review-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      start_period: 15s
+      retries: 24
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: medicore-review-backend:phase4
+    environment:
+      SPRING_PROFILES_ACTIVE: postgres
+      DB_URL: jdbc:postgresql://postgres:5432/${REVIEW_DB_NAME}
+      DB_USER: ${REVIEW_DB_USER}
+      DB_PASSWORD: ${REVIEW_DB_PASSWORD}
+      HOSPITAL_JWT_SECRET: ${HOSPITAL_JWT_SECRET:?HOSPITAL_JWT_SECRET is required}
+      HOSPITAL_ADMIN_PASSWORD: ${HOSPITAL_ADMIN_PASSWORD:?HOSPITAL_ADMIN_PASSWORD is required}
+      MEDICORE_DEMO_SEED: "true"
+      MEDICORE_REVIEW_ACCOUNTS_ENABLED: "true"
+      HOSPITAL_REVIEW_DOCTOR_PASSWORD: ${HOSPITAL_REVIEW_DOCTOR_PASSWORD:?HOSPITAL_REVIEW_DOCTOR_PASSWORD is required}
+      HOSPITAL_REVIEW_NURSE_PASSWORD: ${HOSPITAL_REVIEW_NURSE_PASSWORD:?HOSPITAL_REVIEW_NURSE_PASSWORD is required}
+      SERVER_ADDRESS: 0.0.0.0
+      SERVER_PORT: 8080
+      MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
+    ports:
+      - "127.0.0.1:${REVIEW_API_HOST_PORT:-5501}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/actuator/health/readiness"]
+      interval: 10s
+      timeout: 5s
+      start_period: 90s
+      retries: 24
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    image: medicore-review-frontend:phase4
+    ports:
+      - "127.0.0.1:${REVIEW_WEB_HOST_PORT:-5502}:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  medicore-review-pgdata:

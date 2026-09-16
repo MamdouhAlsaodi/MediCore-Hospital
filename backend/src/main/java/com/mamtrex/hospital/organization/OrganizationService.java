@@ -74,8 +74,14 @@ public class OrganizationService {
         branches.findByOrganizationIdAndCode(organization.getId(), code).ifPresent(existing -> {
             throw new DuplicateKeyException("Branch code already exists in this organization");
         });
+        // Phase 4 (FR-012): the branch carries a validated IANA zone. An
+        // absent value defaults to the fixed, documented UTC — never the
+        // JVM default; an unparseable zone is the shared 400.
+        java.time.ZoneId zone = request.timeZone() == null || request.timeZone().isBlank()
+                ? java.time.ZoneId.of("UTC")
+                : BranchTimeService.validatedZone(request.timeZone());
         Branch saved = branches.save(new Branch(organization, code,
-                request.name().trim(), request.locationLabel().trim()));
+                request.name().trim(), request.locationLabel().trim(), zone));
         audit.record("CREATE", "Branch", saved.getId().toString(), "created");
         return OrganizationDtos.BranchResponse.from(saved);
     }

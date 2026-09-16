@@ -1033,7 +1033,8 @@ class CareOperationsApiTest {
                 "patientId must be the canonical UUID string of the verified patient");
         assertEquals("INV-NORM-" + suffix, body.get("invoiceNumber"));
         assertInstanceOf(String.class, body.get("amount"), "the canonical amount must travel as a plain string");
-        assertEquals("1234.5", body.get("amount"), "amount must be the canonical plain string, never exponent form");
+        assertEquals("1234.50", body.get("amount"),
+                "amount must be the canonical scale-2 plain string of the exact numeric value, never exponent form");
         assertEquals("USD", body.get("currency"), "currency is a demo label stored verbatim");
         assertEquals("DRAFT", body.get("status"), "the server must set status=DRAFT, never a client value");
         Object patientBranch = getMap("/api/patients/" + patientId, login(ADMIN_USER)).getBody().get("branchId");
@@ -1068,8 +1069,8 @@ class CareOperationsApiTest {
         ResponseEntity<Map<String, Object>> exponentResponse = post("/api/invoices", token, exponent);
         assertEquals(HttpStatus.OK, exponentResponse.getStatusCode());
         assertNotNull(exponentResponse.getBody());
-        assertEquals("1000", exponentResponse.getBody().get("amount"),
-                "the stored amount must use toPlainString() canonical form with no exponent");
+        assertEquals("1000.00", exponentResponse.getBody().get("amount"),
+                "the stored amount must use toPlainString() canonical scale-2 form with no exponent");
 
         assertEquals(HttpStatus.BAD_REQUEST, getStatus("/api/invoices/not-a-uuid", token).getStatusCode(),
                 "a malformed invoice UUID path must be a client error, never a 500");
@@ -1098,7 +1099,7 @@ class CareOperationsApiTest {
         ResponseEntity<Map<String, Object>> zeroResponse = post("/api/invoices", token, zero);
         assertEquals(HttpStatus.OK, zeroResponse.getStatusCode(), "a zero demo amount is legal");
         assertNotNull(zeroResponse.getBody());
-        assertEquals("0", zeroResponse.getBody().get("amount"), "zero must be stored canonically");
+        assertEquals("0.00", zeroResponse.getBody().get("amount"), "zero must be stored canonically at scale 2");
 
         Map<String, Object> max = invoicePayload("inv-max", patientId);
         max.put("amount", new BigDecimal("999999999999.99"));

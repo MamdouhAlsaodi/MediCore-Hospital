@@ -38,7 +38,13 @@ public class Invoice extends BaseEntity {
 
     private String patientId;
     private String invoiceNumber;
-    private String amount;
+    /**
+     * Phase 4 (FR-015): the simulated amount is an exact numeric(19,2)
+     * value; the wire keeps the Phase 3 plain-string shape via
+     * {@code toPlainString()} of the canonical scale-2 value.
+     */
+    @Column(precision = 19, scale = 2)
+    private java.math.BigDecimal amount;
     private String currency;
     private String status;
 
@@ -52,7 +58,7 @@ public class Invoice extends BaseEntity {
      * A new invoice is owned by the acting branch (server-stamped, never
      * client input) and carries the service-validated canonical values.
      */
-    public Invoice(UUID branchId, String patientId, String invoiceNumber, String amount, String currency, String status) {
+    public Invoice(UUID branchId, String patientId, String invoiceNumber, java.math.BigDecimal amount, String currency, String status) {
         this.branchId = branchId;
         this.patientId = patientId;
         this.invoiceNumber = invoiceNumber;
@@ -62,7 +68,7 @@ public class Invoice extends BaseEntity {
     }
 
     /** Legacy constructor for pre-Task-8 rows: no ownership, hidden from branch-scoped reads. */
-    public Invoice(String patientId, String invoiceNumber, String amount, String currency, String status) {
+    public Invoice(String patientId, String invoiceNumber, java.math.BigDecimal amount, String currency, String status) {
         this.patientId = patientId;
         this.invoiceNumber = invoiceNumber;
         this.amount = amount;
@@ -78,7 +84,7 @@ public class Invoice extends BaseEntity {
         return invoiceNumber;
     }
 
-    public String getAmount() {
+    public java.math.BigDecimal getAmount() {
         return amount;
     }
 

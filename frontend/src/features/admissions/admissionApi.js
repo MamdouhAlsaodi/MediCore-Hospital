@@ -1,4 +1,13 @@
 import { apiFetch } from '../../api.js';
+// Phase 4 (plan Task 10, T073; FR-017): request shapes come from the
+// generated typed contract; the conditional bedId-inclusion rule and every
+// wire byte stay exactly as pinned by the admission screen tests.
+import {
+  assignAdmissionBed as assignAdmissionBedHttpRequest,
+  createAdmission as createAdmissionHttpRequest,
+  dischargeAdmission as dischargeAdmissionHttpRequest,
+  listAdmissions as listAdmissionsHttpRequest,
+} from '../../generated/api/index';
 
 // The only admission transport adapter (docs/plan2.md Task 2, extended by
 // docs/plan3.md Task 7). Bodies mirror AdmissionDtos exactly:
@@ -26,7 +35,8 @@ import { apiFetch } from '../../api.js';
 // through the shared apiFetch (Bearer token, JSON, ApiError,
 // onUnauthorized); components never call fetch directly.
 export function fetchAdmissions({ token, onUnauthorized } = {}) {
-  return apiFetch('/api/admissions', { method: 'GET', token, onUnauthorized });
+  const request = listAdmissionsHttpRequest();
+  return apiFetch(request.path, { method: request.method, token, onUnauthorized });
 }
 
 export function createAdmission({ token, admission, onUnauthorized } = {}) {
@@ -38,25 +48,31 @@ export function createAdmission({ token, admission, onUnauthorized } = {}) {
     reason: admission?.reason,
   };
   if (admission?.bedId) body.bedId = admission.bedId;
-  return apiFetch('/api/admissions', { method: 'POST', token, body, onUnauthorized });
+  const request = createAdmissionHttpRequest(body);
+  return apiFetch(request.path, {
+    method: request.method,
+    token,
+    body: request.body,
+    onUnauthorized,
+  });
 }
 
 export function assignAdmissionBed({ token, id, bedId, onUnauthorized } = {}) {
-  const safeId = encodeURIComponent(String(id ?? ''));
-  return apiFetch(`/api/admissions/${safeId}/bed`, {
-    method: 'PUT',
+  const request = assignAdmissionBedHttpRequest(id, { bedId });
+  return apiFetch(request.path, {
+    method: request.method,
     token,
-    body: { bedId },
+    body: request.body,
     onUnauthorized,
   });
 }
 
 export function dischargeAdmission({ token, id, onUnauthorized } = {}) {
-  const safeId = encodeURIComponent(String(id ?? ''));
-  return apiFetch(`/api/admissions/${safeId}/status`, {
-    method: 'PUT',
+  const request = dischargeAdmissionHttpRequest(id, { status: 'DISCHARGED' });
+  return apiFetch(request.path, {
+    method: request.method,
     token,
-    body: { status: 'DISCHARGED' },
+    body: request.body,
     onUnauthorized,
   });
 }

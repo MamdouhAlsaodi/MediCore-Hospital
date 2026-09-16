@@ -6,6 +6,7 @@ import com.mamtrex.hospital.bed.Bed;
 import com.mamtrex.hospital.bed.BedRepository;
 import com.mamtrex.hospital.organization.Branch;
 import com.mamtrex.hospital.organization.BranchRepository;
+import com.mamtrex.hospital.organization.BranchTimeService;
 import com.mamtrex.hospital.patient.Patient;
 import com.mamtrex.hospital.patient.PatientRepository;
 import com.mamtrex.hospital.shared.BaseEntity;
@@ -16,7 +17,6 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -95,15 +95,17 @@ public class AdmissionService {
             bed = availableBedInBranch(r.bedId(), acting.getId());
         }
         // Ownership is server-stamped from the acting branch; the create
-        // request carries no branch field, so client input can never choose it.
+        // request carries no branch field, so client input can never choose
+        // it. The branch-local admittedAt becomes the unambiguous stored
+        // instant through the acting branch's zone (FR-012/FR-015).
         Admission saved = admissions.save(new Admission(acting.getId(), patient.getId().toString(),
-                r.admittedAt().toString(), r.reason().trim()));
+                BranchTimeService.toInstant(acting, r.admittedAt()), r.reason().trim()));
         if (bed != null) {
             occupyAndAssign(saved.getId(), bed, null);
         }
         audit.record("CREATE", "Admission", saved.getId().toString(), "created");
         return AdmissionDtos.AdmissionResponse.from(saved, saved.getBranchId(),
-                bed == null ? null : AdmissionDtos.CurrentBed.from(bed));
+                bed == null ? null : AdmissionDtos.CurrentBed.from(bed), acting.getTimeZone());
     }
 
     /**
@@ -137,13 +139,13 @@ public class AdmissionService {
         occupyAndAssign(id, target, current);
         audit.record("UPDATE", "Admission", id.toString(), "bed: " + target.getId());
         return AdmissionDtos.AdmissionResponse.from(admission, admission.getBranchId(),
-                AdmissionDtos.CurrentBed.from(target));
+                AdmissionDtos.CurrentBed.from(target), acting.getTimeZone());
     }
 
     /** Branch-scoped list (docs/plan3.md Task 7A): only the acting branch's own admissions. */
     @Transactional(readOnly = true)
     public List<AdmissionDtos.AdmissionResponse> list() {
-        return responsesOf(admissions.findByBranchId(currentContext().branchId()));
+        return responsesOf(admissions.findByBranchId(currentContext().branchId()), currentContext().branchId());
     }
 
     /** Branch-scoped detail (docs/plan3.md Task 7A): the generic 404 for any other branch's row. */
@@ -172,7 +174,7 @@ public class AdmissionService {
             throw new InvalidStateTransitionException(
                     "Admission " + id + " has no " + r.status() + " transition: only DISCHARGED is defined");
         }
-        admission.dischargeAt(LocalDateTime.now().toString());
+        admission.dischargeAt(java.time.Instant.now());
         releaseAssignment(id);
         audit.record("UPDATE", "Admission", id.toString(), "status: " + STATUS_DISCHARGED);
         return responseOf(admission);
@@ -235,11 +237,19 @@ public class AdmissionService {
 
     /** One response: the row's own branch ownership plus the live assignment's bed summary. */
     private AdmissionDtos.AdmissionResponse responseOf(Admission admission) {
-        return responsesOf(List.of(admission)).get(0);
+        return responseOf(admission, currentContext().branchId());
+    }
+
+    private AdmissionDtos.AdmissionResponse responseOf(Admission admission, UUID branchId) {
+        return responsesOf(List.of(admission), branchId).get(0);
     }
 
     /** Batch assembly for list/detail: one assignment/bed sweep over branch-scoped rows. */
-    private List<AdmissionDtos.AdmissionResponse> responsesOf(List<Admission> rows) {
+    private List<AdmissionDtos.AdmissionResponse> responsesOf(List<Admission> rows, UUID branchId) {
+        java.time.ZoneId zone = branches.findById(branchId)
+                .map(Branch::getTimeZone)
+                .orElseThrow(() -> new AccessDeniedException("The acting branch is not available"))
+                ;
         Map<UUID, AdmissionBedAssignment> assignmentByAdmission = assignments.findByAdmissionIdIn(
                         rows.stream().map(BaseEntity::getId).toList()).stream()
                 .collect(Collectors.toMap(AdmissionBedAssignment::getAdmissionId, Function.identity()));
@@ -251,7 +261,7 @@ public class AdmissionService {
             AdmissionBedAssignment assignment = assignmentByAdmission.get(admission.getId());
             Bed bed = assignment == null ? null : bedById.get(assignment.getBedId());
             responses.add(AdmissionDtos.AdmissionResponse.from(admission, admission.getBranchId(),
-                    bed == null ? null : AdmissionDtos.CurrentBed.from(bed)));
+                    bed == null ? null : AdmissionDtos.CurrentBed.from(bed), zone));
         }
         return responses;
     }

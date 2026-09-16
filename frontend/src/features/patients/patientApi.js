@@ -1,4 +1,13 @@
 import { apiFetch } from '../../api.js';
+// Phase 4 (plan Task 10, T073; FR-017): request shapes come from the
+// generated typed contract; this adapter keeps its role as the ONLY patient
+// transport seam for the Patients screen and keeps every wire byte identical
+// (paths, query encoding, Bearer envelope, JSON bodies).
+import {
+  createPatient as createPatientHttpRequest,
+  listPatients as listPatientsHttpRequest,
+  updatePatient as updatePatientHttpRequest,
+} from '../../generated/api/index';
 
 // The only patient transport adapter for the Patients screen (plan1.md
 // Tasks 6-7). Every patient read and mutation goes through the shared
@@ -11,20 +20,21 @@ import { apiFetch } from '../../api.js';
 // the new session's token to these functions.
 export function fetchPatients({ token, query = '', onUnauthorized } = {}) {
   const trimmed = typeof query === 'string' ? query.trim() : '';
-  const path = trimmed
-    ? `/api/patients?q=${encodeURIComponent(trimmed)}`
-    : '/api/patients';
-  return apiFetch(path, { method: 'GET', token, onUnauthorized });
+  // T073: request shapes come from the generated contract (FR-017); the
+  // screen's blank-search-means-no-filter policy stays right here.
+  const request = listPatientsHttpRequest(trimmed ? { q: trimmed } : undefined);
+  return apiFetch(request.path, { method: request.method, token, onUnauthorized });
 }
 
 // Task 7: register a patient. Body mirrors PatientDtos.CreatePatientRequest:
 // required medicalRecordNumber/fullName, optional dateOfBirth/sex/phone/
 // nationalId/address, and an optional email the server validates with @Email.
 export function createPatient({ token, patient, onUnauthorized } = {}) {
-  return apiFetch('/api/patients', {
-    method: 'POST',
+  const request = createPatientHttpRequest(patient);
+  return apiFetch(request.path, {
+    method: request.method,
     token,
-    body: patient,
+    body: request.body,
     onUnauthorized,
   });
 }
@@ -34,16 +44,19 @@ export function createPatient({ token, patient, onUnauthorized } = {}) {
 // date of birth, sex, and national ID are deliberately not editable through
 // this contract, and the adapter refuses to send them.
 export function updatePatient({ token, id, changes, onUnauthorized } = {}) {
-  const safeId = encodeURIComponent(String(id ?? ''));
-  return apiFetch(`/api/patients/${safeId}`, {
-    method: 'PUT',
+  // The adapter still refuses to send the non-editable contract fields
+  // (medicalRecordNumber, dateOfBirth, sex, nationalId) — the generated
+  // UpdatePatientRequest type documents the same four-field contract.
+  const request = updatePatientHttpRequest(id, {
+    fullName: changes?.fullName,
+    phone: changes?.phone,
+    email: changes?.email,
+    address: changes?.address,
+  });
+  return apiFetch(request.path, {
+    method: request.method,
     token,
-    body: {
-      fullName: changes?.fullName,
-      phone: changes?.phone,
-      email: changes?.email,
-      address: changes?.address,
-    },
+    body: request.body,
     onUnauthorized,
   });
 }

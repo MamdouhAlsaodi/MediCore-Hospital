@@ -4,6 +4,7 @@ import com.mamtrex.hospital.audit.AuditService;
 import com.mamtrex.hospital.auth.ActingContext;
 import com.mamtrex.hospital.organization.Branch;
 import com.mamtrex.hospital.organization.BranchRepository;
+import com.mamtrex.hospital.organization.BranchTimeService;
 import com.mamtrex.hospital.patient.Patient;
 import com.mamtrex.hospital.patient.PatientRepository;
 import com.mamtrex.hospital.shared.InvalidStateTransitionException;
@@ -83,23 +84,26 @@ public class EmergencyVisitService {
         // Ownership is server-stamped from the acting branch; the create
         // request carries no branch field, so client input can never choose it.
         EmergencyVisit saved = visits.save(new EmergencyVisit(acting.getId(), patient.getId().toString(),
-                r.arrivalAt().toString(), r.triageLevel(), r.chiefComplaint().trim(), STATUS_WAITING));
+                BranchTimeService.toInstant(acting, r.arrivalAt()), r.triageLevel(),
+                r.chiefComplaint().trim(), STATUS_WAITING));
         audit.record("CREATE", "EmergencyVisit", saved.getId().toString(), "created");
-        return EmergencyVisitDtos.EmergencyVisitResponse.from(saved);
+        return EmergencyVisitDtos.EmergencyVisitResponse.from(saved, acting.getTimeZone());
     }
 
     /** Branch-scoped list (docs/plan3.md Task 8): only the acting branch's own visits. */
     @Transactional(readOnly = true)
     public List<EmergencyVisitDtos.EmergencyVisitResponse> list() {
+        java.time.ZoneId zone = actingZone();
         return visits.findByBranchId(currentContext().branchId()).stream()
-                .map(EmergencyVisitDtos.EmergencyVisitResponse::from).toList();
+                .map(visit -> EmergencyVisitDtos.EmergencyVisitResponse.from(visit, zone)).toList();
     }
 
     /** Branch-scoped detail (docs/plan3.md Task 8): the generic 404 for any other branch's row. */
     @Transactional(readOnly = true)
     public EmergencyVisitDtos.EmergencyVisitResponse get(UUID id) {
+        java.time.ZoneId zone = actingZone();
         return visits.findByIdAndBranchId(id, currentContext().branchId())
-                .map(EmergencyVisitDtos.EmergencyVisitResponse::from)
+                .map(visit -> EmergencyVisitDtos.EmergencyVisitResponse.from(visit, zone))
                 .orElseThrow(() -> new NotFoundException("EmergencyVisit not found: " + id));
     }
 
@@ -132,7 +136,7 @@ public class EmergencyVisitService {
         visit.changeStatus(target);
         EmergencyVisit saved = visits.save(visit);
         audit.record("UPDATE", "EmergencyVisit", id.toString(), "status: " + target);
-        return EmergencyVisitDtos.EmergencyVisitResponse.from(saved);
+        return EmergencyVisitDtos.EmergencyVisitResponse.from(saved, actingZone());
     }
 
     /** Branch-scoped delete (docs/plan3.md Task 8): 404-safe for any other branch's row. */
@@ -146,6 +150,11 @@ public class EmergencyVisitService {
     private Branch actingBranch() {
         return branches.findById(currentContext().branchId())
                 .orElseThrow(() -> new AccessDeniedException("The acting branch is not available"));
+    }
+
+    /** The acting branch's IANA zone for branch-local rendering (FR-012). */
+    private java.time.ZoneId actingZone() {
+        return actingBranch().getTimeZone();
     }
 
     /**

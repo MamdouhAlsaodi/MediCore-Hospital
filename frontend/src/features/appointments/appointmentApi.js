@@ -1,4 +1,11 @@
 import { apiFetch } from '../../api.js';
+// Phase 4 (plan Task 10, T073; FR-017): request shapes come from the
+// generated typed contract; the six-field create allowlist (with the
+// server-computed window end never sent) stays in this adapter.
+import {
+  createAppointment as createAppointmentHttpRequest,
+  listAppointments as listAppointmentsHttpRequest,
+} from '../../generated/api/index';
 
 // The only appointment transport adapter (plan1.md Task 8). Bodies mirror
 // AppointmentDtos exactly:
@@ -23,21 +30,23 @@ import { apiFetch } from '../../api.js';
 // context switch refreshes data because the shell hands the new session's
 // token to these functions.
 export function fetchAppointments({ token, onUnauthorized } = {}) {
-  return apiFetch('/api/appointments', { method: 'GET', token, onUnauthorized });
+  const request = listAppointmentsHttpRequest();
+  return apiFetch(request.path, { method: request.method, token, onUnauthorized });
 }
 
 export function createAppointment({ token, appointment, onUnauthorized } = {}) {
-  return apiFetch('/api/appointments', {
-    method: 'POST',
+  const request = createAppointmentHttpRequest({
+    patientId: appointment?.patientId,
+    professionalId: appointment?.professionalId,
+    scheduledAt: appointment?.scheduledAt,
+    durationMinutes: appointment?.durationMinutes,
+    type: appointment?.type,
+    status: appointment?.status,
+  });
+  return apiFetch(request.path, {
+    method: request.method,
     token,
-    body: {
-      patientId: appointment?.patientId,
-      professionalId: appointment?.professionalId,
-      scheduledAt: appointment?.scheduledAt,
-      durationMinutes: appointment?.durationMinutes,
-      type: appointment?.type,
-      status: appointment?.status,
-    },
+    body: request.body,
     onUnauthorized,
   });
 }

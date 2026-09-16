@@ -1,4 +1,9 @@
 import { ApiError, parseActingSessionPayload } from '../../api.js';
+// Phase 4 (plan Task 10, T073; FR-017): the request shape comes from the
+// generated typed contract; this module keeps ownership of the switch's
+// exact failure surface (its 403 keeps the prior context valid with its own
+// controlled message, distinct from the shared generic permission error).
+import { switchActingContext as switchActingContextHttpRequest } from '../../generated/api/index';
 
 // Acting-context transport (docs/plan3.md Task 5): the only client path to
 // POST /api/auth/context. The request carries the target assignment id AND
@@ -20,15 +25,16 @@ export async function switchContext({ token, assignmentId, branchId, onUnauthori
   // concrete branch for an ORGANIZATION target before calling.
   if (branchId) body.branchId = branchId;
 
+  const request = switchActingContextHttpRequest(body);
   let response;
   try {
-    response = await fetch('/api/auth/context', {
-      method: 'POST',
+    response = await fetch(request.path, {
+      method: request.method,
       headers: {
         Authorization: 'Bearer ' + token,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify(request.body),
     });
   } catch {
     throw new ApiError(0, 'Network error: the server is unreachable.');

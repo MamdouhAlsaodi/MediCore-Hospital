@@ -1,6 +1,11 @@
 package com.mamtrex.hospital.audit;
 
 import com.mamtrex.hospital.auth.ActingContext;
+import com.mamtrex.hospital.shared.ApiError;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
@@ -36,7 +41,17 @@ import java.util.stream.Stream;
   String details,Instant occurredAt,UUID assignmentId,String role,String scope,
   UUID organizationId,UUID branchId,UUID departmentId,String correlationId,String branchAttribution){}
 
- @GetMapping public List<AuditEventView> list(@RequestParam(required=false) UUID branchId,
+ @GetMapping @ApiResponses({
+  @ApiResponse(responseCode = "200", description = "The scope-visible audit evidence rows",
+  content = @Content(mediaType = "application/json",
+  array = @io.swagger.v3.oas.annotations.media.ArraySchema(
+  schema = @Schema(implementation = AuditEventView.class)))),
+  @ApiResponse(responseCode = "400", description = "A typed filter value (e.g. branchId) is malformed "
+  + "for its target type (shared ApiError body).",
+  content = @Content(mediaType = "application/json",
+  schema = @Schema(implementation = ApiError.class)))
+  })
+ public List<AuditEventView> list(@RequestParam(required=false) UUID branchId,
   @RequestParam(required=false) String resourceType,@RequestParam(required=false) String actor,
   @RequestParam(required=false) String correlationId){
   ActingContext context=currentContext();

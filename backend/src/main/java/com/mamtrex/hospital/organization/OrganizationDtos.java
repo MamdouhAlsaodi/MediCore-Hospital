@@ -55,6 +55,7 @@ public final class OrganizationDtos {
      */
     public record CreateBranchRequest(@NotBlank String code,
                                       @NotBlank String name,
-                                      @NotBlank String locationLabel) {
+                                      @NotBlank String locationLabel,
+                                      String timeZone) {
     }
 }

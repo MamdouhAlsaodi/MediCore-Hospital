@@ -340,8 +340,8 @@ class DemoDataInitializerTest {
             assertEquals(branchId, professional.getBranch().getId(), "appointment professional must be same-branch");
             assertNotNull(appointment.getDurationMinutes(), "seeded appointments carry the bounded duration");
             assertNotNull(appointment.getEndsAt(), "seeded appointments carry the computed window end");
-            assertDoesNotThrow(() -> LocalDateTime.parse(appointment.getScheduledAt()),
-                    "seeded scheduledAt must stay a parseable typed ISO value");
+            assertNotNull(appointment.getScheduledAt(),
+                    "seeded scheduledAt must stay the typed unambiguous instant");
         }
         for (Bed bed : beds.findAll()) {
             assertNotNull(bed.getBranch(), "seeded bed must be branch-owned");
@@ -483,8 +483,8 @@ class DemoDataInitializerTest {
                 "invoice numbers must carry the obvious DEMO-INV- prefix");
         assertEquals(TOTAL_INVOICES, invoices.findAll().stream().map(Invoice::getInvoiceNumber).distinct().count(),
                 "invoice numbers must stay unique stable keys");
-        assertTrue(invoices.findAll().stream().allMatch(i -> i.getAmount().matches("\\d+\\.\\d{2}")),
-                "invoice amounts must stay display-only simulation strings");
+        assertTrue(invoices.findAll().stream().allMatch(i -> i.getAmount().toPlainString().matches("\\d+\\.\\d{2}")),
+                "invoice amounts must stay canonical display-only simulation values");
         assertTrue(invoices.findAll().stream().allMatch(i -> i.getCurrency().equals("USD")),
                 "invoice currencies must stay display-only demo labels");
     }
@@ -541,14 +541,17 @@ class DemoDataInitializerTest {
             }
         }
         for (Appointment appointment : appointments.findAll()) {
-            LocalDateTime start = LocalDateTime.parse(appointment.getScheduledAt());
-            LocalDateTime end = LocalDateTime.parse(appointment.getEndsAt());
+            java.time.Instant start = appointment.getScheduledAt();
+            java.time.Instant end = appointment.getEndsAt();
             StaffMember professional = staff.findById(UUID.fromString(appointment.getProfessionalId()))
                     .orElseThrow(() -> new AssertionError("appointment professional must resolve"));
+            java.time.ZoneId zone = appointment.getBranch().getTimeZone();
+            java.time.LocalDateTime windowStart = java.time.LocalDateTime.ofInstant(appointment.getScheduledAt(), zone);
+            java.time.LocalDateTime windowEnd = java.time.LocalDateTime.ofInstant(appointment.getEndsAt(), zone);
             boolean contained = byStaff.getOrDefault(professional.getId(), List.of()).stream()
                     .filter(interval -> interval.getBranchId().equals(appointment.getBranch().getId()))
-                    .anyMatch(interval -> !interval.getStartsAt().isAfter(start)
-                            && !interval.getEndsAt().isBefore(end));
+                    .anyMatch(interval -> !interval.getStartsAt().isAfter(windowStart)
+                            && !interval.getEndsAt().isBefore(windowEnd));
             assertTrue(contained, "every seeded appointment must sit inside its professional's availability");
         }
     }

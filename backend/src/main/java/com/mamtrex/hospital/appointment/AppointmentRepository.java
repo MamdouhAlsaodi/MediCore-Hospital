@@ -40,8 +40,8 @@ public interface AppointmentRepository extends JpaRepository<Appointment, UUID> 
             """)
     long countConflicting(@Param("branchId") UUID branchId,
                           @Param("professionalId") String professionalId,
-                          @Param("start") String start,
-                          @Param("end") String end);
+                          @Param("start") java.time.Instant start,
+                          @Param("end") java.time.Instant end);
 
     /*
      * Task 10 dashboard aggregation (docs/plan3.md §4.7): grouped counts
@@ -56,12 +56,15 @@ public interface AppointmentRepository extends JpaRepository<Appointment, UUID> 
             + "where a.branch.id in :branchIds group by a.branch.id")
     List<BranchMetric> countByBranchIdInGrouped(@Param("branchIds") Collection<UUID> branchIds);
 
-    @Query("select a.branch.id as branchId, count(a) as total from Appointment a "
-            + "where a.branch.id in :branchIds and a.scheduledAt >= :windowStart and a.scheduledAt < :windowEnd "
-            + "group by a.branch.id")
-    List<BranchMetric> countByBranchIdAndScheduledAtRangeGrouped(@Param("branchIds") Collection<UUID> branchIds,
-                                                                 @Param("windowStart") String windowStart,
-                                                                 @Param("windowEnd") String windowEnd);
+    /*
+     * Phase 4 (FR-012): the today window is per branch and derived from
+     * that branch's own IANA zone as exact half-open instants.
+     */
+    @Query("select count(a) from Appointment a "
+            + "where a.branch.id = :branchId and a.scheduledAt >= :windowStart and a.scheduledAt < :windowEnd")
+    long countByBranchIdAndScheduledAtRange(@Param("branchId") UUID branchId,
+                                            @Param("windowStart") java.time.Instant windowStart,
+                                            @Param("windowEnd") java.time.Instant windowEnd);
 
     /** One grouped-count tuple shared by the two queries above. */
     interface BranchMetric {

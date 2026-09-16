@@ -9,13 +9,43 @@
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-validation</artifactId></dependency>
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-security</artifactId></dependency>
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-actuator</artifactId></dependency>
+    <!-- Phase 4 (plan Task 8, T052): the Prometheus scrape registry backing
+         the single explicitly exposed metrics endpoint (/actuator/prometheus).
+         The version is managed by spring-boot-starter-parent 3.5.5; no metric
+         carries unbounded labels (bounded-label tests enforce this). -->
+    <dependency><groupId>io.micrometer</groupId><artifactId>micrometer-registry-prometheus</artifactId></dependency>
     <dependency><groupId>com.h2database</groupId><artifactId>h2</artifactId><scope>runtime</scope></dependency>
     <dependency><groupId>org.postgresql</groupId><artifactId>postgresql</artifactId><scope>runtime</scope></dependency>
+    <!-- Phase 4 (plan Task 2): Flyway is the PostgreSQL schema authority. The
+         version is managed by spring-boot-starter-parent 3.5.5 (Flyway 11.x),
+         so no explicit version is declared here; the resolved artifact is
+         verified by mvn dependency:list in the task evidence. -->
+    <dependency><groupId>org.flywaydb</groupId><artifactId>flyway-core</artifactId></dependency>
+    <dependency><groupId>org.flywaydb</groupId><artifactId>flyway-database-postgresql</artifactId><scope>runtime</scope></dependency>
+    <!-- Phase 4 (plan Task 10, T068; FR-016): springdoc generates the
+         OpenAPI contract from the demonstrated controllers/DTOs. The API
+         artifact (no swagger-ui) keeps the public surface minimal: only
+         /v3/api-docs[/yaml] is added, both authenticated like every other
+         non-health route. The version is verified against
+         spring-boot-starter-parent 3.5.5 (springdoc 2.8.x line). -->
+    <dependency><groupId>org.springdoc</groupId><artifactId>springdoc-openapi-starter-webmvc-api</artifactId><version>2.8.9</version></dependency>
     <dependency><groupId>io.jsonwebtoken</groupId><artifactId>jjwt-api</artifactId><version>0.12.6</version></dependency>
     <dependency><groupId>io.jsonwebtoken</groupId><artifactId>jjwt-impl</artifactId><version>0.12.6</version><scope>runtime</scope></dependency>
     <dependency><groupId>io.jsonwebtoken</groupId><artifactId>jjwt-jackson</artifactId><version>0.12.6</version><scope>runtime</scope></dependency>
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-test</artifactId><scope>test</scope></dependency>
     <dependency><groupId>org.springframework.security</groupId><artifactId>spring-security-test</artifactId><scope>test</scope></dependency>
+    <!-- Phase 4 (plan Task 3): real-PostgreSQL integration evidence through
+         Testcontainers. Versions are managed by spring-boot-starter-parent;
+         the containers are used ONLY against throwaway disposable databases
+         owned by the test process. -->
+    <dependency><groupId>org.testcontainers</groupId><artifactId>postgresql</artifactId><scope>test</scope></dependency>
+    <dependency><groupId>org.testcontainers</groupId><artifactId>junit-jupiter</artifactId><scope>test</scope></dependency>
   </dependencies>
-  <build><plugins><plugin><groupId>org.springframework.boot</groupId><artifactId>spring-boot-maven-plugin</artifactId></plugin></plugins></build>
+  <build><plugins><plugin><groupId>org.springframework.boot</groupId><artifactId>spring-boot-maven-plugin</artifactId></plugin>
+    <!-- Phase 4 (plan Task 3): lets the guarded shell rehearsal apply the
+         shipped migrations to one explicitly disposable database. Target
+         coordinates always come from the guarded wrapper's command line;
+         no credentials are ever configured here. -->
+    <plugin><groupId>org.flywaydb</groupId><artifactId>flyway-maven-plugin</artifactId></plugin>
+  </plugins></build>
 </project>

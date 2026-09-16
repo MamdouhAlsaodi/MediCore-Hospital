@@ -70,7 +70,7 @@ const ORGANIZATION_VIEW = {
 
 function sessionFor(actingAssignment, extraAssignments = [], actingBranchId = actingAssignment.branchId) {
   return {
-    token: 'current-context-token',
+    token: 'synthetic-context-token',
     username: 'staffuser',
     roles: [actingAssignment.role],
     assignments: [actingAssignment, ...extraAssignments],
@@ -202,7 +202,7 @@ describe('BranchSelector', () => {
     const [path, options] = fetchMock.mock.calls[0];
     expect(path).toBe('/api/auth/context');
     expect(options.method).toBe('POST');
-    expect(options.headers.Authorization).toBe('Bearer current-context-token');
+    expect(options.headers.Authorization).toBe('Bearer synthetic-context-token');
     // Same assignment, new branch: both ids travel to the server.
     expect(JSON.parse(options.body)).toEqual({
       assignmentId: ORG_ADMIN_ASSIGNMENT.id,

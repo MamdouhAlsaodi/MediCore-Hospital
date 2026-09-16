@@ -1,6 +1,12 @@
 spring:
   application:
     name: medicore-hospital
+  main:
+    # Phase 4 observability (plan Task 8, T054; FR-007): the console is the
+    # single structured log stream; the startup banner prints directly to
+    # stdout OUTSIDE the logging system and would inject one non-JSON line
+    # into it, so it stays off and the stream remains purely structured.
+    banner-mode: off
   datasource:
     url: jdbc:h2:file:./data/medicore;MODE=PostgreSQL;AUTO_SERVER=TRUE
     username: sa
@@ -12,15 +18,58 @@ spring:
   h2:
     console:
       enabled: false
+  # Phase 4 isolation (plan Task 2, step 5): the lightweight H2 developer
+  # profile keeps Hibernate schema management and explicitly disables
+  # Flyway. The PostgreSQL review profile (application-postgres.yml) is the
+  # only Flyway-managed profile; no profile silently inherits migration
+  # behavior from another.
+  flyway:
+    enabled: false
+# Phase 4 observability (plan Task 8, T051/T052/T055; FR-008/FR-010):
+# liveness stays process-only, readiness requires the database, and exactly
+# the required review endpoints (health + Prometheus) are web-exposed —
+# every other actuator endpoint remains unexposed AND authenticated.
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        include: health,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      group:
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState,db
+# Phase 4 security hardening (plan Task 9, T061/T062; FR-009/FR-010):
+# login rate limiting is bounded and expiring, keyed by the DIRECT socket
+# address (no trusted-proxy configuration exists, so X-Forwarded-For is
+# never consulted), and the CORS allowlist is explicit and EMPTY by default
+# — fail-closed. The whole real frontend is same-origin (Vite proxy and
+# review nginx /api route), so no cross-origin origin is needed for any
+# demonstrated workflow; an operator may allowlist one via
+# MEDICORE_CORS_ALLOWED_ORIGINS (comma-separated) when a genuine
+# cross-origin deployment is deliberately designed.
 hospital:
+  security:
+    login:
+      max-failures: 5
+      window: PT15M
+      max-tracked-addresses: 10000
+    cors:
+      allowed-origins: ${MEDICORE_CORS_ALLOWED_ORIGINS:}
   jwt:
     secret: ${HOSPITAL_JWT_SECRET}
     ttl-minutes: 60
+# Phase 4 (plan Task 10, T068; FR-016): the generated contract covers the
+# six demonstrated route families (auth, patients, appointments, admissions,
+# command-center dashboard, audit) — exactly the domains the frontend
+# generated typed client consumes. Legacy module routes stay undocumented;
+# documenting them would widen the contract surface without any consumer.
+springdoc:
+  packages-to-scan: com.mamtrex.hospital.auth,com.mamtrex.hospital.patient,com.mamtrex.hospital.appointment,com.mamtrex.hospital.admission,com.mamtrex.hospital.reporting,com.mamtrex.hospital.audit
 server:
   address: 127.0.0.1
   port: 5501

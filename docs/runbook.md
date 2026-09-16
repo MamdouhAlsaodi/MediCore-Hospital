@@ -98,10 +98,29 @@ cd backend && mvn test                        # 162 tests (MultiBranchOperations
                                               # DevAdminInitializerTest 13,
                                               # DashboardApiTest 7,
                                               # ArchitectureSmokeTest 1)
-cd ../frontend && npm test && npm run build   # 237 tests across 15 files + production build
+cd ../frontend && npm test && npm run build   # current totals: docs/implementation-status.md
 cd ../frontend && npm run test:e2e            # real-browser journey; see "Browser evidence" above
 cd .. && git diff --check                     # whitespace/conflict-marker gate
 ```
+
+### Phase 4 canonical acceptance (one command)
+
+Phase 4 composes every gate above — plus migrations, containers, backup/restore,
+observability, security, and the containerized browser journey — into one
+fail-fast local entry point (13 serial stages; exit 0 only when all pass;
+missing Docker/PostgreSQL capability exits 2 BLOCKED, never a silent pass):
+
+```bash
+scripts/phase4/acceptance.sh            # full canonical run
+scripts/phase4/acceptance.sh --list-stages
+```
+
+Backend toolchain: JDK 21 + Maven 3.9+ via `MVN` (e.g. a containerized Maven
+entry point) or `mvn` on PATH. Stage evidence map:
+`docs/evidence/phase4-verification.md`. Phase 4 helper scripts and their
+individual usages: `scripts/phase4/` (each guard fails closed on unsafe or
+non-disposable targets; all disposable resources carry the `medicore_phase4`
+naming convention and are removed by their owning script's cleanup trap).
 
 ## Browser evidence (Playwright e2e)
 
@@ -165,5 +184,5 @@ Behavior of the script:
 
 Dated baseline results, environment assumptions, the regression budget definition, and the dashboard-profiling note live in `docs/performance.md`. Re-run the same script after changes to spot regressions in the demonstrated workflow.
 
-## PostgreSQL later
-Use the `postgres` Spring profile only with runtime-provided `DB_URL`, `DB_USER`, and `DB_PASSWORD`. Docker and public deployment are outside this phase.
+## PostgreSQL review profile (Phase 4)
+Use the `postgres` Spring profile only with runtime-provided `DB_URL`, `DB_USER`, and `DB_PASSWORD` (Flyway-managed, `validate` mode — never `ddl-auto=update`). The Phase 4 review stack (Docker Compose), disposable migration/backup/restore rehearsals, and the canonical acceptance command supersede the earlier "later" note above; public deployment remains outside this project's scope.

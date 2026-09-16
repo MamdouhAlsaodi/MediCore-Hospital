@@ -31,9 +31,10 @@ public class DepartmentController {
         return service.create(r);
     }
 
+    /** Acting-context scoped (FR-013): no query parameter is consulted. */
     @GetMapping
-    public List<DepartmentDtos.DepartmentResponse> list(@RequestParam(required = false) UUID branchId) {
-        return service.list(branchId);
+    public List<DepartmentDtos.DepartmentResponse> list() {
+        return service.list();
     }
 
     @GetMapping("/{id}")

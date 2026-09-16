@@ -111,15 +111,15 @@
 
 ## Phase 11 — Full container journey and recovery
 
-- [ ] T076 Assert Playwright `trace: 'off'` and preserve no video/screenshot acceptance shortcut.
-- [ ] T077 Generate process-local synthetic credentials before loading Playwright config; never persist/log them.
-- [ ] T078 Start clean stack and prove service/port ownership before browser execution.
-- [ ] T079 RED/GREEN desktop journey: login → context → patient → appointment → admission/bed → discharge → emergency → simulated invoice → command-center → audit.
-- [ ] T080 RED/GREEN mobile viewport journey and one-line responsive navigation/overflow checks.
-- [ ] T081 Add tagged context-switch discrimination test proving no stale branch rows paint.
-- [ ] T082 Restart backend; verify zero pending migrations and preserved synthetic durable state.
-- [ ] T083 Stop PostgreSQL; verify liveness/readiness split; restore PostgreSQL and verify recovery.
-- [ ] T084 Assert exact expected non-2xx responses; reject unrelated console/page errors.
+- [x] T076 Assert Playwright `trace: 'off'` and preserve no video/screenshot acceptance shortcut.
+- [x] T077 Generate process-local synthetic credentials before loading Playwright config; never persist/log them.
+- [x] T078 Start clean stack and prove service/port ownership before browser execution.
+- [x] T079 RED/GREEN desktop journey: login → context → patient → appointment → admission/bed → discharge → emergency → simulated invoice → command-center → audit.
+- [x] T080 RED/GREEN mobile viewport journey and one-line responsive navigation/overflow checks.
+- [x] T081 Add tagged context-switch discrimination test proving no stale branch rows paint.
+- [x] T082 Restart backend; verify zero pending migrations and preserved synthetic durable state.
+- [x] T083 Stop PostgreSQL; verify liveness/readiness split; restore PostgreSQL and verify recovery.
+- [x] T084 Assert exact expected non-2xx responses; reject unrelated console/page errors.
 
 ## Phase 12 — Canonical acceptance
 

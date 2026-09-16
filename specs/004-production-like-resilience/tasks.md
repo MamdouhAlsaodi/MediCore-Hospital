@@ -123,22 +123,22 @@
 
 ## Phase 12 — Canonical acceptance
 
-- [ ] T085 Implement fail-fast `scripts/phase4/acceptance.sh` composing every required gate in dependency order.
-- [ ] T086 Add cleanup traps restricted to named Phase 4 disposable containers/databases/artifacts.
-- [ ] T087 Prove absent Docker/PostgreSQL cannot yield false PASS.
-- [ ] T088 If repository CI policy permits, add `.github/workflows/phase4-quality.yml` without secrets; otherwise document local-only gate and do not fabricate CI.
-- [ ] T089 Run full canonical acceptance on capable host; capture exact stage verdicts and totals.
+- [x] T085 Implement fail-fast `scripts/phase4/acceptance.sh` composing every required gate in dependency order. (R: implemented; 13 real serial stages, fail-fast, exit 2 on capability gaps; canonical run evidence below)
+- [x] T086 Add cleanup traps restricted to named Phase 4 disposable containers/databases/artifacts. (R: script owns only its mktemp evidence dir; child scripts keep named-resource traps; disposable-cleanup-proof stage verified zero leftovers)
+- [x] T087 Prove absent Docker/PostgreSQL cannot yield false PASS. (R: stage 0 probes — tool-free PATH and unreachable daemon each exit 2 BLOCKED, verified fresh every run)
+- [x] T088 If repository CI policy permits, add `.github/workflows/phase4-quality.yml` without secrets; otherwise document local-only gate and do not fabricate CI. (R: no `.github/` at baseline — documented local-only in README/docs; no CI fabricated)
+- [x] T089 Run full canonical acceptance on capable host; capture exact stage verdicts and totals. (R: PASS — all 13 stages exited 0 in 1124s on HEAD a76c9da; backend 237/237, frontend 251/251 across 16 files plus typecheck/build, backup/restore 15/15, observability live DB-loss/recovery green under Temurin JDK 21.0.12, Playwright 6 passed/2 intentional mobile resilience skips, zero disposable leftovers)
 
 ## Phase 13 — Evidence and stop gate
 
-- [ ] T090 Update README and runbooks from real commands only.
-- [ ] T091 Update `docs/pdr.md` additively, `docs/implementation-status.md`, and `docs/traceability.md` with FR/SC evidence.
-- [ ] T092 Create `docs/evidence/phase4-verification.md` mapping FR-001..020 and SC-001..010 to exact source/test/runtime proof.
-- [ ] T093 Run public tracked-artifact scan; remove credentials, private topology, real personal data, unsupported clinical/production/compliance/SLA claims.
-- [ ] T094 Run `git diff --check`; inventory tracked and untracked paths and reject unrelated/generated/runtime files.
-- [ ] T095 Run `scripts/phase4/acceptance.sh` fresh as final stop gate.
-- [ ] T096 Finalize ignored `artifacts/phase4/pi-execution-report.md` with exact report schema and terminal `PASS | PARTIAL | BLOCKED`.
-- [ ] T097 Leave worktree intact and exit—no commit, push, PR, merge, deployment, release, or notification to external systems.
+- [x] T090 Update README and runbooks from real commands only. (R: README + docs/runbook.md document the canonical command and toolchain resolution; no invented commands)
+- [x] T091 Update `docs/pdr.md` additively, `docs/implementation-status.md`, and `docs/traceability.md` with FR/SC evidence. (R: pdr.md Phase 4 addendum strictly additive; status + traceability updated with evidence pointers and honest limits)
+- [x] T092 Create `docs/evidence/phase4-verification.md` mapping FR-001..020 and SC-001..010 to exact source/test/runtime proof. (R: complete map; gate-verified)
+- [x] T093 Run public tracked-artifact scan; remove credentials, private topology, real personal data, unsupported clinical/production/compliance/SLA claims. (R: check-public-artifacts.sh clean exit 0 in terminal run; claims remain Training/Portfolio/synthetic/non-clinical)
+- [x] T094 Run `git diff --check`; inventory tracked and untracked paths and reject unrelated/generated/runtime files. (R: diff --check clean; inventory 13 paths, all inside packet allowlist; no generated/runtime files tracked)
+- [x] T095 Run `scripts/phase4/acceptance.sh` fresh as final stop gate. (R: PASS — one canonical run completed all 13 stages with exit 0 in 1124s; see T089 and docs/implementation-status.md)
+- [x] T096 Finalize ignored `artifacts/phase4/pi-execution-report.md` with exact report schema and terminal `PASS | PARTIAL | BLOCKED`. (R: terminal supervisor rerun recorded as PASS after resolving the host JDK capability gap)
+- [x] T097 Leave worktree intact and exit—no commit, push, PR, merge, deployment, release, or notification to external systems. (R: implementation worker left the worktree intact; publication remained a separate owner-authorized supervisor stage)
 
 ## Dependency graph
 
@@ -148,14 +148,14 @@ Within the graph, only explicitly marked independent file creation may overlap. 
 
 ## Final acceptance checklist
 
-- [ ] Empty and rehearsal PostgreSQL migrations; restart idempotency.
-- [ ] Typed demonstrated time/money persistence with wire compatibility and DST proof.
-- [ ] Department branch scope and real PostgreSQL concurrency winners.
-- [ ] Complete Compose builds, health, synthetic workflow, restart, dependency loss/recovery.
-- [ ] Guarded backup/archive/checksum/restore/invariants.
-- [ ] Structured sanitized logs, bounded metrics, liveness/readiness.
-- [ ] Authentication/CORS/security-header/authorization matrix.
-- [ ] Deterministic OpenAPI and generated TypeScript client drift check.
-- [ ] Backend/frontend/build/E2E/canonical acceptance green with fresh exact counts.
-- [ ] Traceability complete; no secret/private/real-data/unsupported claim finding.
-- [ ] No forbidden Git/publication/deployment/destructive/non-synthetic side effect.
+- [x] Empty and rehearsal PostgreSQL migrations; restart idempotency.
+- [x] Typed demonstrated time/money persistence with wire compatibility and DST proof.
+- [x] Department branch scope and real PostgreSQL concurrency winners.
+- [x] Complete Compose builds, health, synthetic workflow, restart, dependency loss/recovery.
+- [x] Guarded backup/archive/checksum/restore/invariants.
+- [x] Structured sanitized logs, bounded metrics, liveness/readiness.
+- [x] Authentication/CORS/security-header/authorization matrix.
+- [x] Deterministic OpenAPI and generated TypeScript client drift check.
+- [x] Backend/frontend/build/E2E/canonical acceptance green with fresh exact counts.
+- [x] Traceability complete; no secret/private/real-data/unsupported claim finding.
+- [x] No forbidden Git/publication/deployment/destructive/non-synthetic side effect.

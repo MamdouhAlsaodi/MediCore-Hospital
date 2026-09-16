@@ -220,6 +220,12 @@ This is the **formal stop-gate acceptance map**: every Definition-of-Done outcom
 
 - This section is the review: every row above maps to fresh evidence recorded at this documentation revision, the acceptance boundary is restated in `docs/implementation-status.md` (stop gate) and `docs/multi-branch-operations.md` §4, and the Task 15 report carries the verdict artifact. Acceptance authorizes only the synthetic Training/Portfolio, single-organization, multi-branch demonstration — no Pilot, later phase, real data, SaaS tenancy, clinical use, payment/insurer integration, PostgreSQL rehearsal, production deployment, or production-readiness/capacity claim (`docs/plan3.md` §10).
 
+## Phase 4 formal acceptance — production-like resilience (specs/004-production-like-resilience)
+
+Training/Portfolio, synthetic-only, non-clinical — same boundary as every section above. Phase 4 adds production-like engineering evidence (Flyway/PostgreSQL, containers, backup/restore, observability, hardened security, deterministic OpenAPI, containerized browser journey) and one canonical fail-fast local acceptance command, `scripts/phase4/acceptance.sh` (13 serial stages, exit 0 only when all pass; missing Docker/PostgreSQL capability exits 2/BLOCKED and stage 0 proves that negatively on every run). The complete FR-001..020 and SC-001..010 evidence map — exact source files, test classes, scripts, and runtime stages — is maintained in [`docs/evidence/phase4-verification.md`](evidence/phase4-verification.md); the fresh terminal totals are recorded in `docs/implementation-status.md` (Phase 4 section). No repository CI exists (no `.github/` at baseline), so the gate is documented as local-only; no CI approval, deployment, or release is authorized or claimed.
+
+Stop gate: the terminal canonical run plus the FR/SC evidence map constitute the Phase 4 acceptance review input for the owner. A PASS authorizes exactly the synthetic Training/Portfolio scope above — nothing else (forward-fix migration policy: no downgrade path is claimed; rollback is by restore from a verified backup archive).
+
 ## Verification commands
 
 Fresh record at this documentation revision (clean checkout at baseline `e7c63a0a84f016e6a4f345b9c7971be64eee0c0d`, one workstation, local Temurin 21 + Maven 3.9.11 toolchain; project-local `npm ci` from the committed lockfile only):

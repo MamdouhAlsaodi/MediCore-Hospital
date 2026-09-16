@@ -82,7 +82,12 @@ PGPASSWORD="$PG_PASSWORD" psql -h 127.0.0.1 -p "$PG_PORT" -U postgres -d "$PG_DB
 
 # --- Shipped migrations through the guarded wrapper -----------------------
 export PGPASSWORD="$PG_PASSWORD"
-command -v mvn >/dev/null 2>&1 || fail "mvn not available for the migration wrapper"
+# The wrapper resolves its own Maven toolchain (MVN override -> mvn ->
+# containerized Maven); fail closed here only when none can exist.
+if [ -z "${MVN:-}" ] && ! command -v mvn >/dev/null 2>&1; then
+  command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 \
+    || fail "no Maven toolchain (MVN/mvn/docker) for the migration wrapper"
+fi
 "$HERE/migrate-disposable-postgres.sh" 127.0.0.1 "$PG_PORT" "$PG_DB" postgres >/dev/null 2>&1 \
   || fail "guarded migration of the disposable target failed"
 

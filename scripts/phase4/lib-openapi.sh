@@ -49,7 +49,7 @@ openapi_ensure_jar() {
     else
         echo "lib-openapi: backend jar missing; building" >&2
     fi
-    (cd "$OPENAPI_REPO_ROOT/backend" && /tmp/medicore-verifier-bin/mvn -q -DskipTests package)
+    (cd "$OPENAPI_REPO_ROOT" && "$OPENAPI_REPO_ROOT/scripts/phase4/maven-toolchain.sh" -q -DskipTests package)
 }
 
 # ---------------------------------------------------------------------------

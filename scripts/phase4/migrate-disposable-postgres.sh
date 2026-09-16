@@ -33,7 +33,6 @@ fi
 
 # Fail closed when the postgres client tooling is absent.
 command -v psql >/dev/null 2>&1 || { echo "psql not found" >&2; exit 2; }
-command -v mvn >/dev/null 2>&1 || { echo "mvn not found" >&2; exit 2; }
 
 # Reachability probe (select 1) before handing the target to Flyway.
 export PGPASSWORD
@@ -43,8 +42,9 @@ if ! psql -h "$HOST" -p "$PORT" -U "$USER_" -d "$DB" -v ON_ERROR_STOP=1 -c "sele
 fi
 
 echo "migrate-disposable-postgres: applying shipped migrations to disposable target $HOST/$DB"
-cd "$BACKEND" || exit 2
-exec mvn -q flyway:migrate \
+# Shared toolchain resolution (MVN override -> mvn -> containerized Maven);
+# the helper targets this repository's backend module from the repo root.
+exec "$HERE/maven-toolchain.sh" -q flyway:migrate \
   -Dflyway.url="jdbc:postgresql://$HOST:$PORT/$DB" \
   -Dflyway.user="$USER_" \
   -Dflyway.password="$PGPASSWORD" \

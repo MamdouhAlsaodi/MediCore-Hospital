@@ -163,6 +163,9 @@ class MultiBranchOperationsApiTest {
     @Autowired
     BranchRepository branches;
 
+    @Autowired
+    com.mamtrex.hospital.organization.HospitalFacilityRepository hospitals;
+
     /** Direct seam for fabricating legacy/unassigned events exactly as unauthenticated bootstrap code does. */
     @Autowired
     AuditService auditService;
@@ -223,8 +226,9 @@ class MultiBranchOperationsApiTest {
     private void ensureAssignmentContext() {
         ensureOrganization();
         HospitalOrganization org = organizations.findByCode(TEST_ORG_CODE).orElseThrow();
-        Branch defaultBranch = branches.findByOrganizationIdAndCode(org.getId(), TEST_DEFAULT_BRANCH_CODE)
-                .orElseGet(() -> branches.save(new Branch(org, TEST_DEFAULT_BRANCH_CODE,
+        var fixtureHospital = com.mamtrex.hospital.organization.FixtureHospitals.ensureHospital(hospitals, org);
+        Branch defaultBranch = branches.findByHospitalIdAndCode(fixtureHospital.getId(), TEST_DEFAULT_BRANCH_CODE)
+                .orElseGet(() -> branches.save(new Branch(fixtureHospital, TEST_DEFAULT_BRANCH_CODE,
                         "Synthetic Default Branch", "0 Default Circle")));
         ensureAssignment(ADMIN, Role.ADMIN, AssignmentScope.ORGANIZATION, org, null);
         ensureAssignment(NURSE, Role.NURSE, AssignmentScope.BRANCH, org, defaultBranch);
@@ -237,6 +241,7 @@ class MultiBranchOperationsApiTest {
             case ORGANIZATION -> assignments
                     .findByAccountIdAndRoleAndScopeAndBranchIsNullAndDepartmentIsNull(account.getId(), role, scope)
                     .isPresent();
+            case HOSPITAL -> false;
             case BRANCH -> assignments
                     .findByAccountIdAndRoleAndScopeAndBranchId(account.getId(), role, scope, branch.getId())
                     .isPresent();
@@ -245,6 +250,7 @@ class MultiBranchOperationsApiTest {
         if (!present) {
             assignments.save(switch (scope) {
                 case ORGANIZATION -> ActingAssignment.organization(account, org, role);
+                case HOSPITAL -> throw new IllegalArgumentException("These suites seed organization/branch scopes only");
                 case BRANCH -> ActingAssignment.branch(account, org, role, branch);
                 case DEPARTMENT -> throw new IllegalArgumentException("These suites seed organization/branch scopes only");
             });
@@ -500,7 +506,7 @@ class MultiBranchOperationsApiTest {
         assertEquals(HttpStatus.CONFLICT, conflict.getStatusCode(), "the duplicate code must be refused");
         assertNotNull(conflict.getBody());
         assertEquals(API_ERROR_KEYS, conflict.getBody().keySet(), "the conflict must use the shared safe contract");
-        assertEquals("Branch code already exists in this organization", conflict.getBody().get("message"),
+        assertEquals("Branch code already exists in this hospital", conflict.getBody().get("message"),
                 "the conflict must carry the controlled service message, never persistence internals");
         assertEquals(auditBefore + 1, auditEventCount("Branch", "CREATE"),
                 "the refused duplicate must record no audit event");
@@ -744,12 +750,13 @@ class MultiBranchOperationsApiTest {
     void databaseUniqueConstraintsBackstopHierarchyUniqueness() {
         var org = organizations.findByCode(TEST_ORG_CODE).orElseThrow();
         String code = suffix + "-con";
-        branches.save(new Branch(org, code, "Constraint Branch", "1 Constraint Way"));
+        var constraintHospital = com.mamtrex.hospital.organization.FixtureHospitals.ensureHospital(hospitals, org);
+        branches.save(new Branch(constraintHospital, code, "Constraint Branch", "1 Constraint Way"));
         assertThrows(DataIntegrityViolationException.class,
-                () -> branches.save(new Branch(org, code, "Duplicate Branch", "2 Constraint Way")),
-                "the (organization_id, code) unique constraint must refuse the duplicate branch");
+                () -> branches.save(new Branch(constraintHospital, code, "Duplicate Branch", "2 Constraint Way")),
+                "the (hospital_id, code) unique constraint must refuse the duplicate branch");
 
-        Branch saved = branches.findByOrganizationIdAndCode(org.getId(), code).orElseThrow();
+        Branch saved = branches.findByHospitalIdAndCode(constraintHospital.getId(), code).orElseThrow();
         departments.save(new Department(saved, code + "-d", "Constraint Department", "s", "l"));
         assertThrows(DataIntegrityViolationException.class,
                 () -> departments.save(new Department(saved, code + "-d", "Duplicate Department", "s", "l")),
@@ -788,9 +795,14 @@ class MultiBranchOperationsApiTest {
         assertEquals(1, assignmentsView.size(), "the account's enabled assignments are listed");
         assertInstanceOf(Map.class, body.get("actingContext"));
         Map<?, ?> context = (Map<?, ?>) body.get("actingContext");
-        assertEquals(Set.of("username", "assignmentId", "role", "scope", "organizationId", "branchId",
-                "departmentId"), context.keySet(),
-                "the acting context is the strict allowlist value");
+        // Phase 5 (T051, packet MEDICORE-PHASE5-US2-COMPLETE-010): the acting
+        // context always names the concrete hospital of its bound branch, so
+        // the strict allowlist gains exactly one key over the Phase 4 shape.
+        assertEquals(Set.of("username", "assignmentId", "role", "scope", "organizationId", "hospitalId",
+                "branchId", "departmentId"), context.keySet(),
+                "the acting context is the strict hospital-aware allowlist value");
+        assertNotNull(context.get("hospitalId"),
+                "the acting hospital is always bound — never a free-form or absent claim");
         assertEquals(ADMIN, context.get("username"));
         assertEquals("ORGANIZATION", context.get("scope"));
         assertEquals("ADMIN", context.get("role"));
@@ -2376,6 +2388,7 @@ class MultiBranchOperationsApiTest {
         assignments.deleteAll();
         departments.deleteAll();
         branches.deleteAll();
+        hospitals.deleteAll();
         organizations.deleteAll();
     }
 
@@ -2393,7 +2406,8 @@ class MultiBranchOperationsApiTest {
     /** Loads a branch created by this test through the real repository. */
     private Branch branchByCode(String code) {
         var org = organizations.findByCode(TEST_ORG_CODE).orElseThrow();
-        return branches.findByOrganizationIdAndCode(org.getId(), code)
+        var hospital = com.mamtrex.hospital.organization.FixtureHospitals.ensureHospital(hospitals, org);
+        return branches.findByHospitalIdAndCode(hospital.getId(), code)
                 .orElseThrow(() -> new AssertionError("the test must have created branch " + code));
     }
 

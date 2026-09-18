@@ -75,6 +75,9 @@ class PostgresConcurrencyIntegrationTest {
     com.mamtrex.hospital.organization.BranchRepository branches;
 
     @Autowired
+    com.mamtrex.hospital.organization.HospitalFacilityRepository hospitals;
+
+    @Autowired
     AuditEventRepository auditEvents;
 
     @Autowired
@@ -112,9 +115,10 @@ class PostgresConcurrencyIntegrationTest {
         var org = organizations.findByCode(TEST_ORG_CODE).orElseGet(() ->
                 organizations.save(new com.mamtrex.hospital.organization.HospitalOrganization(
                         TEST_ORG_CODE, "Race Demo Organization")));
-        var branch = branches.findByOrganizationIdAndCode(org.getId(), "RACE-BR-001")
+        var fixtureHospital = com.mamtrex.hospital.organization.FixtureHospitals.ensureHospital(hospitals, org);
+        var branch = branches.findByHospitalIdAndCode(fixtureHospital.getId(), "RACE-BR-001")
                 .orElseGet(() -> branches.save(new com.mamtrex.hospital.organization.Branch(
-                        org, "RACE-BR-001", "Demo Race Branch", "1 Race Way")));
+                        fixtureHospital, "RACE-BR-001", "Demo Race Branch", "1 Race Way")));
         var admin = accounts.findByUsername(ADMIN).orElseThrow();
         if (assignments.findByAccountIdAndEnabledTrueOrderByRoleAscScopeAscIdAsc(admin.getId()).isEmpty()) {
             assignments.save(com.mamtrex.hospital.auth.ActingAssignment.organization(admin, org,

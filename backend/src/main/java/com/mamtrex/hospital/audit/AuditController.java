@@ -55,11 +55,15 @@ import java.util.stream.Stream;
   @RequestParam(required=false) String resourceType,@RequestParam(required=false) String actor,
   @RequestParam(required=false) String correlationId){
   ActingContext context=currentContext();
+  // Phase 5: HOSPITAL scope slices by its acting branch for now — the
+  // narrower, fail-narrow choice; the hospital-wide evidence slice is the
+  // explicit US7 task (T130/T131) and is deliberately not guessed here.
   Stream<AuditEvent> scoped=switch(context.scope()){
    case ORGANIZATION -> Stream.concat(
      repo.findByOrganizationIdOrderByOccurredAtDesc(context.organizationId()).stream(),
      repo.findByAssignmentIdIsNullAndOrganizationIdIsNullAndBranchIdIsNullAndDepartmentIdIsNullOrderByOccurredAtDesc().stream())
     .sorted(Comparator.comparing(AuditEvent::getOccurredAt).reversed());
+   case HOSPITAL -> repo.findByBranchIdOrderByOccurredAtDesc(context.branchId()).stream();
    case BRANCH -> repo.findByBranchIdOrderByOccurredAtDesc(context.branchId()).stream();
    case DEPARTMENT -> repo.findByDepartmentIdOrderByOccurredAtDesc(context.departmentId()).stream();
   };

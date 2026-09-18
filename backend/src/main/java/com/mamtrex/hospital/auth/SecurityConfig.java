@@ -121,6 +121,14 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/api/auth/login").permitAll()
                         .requestMatchers("/api/auth/**").authenticated()
                         .requestMatchers("/api/audit/**").hasRole("ADMIN")
+                        // Phase 5 US1 (T036): the network-hierarchy read is
+                        // reachable for every authenticated acting scope —
+                        // the response slice is derived per request from the
+                        // server-owned assignment (never client-supplied),
+                        // so the route only requires authentication and the
+                        // service owns narrowing. Ordered ahead of the
+                        // ADMIN-only /api/** catch-all.
+                        .requestMatchers(HttpMethod.GET, "/api/network/hierarchy").authenticated()
                         .requestMatchers(HttpMethod.GET, "/api/staff/**")
                             .hasAnyRole("ADMIN", "HR", "RECEPTIONIST")
                         .requestMatchers("/api/organization/**", "/api/branches/**")

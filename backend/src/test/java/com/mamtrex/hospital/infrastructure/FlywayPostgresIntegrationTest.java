@@ -32,9 +32,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class FlywayPostgresIntegrationTest {
 
-    /** Required table inventory of the accepted baseline (V1). */
+    /** Required table inventory of the accepted baseline (V1) plus the Phase 5 hospitals table (V5). */
     private static final List<String> REQUIRED_TABLES = List.of(
-            "hospital_organizations", "branches", "departments", "user_accounts",
+            "hospital_organizations", "hospitals", "branches", "departments", "user_accounts",
             "user_account_roles", "acting_assignments", "patients", "staff_members",
             "staff_availability", "beds", "appointments", "admissions",
             "admission_bed_assignments", "emergency_visits", "invoices", "audit_events",
@@ -43,9 +43,11 @@ class FlywayPostgresIntegrationTest {
             "medication_orders", "notifications", "nursing_observations",
             "radiology_orders", "shifts", "surgical_cases", "work_orders");
 
-    /** Required named constraints across baseline + phase constraints. */
+    /** Required named constraints across baseline + phase constraints + Phase 5 hierarchy. */
     private static final List<String> REQUIRED_CONSTRAINTS = List.of(
-            "uk_branches_organization_code", "uk_departments_branch_code",
+            "uk_branches_hospital_code", "uk_hospitals_organization_code",
+            "fk_branches_hospital", "ck_acting_assignments_scope_shape",
+            "uk_departments_branch_code",
             "uk_user_accounts_username", "uk_hospital_organizations_code",
             "uk_patients_medical_record_number", "uk_invoices_invoice_number",
             "uq_bed_branch_ward_room_number", "uq_assignment_active_admission",
@@ -54,11 +56,13 @@ class FlywayPostgresIntegrationTest {
             "ck_emergency_visits_status", "ck_invoices_status",
             "ck_beds_occupancy_status");
 
-    /** Required named indexes of the accepted read paths. */
+    /** Required named indexes of the accepted read paths plus the Phase 5 hospital paths. */
     private static final List<String> REQUIRED_INDEXES = List.of(
             "idx_patient_mrn", "idx_appointments_branch_professional",
             "idx_admissions_branch", "idx_emergency_visits_branch", "idx_invoices_branch",
-            "idx_audit_events_branch_occurred", "idx_staff_availability_branch_professional");
+            "idx_audit_events_branch_occurred", "idx_staff_availability_branch_professional",
+            "idx_branches_hospital", "idx_acting_assignments_hospital",
+            "idx_audit_events_hospital_occurred");
 
     private static Flyway flywayFor(PostgresContainerSupport.DisposableDatabase db) {
         return Flyway.configure()
@@ -72,7 +76,7 @@ class FlywayPostgresIntegrationTest {
     void migratesEmptyDatabaseToCurrentVersion() throws Exception {
         var db = PostgresContainerSupport.newIsolatedDatabase();
         MigrateResult result = flywayFor(db).migrate();
-        assertEquals(4, result.migrationsExecuted, "V1..V4 must apply to an empty database");
+        assertEquals(5, result.migrationsExecuted, "V1..V5 must apply to an empty database");
         assertRequiredSchemaObjects(db);
     }
 
@@ -81,7 +85,7 @@ class FlywayPostgresIntegrationTest {
     void secondStartupAppliesZeroPendingMigrations() {
         var db = PostgresContainerSupport.newIsolatedDatabase();
         MigrateResult first = flywayFor(db).migrate();
-        assertEquals(4, first.migrationsExecuted);
+        assertEquals(5, first.migrationsExecuted);
         MigrateResult second = flywayFor(db).migrate();
         assertEquals(0, second.migrationsExecuted, "a restart must reapply nothing");
         assertEquals(0, flywayFor(db).info().pending().length, "no pending migrations may remain");
@@ -213,8 +217,12 @@ class FlywayPostgresIntegrationTest {
                 assertTrue(count(connection, "select count(*) from pg_indexes where indexname = ?", index) >= 1,
                         "required index missing: " + index);
             }
-            assertTrue(count(connection, "select count(*) from flyway_schema_history where success", null) >= 4,
+            assertTrue(count(connection, "select count(*) from flyway_schema_history where success", null) >= 5,
                     "flyway history must record the applied migrations");
+            // Phase 5 (V5): the null-safe assignment uniqueness backstop exists.
+            assertTrue(count(connection, "select count(*) from pg_indexes where indexname = "
+                    + "'uq_acting_assignments_scope_logical'", null) == 1,
+                    "the null-safe assignment uniqueness backstop must exist");
             // Phase 5 (V4): the concurrency backstop indexes exist.
             assertTrue(count(connection, "select count(*) from pg_indexes where indexname = "
                     + "'uq_appointments_active_window'", null) == 1,
@@ -263,6 +271,7 @@ class FlywayPostgresIntegrationTest {
     /** Deterministic Phase 3-shaped synthetic cohort; synthetic values only. */
     private static void seedRehearsalCohort(PostgresContainerSupport.DisposableDatabase db) throws Exception {
         String orgId = "00000000-0000-0000-0001-000000000001";
+        String hospitalId = "00000000-0000-0000-0001-0000000000a1";
         String branchId = "00000000-0000-0000-0001-000000000002";
         String departmentId = "00000000-0000-0000-0001-000000000003";
         String accountId = "00000000-0000-0000-0001-000000000004";
@@ -283,16 +292,20 @@ class FlywayPostgresIntegrationTest {
             String[] statements = {
                 "insert into hospital_organizations (id, code, name, created_at, updated_at, version) "
                         + "values ('" + orgId + "'::uuid, 'DEMO-ORG-001', 'Demo Synthetic Hospital', now(), now(), 0)",
-                "insert into branches (id, organization_id, code, name, location_label, active, created_at, updated_at, version) "
-                        + "values ('" + branchId + "'::uuid, '" + orgId + "'::uuid, 'DEMO-BR-001', 'Demo Main Branch', '1 Demo Campus', true, now(), now(), 0)",
+                "insert into hospitals (id, organization_id, code, name, region_label, time_zone, active, "
+                        + "created_at, updated_at, version) values ('" + hospitalId + "'::uuid, '" + orgId
+                        + "'::uuid, 'LEGACY-HOSPITAL-001', 'Legacy Synthetic Hospital', 'Legacy Region', 'UTC', "
+                        + "true, now(), now(), 0)",
+                "insert into branches (id, organization_id, hospital_id, code, name, location_label, active, created_at, updated_at, version) "
+                        + "values ('" + branchId + "'::uuid, '" + orgId + "'::uuid, '" + hospitalId + "'::uuid, 'DEMO-BR-001', 'Demo Main Branch', '1 Demo Campus', true, now(), now(), 0)",
                 "insert into departments (id, branch_id, code, name, specialty, location, created_at, updated_at, version) "
                         + "values ('" + departmentId + "'::uuid, '" + branchId + "'::uuid, 'DEMO-DEP-0001', 'Demo Internal Medicine', 'internal medicine', 'Demo Tower A', now(), now(), 0)",
                 "insert into user_accounts (id, username, password_hash, enabled, created_at, updated_at, version) "
                         + "values ('" + accountId + "'::uuid, 'demo-review', 'disposable-bcrypt-hash-not-a-credential', true, now(), now(), 0)",
                 "insert into user_account_roles (user_account_id, roles) values ('" + accountId + "'::uuid, 'DOCTOR')",
-                "insert into acting_assignments (id, account_id, organization_id, branch_id, role, scope, enabled, created_at, updated_at, version) "
+                "insert into acting_assignments (id, account_id, organization_id, hospital_id, branch_id, role, scope, enabled, created_at, updated_at, version) "
                         + "values ('" + assignmentId + "'::uuid, '" + accountId + "'::uuid, '" + orgId + "'::uuid, '"
-                        + branchId + "'::uuid, 'DOCTOR', 'BRANCH', true, now(), now(), 0)",
+                        + hospitalId + "'::uuid, '" + branchId + "'::uuid, 'DOCTOR', 'BRANCH', true, now(), now(), 0)",
                 "insert into patients (id, branch_id, medical_record_number, full_name, date_of_birth, active, created_at, updated_at, version) "
                         + "values ('" + patientA + "'::uuid, '" + branchId + "'::uuid, 'DEMO-MRN-0001', 'Demo Patient Alpha', '1991-02-03', true, now(), now(), 0)",
                 "insert into patients (id, branch_id, medical_record_number, full_name, date_of_birth, active, created_at, updated_at, version) "

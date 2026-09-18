@@ -9,7 +9,7 @@ MediCore is an educational, non-clinical system using synthetic data only. Work 
 Authentication, acting assignment, organization/branch scope, lifecycle transitions, audit context, ownership, and data visibility remain server-authoritative. Client-provided identifiers never widen authority. Cross-branch records remain hidden through scoped persistence and service checks. Every sensitive mutation remains transactional and auditable.
 
 ### III. Test-First, PostgreSQL-Real Verification
-Every behavior change starts with a failing focused test. Persistence, migrations, constraints, concurrency, backup/restore, and recovery claims require real disposable PostgreSQL evidence; H2-only proof is insufficient for Phase 4. Existing H2 developer flow remains lightweight and green unless an explicitly documented migration decision replaces it.
+Every behavior change starts with a failing focused test. Persistence, migrations, constraints, concurrency, backup/restore, and recovery claims require real disposable PostgreSQL evidence; H2-only proof is insufficient for Phase 4 and Phase 5 persistence claims. Existing H2 developer flow remains lightweight and green unless an explicitly documented migration decision replaces it.
 
 ### IV. Forward-Only Data Safety
 Schema evolution uses versioned Flyway migrations. No startup `ddl-auto=update` may mutate production-like PostgreSQL. Migration rehearsal starts from a known synthetic baseline, validates counts/relationships/invariants, and proves restart idempotency. Destructive operations target only explicitly named disposable databases and fail closed otherwise.
@@ -33,18 +33,25 @@ Implement dependency-ordered tasks with narrow responsibility, SOLID design, no 
 - Do not invent retention periods, legal obligations, clinical policies, RPO/RTO promises, or production thresholds.
 - No credentials, private addresses, machine-specific absolute paths, or generated secrets in tracked files.
 
+## Phase 5 Amendment (narrow, owner-approved 2026-09-16)
+
+- The single hierarchy boundary for Phase 5 is **one synthetic `HospitalOrganization` network that may contain multiple synthetic hospitals and synthetic branches**. For Phase 5 work this replaces the Phase 4 one-organization/three-branch hierarchy constraint; it changes nothing retroactively for accepted Phase 4 evidence.
+- This hierarchy is NOT SaaS or customer tenancy: there is exactly one synthetic network, no customer provisioning, no billing relationship, and no per-customer isolation model. The Training/Portfolio, non-clinical, synthetic-only boundary is unchanged.
+- All other accepted principles remain in force without weakening: server-owned authority and isolation, PostgreSQL-real verification, forward-only migration safety, observable/secure defaults, contract-first cross-client changes, and small, reversible, evidence-bearing steps.
+- No credentials, private addresses, machine-specific absolute paths, or generated secrets in tracked files (unchanged).
+
 ## Development Workflow and Gates
 
 1. Capture baseline status and run existing backend/frontend/build gates.
 2. Use RED → GREEN → REFACTOR for each code task.
 3. Use only disposable, explicitly named PostgreSQL databases for migration/destructive tests.
 4. Keep migration, security, and cross-client contract changes serialized.
-5. After each task, update the Phase 4 report with paths, commands, counts, and verdict.
+5. After each task, update the phase execution report (Phase 4 or Phase 5) with paths, commands, counts, and verdict.
 6. Final acceptance requires clean backend tests, frontend tests/build, PostgreSQL integration, migration rehearsal, backup/restore, Compose health, container journey, OpenAPI drift, security matrix, and documentation traceability.
 7. Git commit, push, PR, deployment, or release are outside this execution unless separately authorized.
 
 ## Governance
 
-This constitution governs Phase 4 artifacts and implementation. The owner's latest explicit instruction supersedes it. Amendments require a documented reason and must preserve the Training/Portfolio and synthetic-only boundary. Complexity requires written justification in the plan. A passing test alone does not authorize publication or deployment.
+This constitution governs Phase 4 and Phase 5 artifacts and implementation. The owner's latest explicit instruction supersedes it. Amendments require a documented reason and must preserve the Training/Portfolio and synthetic-only boundary. Complexity requires written justification in the plan. A passing test alone does not authorize publication or deployment.
 
-**Version**: 1.0.0 | **Ratified**: 2026-09-14 | **Last Amended**: 2026-09-14
+**Version**: 1.1.0 | **Ratified**: 2026-09-14 | **Last Amended**: 2026-09-16

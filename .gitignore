@@ -33,6 +33,9 @@ backend/data/
 # Phase 4 local operational evidence (never tracked)
 /artifacts/
 
+# Phase 5 local execution evidence (never tracked; source and specs stay tracked)
+/artifacts/phase5/
+
 # Local runtime env files and Phase 4 backup/restore outputs (never tracked)
 *.env.local
 runtime.env

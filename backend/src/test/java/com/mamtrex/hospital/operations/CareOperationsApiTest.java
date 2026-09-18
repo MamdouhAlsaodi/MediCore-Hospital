@@ -176,6 +176,9 @@ class CareOperationsApiTest {
     @Autowired
     BranchRepository branches;
 
+    @Autowired
+    com.mamtrex.hospital.organization.HospitalFacilityRepository hospitals;
+
     /** Unique synthetic suffix per test instance keeps every record disposable. */
     private final String suffix = UUID.randomUUID().toString().substring(0, 8);
 
@@ -206,8 +209,9 @@ class CareOperationsApiTest {
         record(account(RECEPTIONIST_USER, Role.RECEPTIONIST));
         HospitalOrganization org = organizations.findByCode(TEST_ORG_CODE).orElseGet(() ->
                 organizations.save(new HospitalOrganization(TEST_ORG_CODE, "Synthetic CareOps Hospital")));
-        Branch branch = branches.findByOrganizationIdAndCode(org.getId(), TEST_BRANCH_CODE).orElseGet(() ->
-                branches.save(new Branch(org, TEST_BRANCH_CODE, "Synthetic CareOps Branch", "1 CareOps Way")));
+        var fixtureHospital = com.mamtrex.hospital.organization.FixtureHospitals.ensureHospital(hospitals, org);
+        Branch branch = branches.findByHospitalIdAndCode(fixtureHospital.getId(), TEST_BRANCH_CODE).orElseGet(() ->
+                branches.save(new Branch(fixtureHospital, TEST_BRANCH_CODE, "Synthetic CareOps Branch", "1 CareOps Way")));
         ensureAssignment(ADMIN_USER, Role.ADMIN, AssignmentScope.ORGANIZATION, org, null);
         ensureAssignment(BILLING_USER, Role.BILLING, AssignmentScope.BRANCH, org, branch);
         ensureAssignment(DOCTOR_USER, Role.DOCTOR, AssignmentScope.BRANCH, org, branch);
@@ -222,6 +226,7 @@ class CareOperationsApiTest {
             case ORGANIZATION -> assignments
                     .findByAccountIdAndRoleAndScopeAndBranchIsNullAndDepartmentIsNull(account.getId(), role, scope)
                     .isPresent();
+            case HOSPITAL -> false;
             case BRANCH -> assignments
                     .findByAccountIdAndRoleAndScopeAndBranchId(account.getId(), role, scope, branch.getId())
                     .isPresent();
@@ -230,6 +235,7 @@ class CareOperationsApiTest {
         if (!present) {
             assignments.save(switch (scope) {
                 case ORGANIZATION -> ActingAssignment.organization(account, org, role);
+                case HOSPITAL -> throw new IllegalArgumentException("These suites seed organization/branch scopes only");
                 case BRANCH -> ActingAssignment.branch(account, org, role, branch);
                 case DEPARTMENT -> throw new IllegalArgumentException("These suites seed organization/branch scopes only");
             });
@@ -1426,8 +1432,9 @@ class CareOperationsApiTest {
         assertNotNull(beforeBody, "dashboard response must carry a body");
         assertEquals(BRANCH_SUMMARY_KEYS, beforeBody.keySet(),
                 "the dashboard alias must answer exactly the Task 10 typed branch-summary contract");
-        Branch actingBranch = branches.findByOrganizationIdAndCode(
-                organizations.findByCode(TEST_ORG_CODE).orElseThrow().getId(), TEST_BRANCH_CODE).orElseThrow();
+        Branch actingBranch = branches.findByHospitalIdAndCode(
+                com.mamtrex.hospital.organization.FixtureHospitals.ensureHospital(hospitals,
+                        organizations.findByCode(TEST_ORG_CODE).orElseThrow()).getId(), TEST_BRANCH_CODE).orElseThrow();
         assertEquals(actingBranch.getId().toString(), beforeBody.get("branchId"),
                 "branchId must be the server-owned branch row of the acting context");
         assertEquals(actingBranch.getCode(), beforeBody.get("branchCode"),
@@ -1654,8 +1661,9 @@ class CareOperationsApiTest {
                 visitId, Set.of("created", "status: IN_TREATMENT", "status: CLOSED"),
                 invoiceId, Set.of("created", "status: ISSUED", "status: PAID"));
         Set<String> allowedActors = Set.of(ADMIN_USER, NURSE_USER, DOCTOR_USER, BILLING_USER);
-        String actingBranchId = branches.findByOrganizationIdAndCode(
-                organizations.findByCode(TEST_ORG_CODE).orElseThrow().getId(), TEST_BRANCH_CODE)
+        String actingBranchId = branches.findByHospitalIdAndCode(
+                com.mamtrex.hospital.organization.FixtureHospitals.ensureHospital(hospitals,
+                        organizations.findByCode(TEST_ORG_CODE).orElseThrow()).getId(), TEST_BRANCH_CODE)
                 .orElseThrow().getId().toString();
         for (Map<String, Object> event : swept) {
             String resourceId = String.valueOf(event.get("resourceId"));

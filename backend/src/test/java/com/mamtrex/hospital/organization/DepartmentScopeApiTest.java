@@ -89,6 +89,9 @@ class DepartmentScopeApiTest {
     BranchRepository branches;
 
     @Autowired
+    com.mamtrex.hospital.organization.HospitalFacilityRepository hospitals;
+
+    @Autowired
     com.mamtrex.hospital.department.DepartmentRepository departments;
 
     /** Class-stable so the acting assignments bind to the same branches across test methods. */
@@ -114,12 +117,13 @@ class DepartmentScopeApiTest {
         org = organizations.findByCode(TEST_ORG_CODE).orElseGet(() ->
                 organizations.save(new com.mamtrex.hospital.organization.HospitalOrganization(
                         TEST_ORG_CODE, "Department Scope Demo Organization")));
-        branchA = branches.findByOrganizationIdAndCode(org.getId(), suffix + "-a")
+        var fixtureHospital = com.mamtrex.hospital.organization.FixtureHospitals.ensureHospital(hospitals, org);
+        branchA = branches.findByHospitalIdAndCode(fixtureHospital.getId(), suffix + "-a")
                 .orElseGet(() -> branches.save(new com.mamtrex.hospital.organization.Branch(
-                        org, suffix + "-a", "Demo Branch A", "1 Demo Campus")));
-        branchB = branches.findByOrganizationIdAndCode(org.getId(), suffix + "-b")
+                        fixtureHospital, suffix + "-a", "Demo Branch A", "1 Demo Campus")));
+        branchB = branches.findByHospitalIdAndCode(fixtureHospital.getId(), suffix + "-b")
                 .orElseGet(() -> branches.save(new com.mamtrex.hospital.organization.Branch(
-                        org, suffix + "-b", "Demo Branch B", "2 Demo Campus")));
+                        fixtureHospital, suffix + "-b", "Demo Branch B", "2 Demo Campus")));
         UserAccount admin = accounts.findByUsername(ADMIN).orElseThrow();
         if (assignments.findByAccountIdAndEnabledTrueOrderByRoleAscScopeAscIdAsc(admin.getId()).isEmpty()) {
             assignments.save(ActingAssignment.organization(admin, org, Role.ADMIN));

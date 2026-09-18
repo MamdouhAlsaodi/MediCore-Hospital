@@ -16,6 +16,8 @@ import { fetchAppointments, createAppointment } from '../features/appointments/a
 import { fetchPatients, createPatient, updatePatient } from '../features/patients/patientApi.js';
 import { fetchBranchSummary, fetchNetworkSummary } from '../features/dashboard/dashboardApi.js';
 import { switchContext } from '../features/branches/actingContextApi.js';
+import { fetchNetworkHierarchy } from '../features/network/networkApi.js';
+import { getAuthorizedNetworkHierarchy } from '../generated/api/index';
 
 // T072 (plan Task 10 step 6; FR-016/FR-017): transport-contract tests at the
 // browser `fetch` boundary. Every demonstrated route family (auth, patients,
@@ -265,5 +267,98 @@ describe('generated-contract transport (T072)', () => {
     const error = await apiFetch('/api/patients', { token: 'tok' }).catch((e) => e);
     expect(error).toBeInstanceOf(ApiError);
     expect(error.status).toBe(504);
+  });
+
+  // ------------------------------------------------------------------
+  // Phase 5 US1 (T042): the authorized network-hierarchy read rides the
+  // generated descriptor and parses into the strict slice shape.
+  // ------------------------------------------------------------------
+
+  const HIERARCHY = {
+    organizationId: 'org-1',
+    organizationCode: 'DEMO-ORG-001',
+    organizationName: 'Demo Synthetic Hospital',
+    hospitals: [
+      {
+        id: 'hosp-1', code: 'DEMO-HOSP-001', name: 'Demo Legacy Hospital',
+        regionLabel: 'Demo Region', timeZone: 'UTC', active: true,
+        branches: [
+          { id: 'br-1', hospitalId: 'hosp-1', code: 'DEMO-BR-001', name: 'Demo Main Branch',
+            timeZone: 'UTC', active: true },
+          { id: 'br-2', hospitalId: 'hosp-1', code: 'DEMO-BR-002', name: 'Demo North Branch',
+            timeZone: 'America/New_York', active: true },
+        ],
+      },
+      {
+        id: 'hosp-2', code: 'DEMO-HOSP-002', name: 'Demo Riverside Hospital',
+        regionLabel: 'Demo Riverside Region', timeZone: 'America/New_York', active: true,
+        branches: [],
+      },
+    ],
+  };
+
+  it('network hierarchy sends the generated GET /api/network/hierarchy contract', async () => {
+    stubFetch(() => jsonResponse(HIERARCHY));
+    const hierarchy = await fetchNetworkHierarchy({ token: 'synthetic-token' });
+    expect(hierarchy.organizationId).toBe('org-1');
+    expect(hierarchy.hospitals).toHaveLength(2);
+    expect(hierarchy.hospitals[0].branches[0].timeZone).toBe('UTC');
+    const [call] = calls();
+    expect(call.path).toBe('/api/network/hierarchy');
+    expect(call.options.method).toBe('GET');
+    expect(call.options.headers.Authorization).toBe('Bearer synthetic-token');
+    expect(call.body).toBeUndefined();
+  });
+
+  it('network hierarchy parses into the strict allowlist and drops unknown keys', async () => {
+    stubFetch(() => jsonResponse({
+      ...HIERARCHY,
+      internalSauce: 'leak',
+      hospitals: [{ ...HIERARCHY.hospitals[0], secretRow: true, branches: HIERARCHY.hospitals[0].branches }],
+    }));
+    const hierarchy = await fetchNetworkHierarchy({ token: 'tok' });
+    expect(Object.keys(hierarchy).sort()).toEqual(
+      ['hospitals', 'organizationCode', 'organizationId', 'organizationName']);
+    expect(Object.keys(hierarchy.hospitals[0]).sort()).toEqual(
+      ['active', 'branches', 'code', 'id', 'name', 'regionLabel', 'timeZone']);
+    expect(Object.keys(hierarchy.hospitals[0].branches[0]).sort()).toEqual(
+      ['active', 'code', 'hospitalId', 'id', 'name', 'timeZone']);
+  });
+
+  it('network hierarchy keeps explicit false active flags and empty branch lists', async () => {
+    stubFetch(() => jsonResponse({
+      ...HIERARCHY,
+      hospitals: [{ ...HIERARCHY.hospitals[1], active: false }],
+    }));
+    const hierarchy = await fetchNetworkHierarchy({ token: 'tok' });
+    expect(hierarchy.hospitals[0].active).toBe(false);
+    expect(hierarchy.hospitals[0].branches).toEqual([]);
+  });
+
+  it.each([
+    ['a malformed hierarchy payload', () => jsonResponse({ organizationId: 'org-1' })],
+    ['a non-object hierarchy payload', () => jsonResponse([HIERARCHY])],
+    ['a hospital missing its regionLabel', () => jsonResponse({
+      ...HIERARCHY,
+      hospitals: [{ ...HIERARCHY.hospitals[1], regionLabel: undefined }],
+    })],
+    ['a branch whose hospitalId points elsewhere', () => jsonResponse({
+      ...HIERARCHY,
+      hospitals: [{
+        ...HIERARCHY.hospitals[0],
+        branches: [{ ...HIERARCHY.hospitals[0].branches[0], hospitalId: 'hosp-2' }],
+      }],
+    })],
+  ])('network hierarchy refuses %s instead of improvising', async (_name, handler) => {
+    stubFetch(handler);
+    await expect(fetchNetworkHierarchy({ token: 'tok' }))
+      .rejects.toMatchObject({ name: 'ApiError', status: 500 });
+  });
+
+  it('a denied hierarchy request maps through the shared boundary exactly once', async () => {
+    stubFetch(() => jsonResponse({ error: 'access denied' }, 403));
+    await expect(fetchNetworkHierarchy({ token: 'tok' }))
+      .rejects.toMatchObject({ name: 'ApiError', status: 403 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

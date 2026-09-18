@@ -8,6 +8,8 @@ import com.mamtrex.hospital.auth.AssignmentScope;
 import com.mamtrex.hospital.auth.Role;
 import com.mamtrex.hospital.organization.Branch;
 import com.mamtrex.hospital.organization.BranchRepository;
+import com.mamtrex.hospital.organization.FixtureHospitals;
+import com.mamtrex.hospital.organization.HospitalFacilityRepository;
 import com.mamtrex.hospital.organization.HospitalOrganization;
 import com.mamtrex.hospital.organization.HospitalOrganizationRepository;
 import com.mamtrex.hospital.auth.UserAccount;
@@ -154,6 +156,9 @@ class DashboardApiTest {
     @Autowired
     BranchRepository branches;
 
+    @Autowired
+    HospitalFacilityRepository hospitals;
+
     /** Pins the server's explicit clock so the today boundary is deterministic. */
     @TestConfiguration(proxyBeanMethods = false)
     static class FixedDashboardClock {
@@ -187,8 +192,9 @@ class DashboardApiTest {
         }
         HospitalOrganization org = organizations.findByCode(TEST_ORG_CODE).orElseGet(() ->
                 organizations.save(new HospitalOrganization(TEST_ORG_CODE, "Synthetic Dashboard Hospital")));
-        Branch branch = branches.findByOrganizationIdAndCode(org.getId(), TEST_BRANCH_CODE).orElseGet(() ->
-                branches.save(new Branch(org, TEST_BRANCH_CODE, "Synthetic Dashboard Branch", "1 Dashboard Way")));
+        var hospital = FixtureHospitals.ensureHospital(hospitals, org);
+        Branch branch = branches.findByHospitalIdAndCode(hospital.getId(), TEST_BRANCH_CODE).orElseGet(() ->
+                branches.save(new Branch(hospital, TEST_BRANCH_CODE, "Synthetic Dashboard Branch", "1 Dashboard Way")));
         ensureAssignment(ADMIN_USER, Role.ADMIN, AssignmentScope.ORGANIZATION, org, null);
         ensureAssignment(BILLING_USER, Role.BILLING, AssignmentScope.BRANCH, org, branch);
         ensureAssignment(NURSE_USER, Role.NURSE, AssignmentScope.ORGANIZATION, org, null);
@@ -201,6 +207,7 @@ class DashboardApiTest {
             case ORGANIZATION -> assignments
                     .findByAccountIdAndRoleAndScopeAndBranchIsNullAndDepartmentIsNull(account.getId(), role, scope)
                     .isPresent();
+            case HOSPITAL -> false;
             case BRANCH -> assignments
                     .findByAccountIdAndRoleAndScopeAndBranchId(account.getId(), role, scope, branch.getId())
                     .isPresent();
@@ -209,6 +216,7 @@ class DashboardApiTest {
         if (!present) {
             assignments.save(switch (scope) {
                 case ORGANIZATION -> ActingAssignment.organization(account, org, role);
+                case HOSPITAL -> throw new IllegalArgumentException("These suites seed organization/branch scopes only");
                 case BRANCH -> ActingAssignment.branch(account, org, role, branch);
                 case DEPARTMENT -> throw new IllegalArgumentException("These suites seed organization/branch scopes only");
             });
@@ -340,8 +348,9 @@ class DashboardApiTest {
     @Order(4)
     void branchSummaryIsolatesBranchesAndLegacyRows() {
         HospitalOrganization org = organizations.findByCode(TEST_ORG_CODE).orElseThrow();
-        Branch east = branches.findByOrganizationIdAndCode(org.getId(), "DASHBOARD-BR-EAST-" + suffix)
-                .orElseGet(() -> branches.save(new Branch(org, "DASHBOARD-BR-EAST-" + suffix,
+        var eastHospital = FixtureHospitals.ensureHospital(hospitals, org);
+        Branch east = branches.findByHospitalIdAndCode(eastHospital.getId(), "DASHBOARD-BR-EAST-" + suffix)
+                .orElseGet(() -> branches.save(new Branch(eastHospital, "DASHBOARD-BR-EAST-" + suffix,
                         "Synthetic East Branch " + suffix, "9 East Way")));
         Branch defaultBranch = defaultBranch();
 
@@ -479,12 +488,14 @@ class DashboardApiTest {
 
     private Branch defaultBranch() {
         HospitalOrganization org = organizations.findByCode(TEST_ORG_CODE).orElseThrow();
-        return branches.findByOrganizationIdAndCode(org.getId(), TEST_BRANCH_CODE).orElseThrow();
+        var fixtureHospital = FixtureHospitals.ensureHospital(hospitals, org);
+        return branches.findByHospitalIdAndCode(fixtureHospital.getId(), TEST_BRANCH_CODE).orElseThrow();
     }
 
     private Branch createBranch(String code) {
         HospitalOrganization org = organizations.findByCode(TEST_ORG_CODE).orElseThrow();
-        return branches.save(new Branch(org, code, "Synthetic Branch " + code, "8 Zero Way"));
+        var hospital = FixtureHospitals.ensureHospital(hospitals, org);
+        return branches.save(new Branch(hospital, code, "Synthetic Branch " + code, "8 Zero Way"));
     }
 
     /** The exact synthetic cohort: whole-row totals plus one row per status bucket and bed state. */

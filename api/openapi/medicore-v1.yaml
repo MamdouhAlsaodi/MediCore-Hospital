@@ -464,8 +464,9 @@ paths:
                 $ref: "#/components/schemas/Session"
         "403":
           description: "The switch to the requested assignment is refused (unknown,\
-            \ disabled, or out-of-scope target). Shared ApiError body with a controlled,\
-            \ non-widening message."
+            \ disabled, or out-of-scope target, or a missing/foreign/inactive hospital\
+            \ or branch target). Shared ApiError body with a controlled, non-widening\
+            \ message."
           content:
             application/json:
               schema:
@@ -696,6 +697,42 @@ paths:
         "400":
           description: "Malformed request body, malformed field value, or a failed\
             \ validation constraint (shared ApiError body)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /api/network/hierarchy:
+    get:
+      tags:
+      - network-hierarchy-controller
+      summary: The authorized network hierarchy of the acting context
+      description: "Derives the network → hospital → branch slice from the server-owned\
+        \ acting assignment and current hierarchy state only. The request takes no\
+        \ identifiers: client-supplied hospital or branch references are never accepted\
+        \ as authorization evidence and can never widen the slice. Inactive ancestors\
+        \ fail closed."
+      operationId: getAuthorizedNetworkHierarchy
+      responses:
+        "200":
+          description: "Hierarchy filtered to the server-derived acting authority:\
+            \ exactly the authorized hospitals and their authorized branches in deterministic\
+            \ order (network scope: all active facilities; hospital scope: the acting\
+            \ hospital; branch/department scope: the acting branch inside its hospital)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NetworkHierarchy"
+        "401":
+          description: "Missing, invalid, or expired bearer token; the acting session\
+            \ is gone. One generic non-enumerating error body."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "403":
+          description: The acting authority cannot resolve an authorized hierarchy
+            slice (for example an inactive ancestor). One generic non-enumerating
+            error body that discloses nothing about which hierarchy rows exist.
           content:
             application/json:
               schema:
@@ -1244,6 +1281,9 @@ components:
         organizationId:
           type: string
           format: uuid
+        hospitalId:
+          type: string
+          format: uuid
         branchId:
           type: string
           format: uuid
@@ -1264,6 +1304,11 @@ components:
           type: string
           format: uuid
         organizationLabel:
+          type: string
+        hospitalId:
+          type: string
+          format: uuid
+        hospitalLabel:
           type: string
         branchId:
           type: string
@@ -1300,6 +1345,9 @@ components:
       type: object
       properties:
         assignmentId:
+          type: string
+          format: uuid
+        hospitalId:
           type: string
           format: uuid
         branchId:
@@ -1381,6 +1429,57 @@ components:
       - admittedAt
       - patientId
       - reason
+    BranchView:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        hospitalId:
+          type: string
+          format: uuid
+        code:
+          type: string
+        name:
+          type: string
+        timeZone:
+          type: string
+        active:
+          type: boolean
+    HospitalView:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        code:
+          type: string
+        name:
+          type: string
+        regionLabel:
+          type: string
+        timeZone:
+          type: string
+        active:
+          type: boolean
+        branches:
+          type: array
+          items:
+            $ref: "#/components/schemas/BranchView"
+    NetworkHierarchy:
+      type: object
+      properties:
+        organizationId:
+          type: string
+          format: uuid
+        organizationCode:
+          type: string
+        organizationName:
+          type: string
+        hospitals:
+          type: array
+          items:
+            $ref: "#/components/schemas/HospitalView"
     BranchSummary:
       type: object
       properties:

@@ -155,14 +155,42 @@ function jsonResponse(payload, status = 200) {
   });
 }
 
-// Server-issued assignment views (docs/plan3.md Task 3 response shape).
+// Server-issued assignment views (docs/plan3.md Task 3 response shape,
+// extended with the hospital coordinates of Phase 5 T051): fixed scopes
+// (HOSPITAL/BRANCH/DEPARTMENT) own their hospital; an ORGANIZATION
+// assignment has none — its acting hospital is branch-specific.
 const ORG_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const HOSPITAL_ID = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee01';
 const EAST_BRANCH_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const WEST_BRANCH_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 
-// Server-owned organization view (GET /api/organization response shape): the
-// ACTIVE branches in server order. The selector's ORGANIZATION targets and
-// the honest whoami branch label come from this allowlist and nowhere else.
+// Server-derived network hierarchy (GET /api/network/hierarchy response
+// shape, parsed by networkApi.js): the authorized slice in server order.
+// The selector's ORGANIZATION/HOSPITAL targets and the whoami hospital and
+// branch names come from this slice and nowhere else.
+const HIERARCHY_VIEW = {
+  organizationId: ORG_ID,
+  organizationCode: 'MHG',
+  organizationName: 'Main Hospital Group',
+  hospitals: [
+    {
+      id: HOSPITAL_ID,
+      code: 'DEMO-C',
+      name: 'Demo Central Hospital',
+      regionLabel: 'Central Region',
+      timeZone: 'UTC',
+      active: true,
+      branches: [
+        { id: EAST_BRANCH_ID, hospitalId: HOSPITAL_ID, code: 'EAST', name: 'East Clinic', timeZone: 'UTC', active: true },
+        { id: WEST_BRANCH_ID, hospitalId: HOSPITAL_ID, code: 'WEST', name: 'West Clinic', timeZone: 'UTC', active: true },
+      ],
+    },
+  ],
+};
+
+// Server-owned organization view (GET /api/organization response shape):
+// kept only because the transport adapter remains tested; the shell no
+// longer consumes it (Phase 5 T058 moved the selector onto the hierarchy).
 const ORGANIZATION_VIEW = {
   id: ORG_ID,
   code: 'MHG',
@@ -179,6 +207,8 @@ const ASSIGNMENTS = {
     scope: 'BRANCH',
     organizationId: ORG_ID,
     organizationLabel: 'Main Hospital Group',
+    hospitalId: HOSPITAL_ID,
+    hospitalLabel: 'Demo Central Hospital',
     branchId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
     branchLabel: 'East Clinic',
     departmentId: null,
@@ -191,6 +221,8 @@ const ASSIGNMENTS = {
     scope: 'DEPARTMENT',
     organizationId: ORG_ID,
     organizationLabel: 'Main Hospital Group',
+    hospitalId: HOSPITAL_ID,
+    hospitalLabel: 'Demo Central Hospital',
     branchId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
     branchLabel: 'West Clinic',
     departmentId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
@@ -203,6 +235,8 @@ const ASSIGNMENTS = {
     scope: 'ORGANIZATION',
     organizationId: ORG_ID,
     organizationLabel: 'Main Hospital Group',
+    hospitalId: null,
+    hospitalLabel: null,
     branchId: null,
     branchLabel: null,
     departmentId: null,
@@ -215,6 +249,8 @@ const ASSIGNMENTS = {
     scope: 'BRANCH',
     organizationId: ORG_ID,
     organizationLabel: 'Main Hospital Group',
+    hospitalId: HOSPITAL_ID,
+    hospitalLabel: 'Demo Central Hospital',
     branchId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
     branchLabel: 'East Clinic',
     departmentId: null,
@@ -227,6 +263,8 @@ const ASSIGNMENTS = {
     scope: 'BRANCH',
     organizationId: ORG_ID,
     organizationLabel: 'Main Hospital Group',
+    hospitalId: HOSPITAL_ID,
+    hospitalLabel: 'Demo Central Hospital',
     branchId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
     branchLabel: 'West Clinic',
     departmentId: null,
@@ -236,7 +274,9 @@ const ASSIGNMENTS = {
 };
 
 // Complete server-issued session: token, single selected role, the
-// assignment list, and the selected acting context (Task 3 response shape).
+// assignment list, and the selected acting context (Task 3 response shape,
+// Phase 5: the context is always bound to one concrete hospital — the
+// facility of the branch every scope resolves to).
 function fullSession(role, extraAssignments = []) {
   const assignment = ASSIGNMENTS[role];
   return {
@@ -250,7 +290,8 @@ function fullSession(role, extraAssignments = []) {
       role: assignment.role,
       scope: assignment.scope,
       organizationId: assignment.organizationId,
-      branchId: assignment.branchId ?? 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      hospitalId: assignment.hospitalId ?? HOSPITAL_ID,
+      branchId: assignment.branchId ?? EAST_BRANCH_ID,
       departmentId: assignment.departmentId ?? null,
     },
   };
@@ -271,6 +312,13 @@ function stubBackendApi(state = {}) {
       state.organizationStatus = state.organizationStatus ?? 200;
       state.organizationBody = state.organizationBody ?? ORGANIZATION_VIEW;
       return Promise.resolve(jsonResponse(state.organizationBody, state.organizationStatus));
+    }
+    if (path === '/api/network/hierarchy') {
+      state.hierarchyCalls = state.hierarchyCalls ?? [];
+      state.hierarchyCalls.push(options.headers.Authorization);
+      state.hierarchyStatus = state.hierarchyStatus ?? 200;
+      state.hierarchyBody = state.hierarchyBody ?? HIERARCHY_VIEW;
+      return Promise.resolve(jsonResponse(state.hierarchyBody, state.hierarchyStatus));
     }
     if (path === '/api/auth/context') {
       state.contextCalls = state.contextCalls ?? [];
@@ -644,24 +692,25 @@ describe('AppShell', () => {
     expect(screen.getByText('Outpatient Clinic')).toBeInTheDocument();
   });
 
-  it('names the server-issued branch of a branch-bound ORGANIZATION acting context, with a neutral loading fallback', async () => {
+  it('names the server-issued hospital and branch of a branch-bound ORGANIZATION acting context, with a neutral loading fallback', async () => {
     renderShell('ADMIN');
 
     expect(screen.getByText('ADMIN')).toBeInTheDocument();
-    // While the active-branch list loads: neutral — never "organization-wide"
-    // for a token the server bound to one concrete branch.
+    // While the hierarchy loads: neutral — never "organization-wide" for a
+    // token the server bound to one concrete hospital and branch.
     expect(screen.getByText('Main Hospital Group — loading branch…')).toBeInTheDocument();
-    // Once loaded, the acting branch is named from the server allowlist.
-    expect(await screen.findByText('Main Hospital Group — East Clinic')).toBeInTheDocument();
+    // Once loaded, the acting hospital and branch are named from the
+    // server-derived slice and nothing else.
+    expect(await screen.findByText('Main Hospital Group — Demo Central Hospital — East Clinic')).toBeInTheDocument();
     expect(screen.queryByText(/organization-wide/)).not.toBeInTheDocument();
-    // The branch list came from GET /api/organization with the session token.
-    const orgCalls = fetchMock.mock.calls.filter(([path]) => path === '/api/organization');
-    expect(orgCalls).toHaveLength(1);
-    expect(orgCalls[0][1].headers.Authorization).toBe('Bearer synthetic-token');
+    // The slice came from GET /api/network/hierarchy with the session token.
+    const hierarchyCalls = fetchMock.mock.calls.filter(([path]) => path === '/api/network/hierarchy');
+    expect(hierarchyCalls).toHaveLength(1);
+    expect(hierarchyCalls[0][1].headers.Authorization).toBe('Bearer synthetic-token');
   });
 
-  it('shows a neutral branch-id fallback when the acting branch is absent from the active list', async () => {
-    const state = { organizationBody: { ...ORGANIZATION_VIEW, activeBranches: [] } };
+  it('shows a neutral branch-id fallback when the acting branch is absent from the authorized slice', async () => {
+    const state = { hierarchyBody: { ...HIERARCHY_VIEW, hospitals: [] } };
     fetchMock = stubBackendApi(state);
     vi.stubGlobal('fetch', fetchMock);
     renderShell('ADMIN');
@@ -670,55 +719,65 @@ describe('AppShell', () => {
     expect(screen.queryByText(/organization-wide/)).not.toBeInTheDocument();
   });
 
-  it('keeps the prior context and shows accessible text when the branch list cannot be loaded', async () => {
-    const state = { organizationStatus: 403, organizationBody: { error: 'Forbidden' } };
+  it('keeps the prior context and shows accessible text when the hierarchy cannot be loaded', async () => {
+    const state = { hierarchyStatus: 403, hierarchyBody: { error: 'Forbidden' } };
     fetchMock = stubBackendApi(state);
     vi.stubGlobal('fetch', fetchMock);
     const { onSessionExpired } = renderShell('ADMIN');
 
-    // A non-ADMIN token cannot read GET /api/organization: the refusal is
-    // surfaced as text, the session/context/selection stay untouched, and no
+    // A refused hierarchy read: the refusal is surfaced as text in the
+    // selector, the session/context/selection stay untouched, and no
     // organization-wide claim is invented for the branch-bound token.
-    expect(await screen.findByRole('alert')).toHaveTextContent(/branch options could not be loaded/i);
+    expect(await screen.findByRole('alert')).toHaveTextContent(/permission to view this data/i);
     expect(screen.getByText(`Main Hospital Group — branch ${EAST_BRANCH_ID}`)).toBeInTheDocument();
     expect(screen.queryByText(/organization-wide/)).not.toBeInTheDocument();
     expect(onSessionExpired).not.toHaveBeenCalled();
   });
 
-  it('offers the branch selector with the server-issued (assignment, branch) pairs and a keyboard-operable native select', async () => {
+  it('displays the hospital label of a fixed-scope acting context without fetching the hierarchy', async () => {
+    renderShell('DOCTOR');
+
+    expect(screen.getByText('Demo Central Hospital')).toBeInTheDocument();
+    expect(screen.getByText('East Clinic')).toBeInTheDocument();
+    await waitForDashboardStats();
+    expect(fetchMock.mock.calls.filter(([path]) => path === '/api/network/hierarchy')).toHaveLength(0);
+  });
+
+  it('offers the network selector with the server-issued (assignment, hospital, branch) triples and a keyboard-operable native select', async () => {
     const user = userEvent.setup();
     renderShell('DOCTOR', [ASSIGNMENTS.ADMIN]);
     await waitForDashboardStats();
 
     const select = screen.getByRole('combobox', { name: 'Acting context' });
     // The acting pair (DOCTOR fixed on East) is the current selection.
-    expect(select).toHaveValue(`${ASSIGNMENTS.DOCTOR.id}|${EAST_BRANCH_ID}`);
+    expect(select).toHaveValue(`${ASSIGNMENTS.DOCTOR.id}|${HOSPITAL_ID}|${EAST_BRANCH_ID}`);
     await waitFor(() => expect(select.querySelectorAll('option')).toHaveLength(3));
     const options = [...select.querySelectorAll('option')];
-    // The fixed assignment offers exactly its branch; the ORGANIZATION
-    // assignment offers each server-issued active branch.
+    // The fixed assignment offers exactly its own hospital/branch pair; the
+    // ORGANIZATION assignment offers each server-issued hospital branch.
     expect(options.map((option) => option.value)).toEqual([
-      `${ASSIGNMENTS.DOCTOR.id}|${EAST_BRANCH_ID}`,
-      `${ASSIGNMENTS.ADMIN.id}|${EAST_BRANCH_ID}`,
-      `${ASSIGNMENTS.ADMIN.id}|${WEST_BRANCH_ID}`,
+      `${ASSIGNMENTS.DOCTOR.id}|${HOSPITAL_ID}|${EAST_BRANCH_ID}`,
+      `${ASSIGNMENTS.ADMIN.id}|${HOSPITAL_ID}|${EAST_BRANCH_ID}`,
+      `${ASSIGNMENTS.ADMIN.id}|${HOSPITAL_ID}|${WEST_BRANCH_ID}`,
     ]);
-    expect(options[0]).toHaveTextContent('DOCTOR — East Clinic · Main Hospital Group');
-    expect(options[1]).toHaveTextContent('ADMIN — East Clinic · Main Hospital Group');
-    expect(options[2]).toHaveTextContent('ADMIN — West Clinic · Main Hospital Group');
+    expect(options[0]).toHaveTextContent('DOCTOR — East Clinic · Demo Central Hospital · Main Hospital Group');
+    expect(options[1]).toHaveTextContent('ADMIN — East Clinic · Demo Central Hospital · Main Hospital Group');
+    expect(options[2]).toHaveTextContent('ADMIN — West Clinic · Demo Central Hospital · Main Hospital Group');
     expect(screen.getByLabelText('Acting context')).toBe(select);
 
     // Keyboard operability: focus the labeled native control and switch.
     select.focus();
     expect(select).toHaveFocus();
-    await user.selectOptions(select, `${ASSIGNMENTS.ADMIN.id}|${EAST_BRANCH_ID}`);
+    await user.selectOptions(select, `${ASSIGNMENTS.ADMIN.id}|${HOSPITAL_ID}|${EAST_BRANCH_ID}`);
 
     await waitFor(() => expect(fetchMock.mock.calls.some(([path]) => path === '/api/auth/context')).toBe(true));
     const contextCall = fetchMock.mock.calls.find(([path]) => path === '/api/auth/context');
     expect(contextCall[1].method).toBe('POST');
     expect(contextCall[1].headers.Authorization).toBe('Bearer synthetic-token');
-    // The ORGANIZATION target names the assignment AND the chosen branch.
+    // The selection target names the assignment AND the chosen hospital/branch.
     expect(JSON.parse(contextCall[1].body)).toEqual({
       assignmentId: ASSIGNMENTS.ADMIN.id,
+      hospitalId: HOSPITAL_ID,
       branchId: EAST_BRANCH_ID,
     });
   });
@@ -739,6 +798,7 @@ describe('AppShell', () => {
           role: 'ADMIN',
           scope: 'ORGANIZATION',
           organizationId: ORG_ID,
+          hospitalId: HOSPITAL_ID,
           branchId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
           departmentId: null,
         },
@@ -780,12 +840,12 @@ describe('AppShell', () => {
     await waitFor(() => expect(screen.getByRole('combobox', { name: 'Acting context' }).querySelectorAll('option')).toHaveLength(3));
     await user.selectOptions(
       screen.getByRole('combobox', { name: 'Acting context' }),
-      `${ASSIGNMENTS.ADMIN.id}|${EAST_BRANCH_ID}`,
+      `${ASSIGNMENTS.ADMIN.id}|${HOSPITAL_ID}|${EAST_BRANCH_ID}`,
     );
 
-    // Whoami reflects the new acting context immediately, naming the branch
-    // the new token is bound to — never an organization-wide claim.
-    await waitFor(() => expect(screen.getByText('Main Hospital Group — East Clinic')).toBeInTheDocument());
+    // Whoami reflects the new acting context immediately, naming the hospital
+    // and branch the new token is bound to — never an organization-wide claim.
+    await waitFor(() => expect(screen.getByText('Main Hospital Group — Demo Central Hospital — East Clinic')).toBeInTheDocument());
     expect(screen.getByText('ADMIN')).toBeInTheDocument();
     // The selected patients view reloaded from the server under the new
     // context-bound token — a fresh fetch owned by the same screen effect.
@@ -793,10 +853,11 @@ describe('AppShell', () => {
     const patientCalls = fetchMock.mock.calls.filter(([path]) => path === '/api/patients');
     expect(patientCalls.length).toBeGreaterThan(patientsCallsBefore);
     expect(patientCalls[patientCalls.length - 1][1].headers.Authorization).toBe('Bearer switched-context-token');
-    // The switch request named both the assignment and the chosen branch.
+    // The switch request named the assignment, hospital, and chosen branch.
     const contextCall = fetchMock.mock.calls.find(([path]) => path === '/api/auth/context');
     expect(JSON.parse(contextCall[1].body)).toEqual({
       assignmentId: ASSIGNMENTS.ADMIN.id,
+      hospitalId: HOSPITAL_ID,
       branchId: EAST_BRANCH_ID,
     });
     // Storage holds exactly the complete switched session.
@@ -820,6 +881,7 @@ describe('AppShell', () => {
           role: 'ADMIN',
           scope: 'ORGANIZATION',
           organizationId: ORG_ID,
+          hospitalId: HOSPITAL_ID,
           branchId: WEST_BRANCH_ID,
           departmentId: null,
         },
@@ -851,25 +913,26 @@ describe('AppShell', () => {
       />
     );
     await waitForDashboardStats();
-    await waitFor(() => expect(screen.getByText('Main Hospital Group — East Clinic')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('Main Hospital Group — Demo Central Hospital — East Clinic')).toBeInTheDocument());
 
-    // Same assignment, different branch: the pair target carries the change.
+    // Same assignment, different branch: the triple target carries the change.
     await user.selectOptions(
       screen.getByRole('combobox', { name: 'Acting context' }),
-      `${ASSIGNMENTS.ADMIN.id}|${WEST_BRANCH_ID}`,
+      `${ASSIGNMENTS.ADMIN.id}|${HOSPITAL_ID}|${WEST_BRANCH_ID}`,
     );
 
     // Whoami and storage now reflect the West-bound context.
-    await waitFor(() => expect(screen.getByText('Main Hospital Group — West Clinic')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('Main Hospital Group — Demo Central Hospital — West Clinic')).toBeInTheDocument());
     const contextCall = fetchMock.mock.calls.find(([path]) => path === '/api/auth/context');
     expect(JSON.parse(contextCall[1].body)).toEqual({
       assignmentId: ASSIGNMENTS.ADMIN.id,
+      hospitalId: HOSPITAL_ID,
       branchId: WEST_BRANCH_ID,
     });
     expect(JSON.parse(sessionStorage.getItem('medicore.session')).token).toBe('west-context-token');
     expect(onSessionExpired).not.toHaveBeenCalled();
     // The East branch line is gone — no stale claim survives the switch.
-    expect(screen.queryByText('Main Hospital Group — East Clinic')).not.toBeInTheDocument();
+    expect(screen.queryByText('Main Hospital Group — Demo Central Hospital — East Clinic')).not.toBeInTheDocument();
     expect(screen.queryByText(/organization-wide/)).not.toBeInTheDocument();
   });
 
@@ -900,7 +963,7 @@ describe('AppShell', () => {
     await waitFor(() => expect(screen.getByRole('combobox', { name: 'Acting context' }).querySelectorAll('option')).toHaveLength(3));
     await user.selectOptions(
       screen.getByRole('combobox', { name: 'Acting context' }),
-      `${ASSIGNMENTS.ADMIN.id}|${EAST_BRANCH_ID}`,
+      `${ASSIGNMENTS.ADMIN.id}|${HOSPITAL_ID}|${EAST_BRANCH_ID}`,
     );
 
     // Understandable in-place denial — text, not color-only.
@@ -909,7 +972,7 @@ describe('AppShell', () => {
     expect(screen.getByText('DOCTOR')).toBeInTheDocument();
     expect(screen.getByText('East Clinic')).toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: 'Acting context' })).toHaveValue(
-      `${ASSIGNMENTS.DOCTOR.id}|${EAST_BRANCH_ID}`,
+      `${ASSIGNMENTS.DOCTOR.id}|${HOSPITAL_ID}|${EAST_BRANCH_ID}`,
     );
     // No expiry, and the branch-scoped view was not refetched against the
     // refused context: no partial storage or UI update.
@@ -937,11 +1000,108 @@ describe('AppShell', () => {
 
     await user.selectOptions(
       screen.getByRole('combobox', { name: 'Acting context' }),
-      `${ASSIGNMENTS.ADMIN.id}|${WEST_BRANCH_ID}`,
+      `${ASSIGNMENTS.ADMIN.id}|${HOSPITAL_ID}|${WEST_BRANCH_ID}`,
     );
 
     await waitFor(() => expect(onSessionExpired).toHaveBeenCalledTimes(1));
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('cannot paint a hierarchy response resolved under a switched acting context, not even for one render', async () => {
+    const user = userEvent.setup();
+    // The first context's hierarchy read is held until after the switch:
+    // resolving it late must never paint the old-context slice, regardless
+    // of effect cleanup — the render-phase tag gate owns that.
+    const state = {
+      contextStatus: 200,
+      contextBody: {
+        accessToken: 'switched-context-token',
+        tokenType: 'Bearer',
+        username: 'testuser',
+        roles: ['BILLING'],
+        assignments: [ASSIGNMENTS.BILLING, ASSIGNMENTS.ADMIN],
+        actingContext: {
+          username: 'testuser',
+          assignmentId: ASSIGNMENTS.BILLING.id,
+          role: 'BILLING',
+          scope: 'BRANCH',
+          organizationId: ORG_ID,
+          hospitalId: HOSPITAL_ID,
+          branchId: EAST_BRANCH_ID,
+          departmentId: null,
+        },
+      },
+    };
+    const pendingHierarchy = [];
+    const dataStub = stubBackendApi(state);
+    fetchMock = vi.fn((path, options = {}) => {
+      if (path === '/api/network/hierarchy') {
+        return new Promise((resolve) => {
+          pendingHierarchy.push({ token: options.headers.Authorization, resolve });
+        });
+      }
+      return dataStub(path, options);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    sessionStorage.clear();
+    const onSessionExpired = vi.fn();
+    let view;
+    const switchAndApply = (nextSession) => {
+      saveSession(nextSession);
+      view.rerender(
+        <AppShell
+          session={nextSession}
+          onLogout={vi.fn()}
+          onSessionExpired={onSessionExpired}
+          onContextSwitch={switchAndApply}
+        />
+      );
+    };
+    // Acting: RECEPTIONIST fixed on West; the BILLING fixed assignment gives
+    // a switchable target while the hierarchy is pending, and the ADMIN
+    // assignment makes the shell fetch the hierarchy at all.
+    view = render(
+      <AppShell
+        session={fullSession('RECEPTIONIST', [ASSIGNMENTS.BILLING, ASSIGNMENTS.ADMIN])}
+        onLogout={vi.fn()}
+        onSessionExpired={onSessionExpired}
+        onContextSwitch={switchAndApply}
+      />
+    );
+    expect(screen.getByText('Demo Central Hospital')).toBeInTheDocument();
+    expect(screen.getByText('West Clinic')).toBeInTheDocument();
+    await waitFor(() => expect(pendingHierarchy).toHaveLength(1));
+    expect(pendingHierarchy[0].token).toBe('Bearer synthetic-token');
+
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Acting context' }),
+      `${ASSIGNMENTS.BILLING.id}|${HOSPITAL_ID}|${EAST_BRANCH_ID}`,
+    );
+
+    // The switch resolved: the whoami shows the new fixed-scope labels —
+    // never the old context's hierarchy data.
+    await waitFor(() => expect(screen.getByText('BILLING')).toBeInTheDocument());
+    expect(screen.getByText('East Clinic')).toBeInTheDocument();
+
+    // The OLD-context hierarchy response resolves late — the render-phase
+    // gate must discard it because its context key no longer matches, so
+    // the stale hospital cannot appear even for one render.
+    const STALE_HOSPITAL_NAME = 'Stale Context Hospital';
+    pendingHierarchy[0].resolve(jsonResponse({
+      ...HIERARCHY_VIEW,
+      hospitals: [{ ...HIERARCHY_VIEW.hospitals[0], name: STALE_HOSPITAL_NAME }],
+    }));
+    // The new context issues its own read under its own token.
+    await waitFor(() => expect(pendingHierarchy).toHaveLength(2));
+    expect(pendingHierarchy[1].token).toBe('Bearer switched-context-token');
+    pendingHierarchy[1].resolve(jsonResponse({ ...HIERARCHY_VIEW, hospitals: [] }));
+    await waitFor(() => expect(pendingHierarchy).toHaveLength(2));
+    expect(screen.queryByText(STALE_HOSPITAL_NAME)).not.toBeInTheDocument();
+    expect(screen.queryByText('Demo Central Hospital — West Clinic')).not.toBeInTheDocument();
+    expect(screen.getByText('Demo Central Hospital')).toBeInTheDocument();
+    expect(screen.getByText('East Clinic')).toBeInTheDocument();
+    expect(onSessionExpired).not.toHaveBeenCalled();
   });
 
   describe('session reload (auth storage boundary, plan3.md Task 5 contract §5)', () => {
@@ -969,6 +1129,7 @@ describe('AppShell', () => {
         (session) => { session.actingContext.role = 'NURSE'; },
         (session) => { session.actingContext.scope = 'ORGANIZATION'; },
         (session) => { session.actingContext.organizationId = 'other-organization'; },
+        (session) => { session.actingContext.hospitalId = 'other-hospital'; },
         (session) => { session.actingContext.branchId = 'other-branch'; },
         (session) => { session.actingContext.departmentId = 'other-department'; },
         (session) => { session.actingContext.username = 'other-user'; },

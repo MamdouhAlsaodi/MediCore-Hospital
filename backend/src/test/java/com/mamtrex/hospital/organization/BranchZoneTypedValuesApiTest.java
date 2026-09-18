@@ -113,6 +113,9 @@ class BranchZoneTypedValuesApiTest {
     @Autowired
     InvoiceRepository invoices;
 
+    @Autowired
+    com.mamtrex.hospital.organization.HospitalFacilityRepository hospitals;
+
     private final String suffix = UUID.randomUUID().toString().substring(0, 8);
 
     private HospitalOrganization org;
@@ -128,11 +131,12 @@ class BranchZoneTypedValuesApiTest {
                 organizations.save(new HospitalOrganization(TEST_ORG_CODE, "Zone Typed Demo Organization")));
         // An ORGANIZATION-scope login resolves its active branch server-side,
         // so at least one active branch must exist before the first login.
-        utcBranch = branches.findByOrganizationIdAndCode(org.getId(), suffix + "-utc")
-                .orElseGet(() -> branches.save(new Branch(org, suffix + "-utc",
+        var fixtureHospital = com.mamtrex.hospital.organization.FixtureHospitals.ensureHospital(hospitals, org);
+        utcBranch = branches.findByHospitalIdAndCode(fixtureHospital.getId(), suffix + "-utc")
+                .orElseGet(() -> branches.save(new Branch(fixtureHospital, suffix + "-utc",
                         "Demo UTC Branch", "1 Demo Campus")));
-        nyBranch = branches.findByOrganizationIdAndCode(org.getId(), suffix + "-ny")
-                .orElseGet(() -> branches.save(new Branch(org, suffix + "-ny",
+        nyBranch = branches.findByHospitalIdAndCode(fixtureHospital.getId(), suffix + "-ny")
+                .orElseGet(() -> branches.save(new Branch(fixtureHospital, suffix + "-ny",
                         "Demo NY Branch", "2 Demo Campus",
                         java.time.ZoneId.of("America/New_York"))));
         // Login requires a valid enabled acting assignment (no fallback).

@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { PERMISSIONS, can } from './authorization.js';
+import { actingAssignmentOf, actingContextKey, loadSession, saveSession } from './auth.js';
 
 // plan1.md Task 9: the resource/action permission map for the implemented UI
 // actions only (patient read/create/update, appointment read/create). This is
@@ -294,5 +295,147 @@ describe('authorization permission map (plan1.md Task 9 + plan2.md Tasks 2-4)', 
     expect(PERMISSIONS.admission.read).toEqual(['ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST']);
     expect(PERMISSIONS.emergencyVisit.read).toEqual(['ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST']);
     expect(PERMISSIONS.invoice.read).toEqual(['ADMIN', 'BILLING']);
+  });
+});
+
+// Phase 5 US2 (tasks.md T055; FR-008/FR-009): the acting context carries a
+// server-issued hospital alongside the branch, and the acting-context key —
+// the identity every context-bound screen tags its loaded data with — must
+// be the complete assignment + hospital + branch + department chain, so no
+// datum resolved under one hospital context can ever be reused under
+// another. The session parser accepts only hospital-consistent structures:
+// a fixed-scope (HOSPITAL/BRANCH/DEPARTMENT) acting context may never name a
+// hospital other than the one its server-issued assignment owns.
+const NETWORK_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const EAST_HOSPITAL_ID = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee01';
+const WEST_HOSPITAL_ID = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee02';
+const EAST_BRANCH_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const EAST_DEPARTMENT_ID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+const ASSIGNMENT_ID = '11111111-1111-4111-8111-111111111111';
+
+function hierarchicalSession({
+  scope = 'BRANCH',
+  assignmentHospitalId = scope === 'ORGANIZATION' ? null : EAST_HOSPITAL_ID,
+  contextHospitalId = EAST_HOSPITAL_ID,
+  branchId = EAST_BRANCH_ID,
+  departmentId = null,
+} = {}) {
+  return {
+    token: 'synthetic-token',
+    username: 'testuser',
+    roles: ['NURSE'],
+    assignments: [{
+      id: ASSIGNMENT_ID,
+      role: 'NURSE',
+      scope,
+      organizationId: NETWORK_ID,
+      organizationLabel: 'Synthetic Network',
+      hospitalId: assignmentHospitalId,
+      hospitalLabel: assignmentHospitalId ? 'Demo East Hospital' : null,
+      branchId: scope === 'ORGANIZATION' ? null : branchId,
+      branchLabel: scope === 'ORGANIZATION' ? null : 'East Clinic',
+      departmentId,
+      departmentLabel: departmentId ? 'Outpatient Clinic' : null,
+      enabled: true,
+    }],
+    actingContext: {
+      username: 'testuser',
+      assignmentId: ASSIGNMENT_ID,
+      role: 'NURSE',
+      scope,
+      organizationId: NETWORK_ID,
+      hospitalId: contextHospitalId,
+      branchId,
+      departmentId,
+    },
+  };
+}
+
+describe('hierarchical acting-context parsers and identity (Phase 5 T055)', () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+  });
+
+  it('keys the acting context by the complete assignment + hospital + branch + department identity', () => {
+    // FR-009: the key is the cache/render identity every context-bound
+    // screen tags loaded data with — it must name all four server-issued
+    // coordinates, not just the branch.
+    const session = hierarchicalSession({ departmentId: EAST_DEPARTMENT_ID });
+    expect(actingContextKey(session)).toBe(
+      `${ASSIGNMENT_ID}:${EAST_HOSPITAL_ID}:${EAST_BRANCH_ID}:${EAST_DEPARTMENT_ID}`
+    );
+  });
+
+  it('resolves the acting hospital through the fixed-scope assignment when the context record omits it', () => {
+    // The browser login parser (frozen Phase 4 seam) stores the acting
+    // context without the hospital field while the assignment views carry
+    // it; a fixed-scope assignment OWNS its hospital, so the identity
+    // resolves through it. A different hospital must therefore produce a
+    // different key even when the context record is silent.
+    const east = hierarchicalSession();
+    delete east.actingContext.hospitalId;
+    const west = hierarchicalSession({ assignmentHospitalId: WEST_HOSPITAL_ID });
+    delete west.actingContext.hospitalId;
+    west.assignments[0].hospitalLabel = 'Demo West Hospital';
+    expect(actingContextKey(east)).toBe(
+      `${ASSIGNMENT_ID}:${EAST_HOSPITAL_ID}:${EAST_BRANCH_ID}:`
+    );
+    expect(actingContextKey(west)).toBe(
+      `${ASSIGNMENT_ID}:${WEST_HOSPITAL_ID}:${EAST_BRANCH_ID}:`
+    );
+    expect(actingContextKey(west)).not.toBe(actingContextKey(east));
+  });
+
+  it('round-trips a fully hospital-tagged session and surfaces the hospital-aware assignment view', () => {
+    const session = hierarchicalSession({ departmentId: EAST_DEPARTMENT_ID });
+    saveSession(session);
+    expect(loadSession()).toEqual(session);
+    const assignment = actingAssignmentOf(loadSession());
+    expect(assignment.hospitalId).toBe(EAST_HOSPITAL_ID);
+    expect(assignment.hospitalLabel).toBe('Demo East Hospital');
+  });
+
+  it('rejects a stored session whose acting context carries a malformed hospital id', () => {
+    for (const malformed of ['', 42, {}]) {
+      sessionStorage.clear();
+      const session = hierarchicalSession();
+      session.actingContext.hospitalId = malformed;
+      saveSession(session);
+      expect(loadSession(), `expected null for hospitalId ${JSON.stringify(malformed)}`).toBeNull();
+    }
+  });
+
+  it('rejects a stored session whose acting hospital contradicts the fixed-scope assignment hospital', () => {
+    // A HOSPITAL/BRANCH/DEPARTMENT assignment owns exactly one hospital:
+    // a context claiming a different one is tampered or stale and must
+    // fail the reload closed instead of silently re-keying authority.
+    for (const scope of ['HOSPITAL', 'BRANCH', 'DEPARTMENT']) {
+      sessionStorage.clear();
+      const session = hierarchicalSession({
+        scope,
+        departmentId: scope === 'DEPARTMENT' ? EAST_DEPARTMENT_ID : null,
+        contextHospitalId: WEST_HOSPITAL_ID,
+      });
+      saveSession(session);
+      expect(loadSession(), `expected null for a ${scope} context on a foreign hospital`).toBeNull();
+    }
+  });
+
+  it('rejects assignments with malformed hospital identity fields', () => {
+    for (const mutate of [
+      (assignment) => { assignment.hospitalId = 99; },
+      (assignment) => { assignment.hospitalLabel = 42; },
+    ]) {
+      sessionStorage.clear();
+      const session = hierarchicalSession({ departmentId: EAST_DEPARTMENT_ID });
+      mutate(session.assignments[0]);
+      saveSession(session);
+      expect(loadSession(), `expected null after ${mutate}`).toBeNull();
+    }
+  });
+
+  it('still keys sessions without an acting context as the neutral identity', () => {
+    expect(actingContextKey({ token: 't', username: 'u', roles: ['NURSE'] })).toBe('no-acting-context');
+    expect(actingContextKey(null)).toBe('no-acting-context');
   });
 });

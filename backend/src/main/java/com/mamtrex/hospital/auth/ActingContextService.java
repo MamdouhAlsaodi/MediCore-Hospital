@@ -2,6 +2,7 @@ package com.mamtrex.hospital.auth;
 
 import com.mamtrex.hospital.audit.AuditService;
 import com.mamtrex.hospital.organization.Branch;
+import com.mamtrex.hospital.organization.HospitalFacility;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -61,6 +62,7 @@ public class ActingContextService {
     /** Strict allowlist of one acting assignment in the login/switch response. */
     public record AssignmentView(UUID id, String role, String scope,
                                  UUID organizationId, String organizationLabel,
+                                 UUID hospitalId, String hospitalLabel,
                                  UUID branchId, String branchLabel,
                                  UUID departmentId, String departmentLabel,
                                  boolean enabled) {
@@ -68,7 +70,7 @@ public class ActingContextService {
 
     /** Strict allowlist of the selected acting context in the response. */
     public record ActingContextView(String username, UUID assignmentId, String role, String scope,
-                                    UUID organizationId, UUID branchId, UUID departmentId) {
+                                    UUID organizationId, UUID hospitalId, UUID branchId, UUID departmentId) {
     }
 
     /** Strict allowlist of the whole login/switch response; assignments lists only currently valid enabled rows. */
@@ -114,16 +116,35 @@ public class ActingContextService {
      * token stays cryptographically valid until expiry, but every request
      * reload re-checks its bound assignment, so disabling or deleting it
      * invalidates the old token immediately.
+     *
+     * <p>Phase 5 (T050): the requested hospital/branch ids only ever select
+     * among the server-issued targets of the target assignment. Where the
+     * shape demands a selection, the target is mandatory: an ORGANIZATION
+     * switch must carry both the target hospital and the target branch, and
+     * a HOSPITAL switch must carry the target branch inside its fixed
+     * facility. Fixed scopes (BRANCH, DEPARTMENT) derive their chain from
+     * the assignment and accept only ids that match it. Every supplied id is
+     * revalidated against the full active ancestor chain before any context
+     * is issued.</p>
      */
     @Transactional
-    public Session switchContext(ActingContext current, UUID targetAssignmentId, UUID requestedBranchId) {
+    public Session switchContext(ActingContext current, UUID targetAssignmentId,
+                                 UUID requestedHospitalId, UUID requestedBranchId) {
         UserAccount account = accounts.findByUsername(current.username())
                 .filter(UserAccount::isEnabled)
                 .orElseThrow(BranchAccessService::refused);
         ActingAssignment target = assignments.findByIdAndAccountId(targetAssignmentId, account.getId())
                 .filter(ActingAssignment::isEnabled)
                 .orElseThrow(BranchAccessService::refused);
-        ActingContext context = resolveContext(target, requestedBranchId);
+        // Where the shape demands a selection target, the switch must carry
+        // it: both selection scopes must name their target branch. The
+        // hospital is either supplied and matched against the server chain
+        // or derived from it — never taken on faith (FR-007, T050).
+        if ((target.getScope() == AssignmentScope.ORGANIZATION
+                || target.getScope() == AssignmentScope.HOSPITAL) && requestedBranchId == null) {
+            throw BranchAccessService.refused();
+        }
+        ActingContext context = resolveContext(target, requestedHospitalId, requestedBranchId);
         String token = jwt.issue(context);
         auditService.record("SWITCH", "ActingAssignment", target.getId().toString(),
                 "acting " + target.getRole() + " (" + target.getScope() + ")");
@@ -152,16 +173,22 @@ public class ActingContextService {
                 .filter(UserAccount::isEnabled)
                 .flatMap(account -> assignments.findByIdAndAccountId(claims.assignmentId(), account.getId())
                         .filter(ActingAssignment::isEnabled))
-                .flatMap(assignment -> tryResolve(assignment, claims.branchId()))
+                .flatMap(assignment -> tryResolve(assignment, claims.hospitalId(), claims.branchId()))
                 .filter(resolved -> matchesStructuralClaims(resolved.context(), claims))
                 .map(Resolved::context);
     }
 
-    /** Every structural field must match, including department null semantics; the role claim is never compared. */
+    /**
+     * Every structural field must match, including hospital presence and
+     * department null semantics (T052); the role claim is never compared.
+     * A token whose hospital/branch pair does not match the server-derived
+     * chain stays unauthenticated even when both ids exist.
+     */
     private static boolean matchesStructuralClaims(ActingContext context, JwtService.StructuralClaims claims) {
         return context.assignmentId().equals(claims.assignmentId())
                 && context.scope() == claims.scope()
                 && context.organizationId().equals(claims.organizationId())
+                && context.hospitalId().equals(claims.hospitalId())
                 && context.branchId().equals(claims.branchId())
                 && Objects.equals(context.departmentId(), claims.departmentId());
     }
@@ -172,49 +199,97 @@ public class ActingContextService {
     }
 
     private Optional<Resolved> tryResolve(ActingAssignment assignment) {
-        return tryResolve(assignment, null);
+        return tryResolve(assignment, null, null);
     }
 
-    private Optional<Resolved> tryResolve(ActingAssignment assignment, UUID requestedBranchId) {
+    private Optional<Resolved> tryResolve(ActingAssignment assignment, UUID requestedHospitalId,
+                                          UUID requestedBranchId) {
         try {
-            return Optional.of(new Resolved(assignment, resolveContext(assignment, requestedBranchId)));
+            return Optional.of(new Resolved(assignment, resolveContext(assignment, requestedHospitalId,
+                    requestedBranchId)));
         } catch (BranchAccessService.RefusedException refused) {
             return Optional.empty();
         }
     }
 
     /**
-     * Applies the scope rules to one assignment: ORGANIZATION selects the
-     * deterministic first active branch (login) or the requested active
-     * branch inside the organization (switch); BRANCH acts on its fixed
-     * active branch; DEPARTMENT derives its branch from the department.
+     * Applies the scope rules to one assignment against the full server-
+     * owned hierarchy (Phase 5 T048-T050). The requested hospital/branch
+     * pair arrives from the switch body, or — on the per-request reload —
+     * from the token's structural claims, so all three entry points enforce
+     * the identical chain:
+     * <ul>
+     *   <li>ORGANIZATION selects the deterministic first usable branch of
+     *       the network (login/reload defaults) or exactly the requested
+     *       active branch of the organization (switch); the branch's own
+     *       facility becomes the acting hospital, and a supplied hospital
+     *       id must match it (FR-007: client ids only select among
+     *       server-issued targets, never widen).</li>
+     *   <li>HOSPITAL selects inside its fixed facility (which must be
+     *       active and belong to the assignment's organization); a
+     *       requested hospital id other than the fixed facility is
+     *       refused.</li>
+     *   <li>BRANCH acts on its fixed active branch; its hospital derives
+     *       from the branch and any requested pair must match it.</li>
+     *   <li>DEPARTMENT derives its chain from the department under the
+     *       same match rule.</li>
+     * </ul>
      * Cross-scope invariants (a branch on an ORGANIZATION assignment, a
-     * department on a BRANCH assignment, a missing department) fail closed.
+     * department on a BRANCH or HOSPITAL assignment, a missing department)
+     * fail closed. The acting hospital of the returned context is always
+     * the selected branch's own facility — never a client-supplied id.
      */
-    private ActingContext resolveContext(ActingAssignment assignment, UUID requestedBranchId) {
+    private ActingContext resolveContext(ActingAssignment assignment, UUID requestedHospitalId,
+                                         UUID requestedBranchId) {
         UUID organizationId = assignment.getOrganization().getId();
         branchAccess.requireOrganization(organizationId);
         Branch selected = switch (assignment.getScope()) {
             case ORGANIZATION -> {
-                if (assignment.getDepartment() != null) {
+                if (assignment.getDepartment() != null || assignment.getHospital() != null) {
                     throw BranchAccessService.refused();
                 }
+                if (requestedBranchId == null) {
+                    if (requestedHospitalId != null) {
+                        // a hospital id alone can never select a branch
+                        throw BranchAccessService.refused();
+                    }
+                    yield branchAccess.deterministicActiveBranch(organizationId)
+                            .orElseThrow(BranchAccessService::refused);
+                }
+                Branch selectedBranch =
+                        branchAccess.requireActiveBranchInOrganization(organizationId, requestedBranchId);
+                branchAccess.requireSameHospital(selectedBranch.getHospital().getId(), requestedHospitalId);
+                yield selectedBranch;
+            }
+            case HOSPITAL -> {
+                if (assignment.getDepartment() != null || assignment.getBranch() != null) {
+                    throw BranchAccessService.refused();
+                }
+                HospitalFacility hospital = assignment.getHospital();
+                if (hospital == null) {
+                    throw BranchAccessService.refused();
+                }
+                branchAccess.requireSameHospital(hospital.getId(), requestedHospitalId);
+                branchAccess.requireActiveHospitalInOrganization(organizationId, hospital.getId());
                 yield requestedBranchId == null
-                        ? branchAccess.deterministicActiveBranch(organizationId)
+                        ? branchAccess.deterministicActiveBranchInHospital(hospital.getId())
                                 .orElseThrow(BranchAccessService::refused)
-                        : branchAccess.requireActiveBranchInOrganization(organizationId, requestedBranchId);
+                        : branchAccess.requireActiveBranchInHospital(hospital.getId(), requestedBranchId);
             }
             case BRANCH -> {
                 if (assignment.getDepartment() != null) {
                     throw BranchAccessService.refused();
                 }
-                yield branchAccess.requireFixedAssignmentBranch(assignment, organizationId, requestedBranchId);
+                yield branchAccess.requireFixedAssignmentBranch(assignment, organizationId,
+                        requestedHospitalId, requestedBranchId);
             }
             case DEPARTMENT ->
-                    branchAccess.requireDepartmentBranch(assignment, organizationId, requestedBranchId);
+                    branchAccess.requireDepartmentBranch(assignment, organizationId,
+                            requestedHospitalId, requestedBranchId);
         };
         return new ActingContext(assignment.getAccount().getUsername(), assignment.getId(),
-                assignment.getRole(), assignment.getScope(), organizationId, selected.getId(),
+                assignment.getRole(), assignment.getScope(), organizationId,
+                selected.getHospital().getId(), selected.getId(),
                 assignment.getScope() == AssignmentScope.DEPARTMENT ? assignment.getDepartment().getId() : null);
     }
 
@@ -226,11 +301,13 @@ public class ActingContextService {
     }
 
     private AssignmentView toView(ActingAssignment assignment) {
+        UUID hospitalId = assignment.getHospital() == null ? null : assignment.getHospital().getId();
         UUID branchId = assignment.getBranch() == null ? null : assignment.getBranch().getId();
         UUID departmentId = assignment.getDepartment() == null ? null : assignment.getDepartment().getId();
         return new AssignmentView(assignment.getId(), assignment.getRole().name(), assignment.getScope().name(),
                 assignment.getOrganization().getId(),
                 branchAccess.organizationLabel(assignment.getOrganization().getId()),
+                hospitalId, hospitalId == null ? null : branchAccess.hospitalLabel(hospitalId),
                 branchId, branchId == null ? null : branchAccess.branchLabel(branchId),
                 departmentId, departmentId == null ? null : branchAccess.departmentLabel(departmentId),
                 assignment.isEnabled());
@@ -239,6 +316,6 @@ public class ActingContextService {
     private static ActingContextView toView(ActingContext context) {
         return new ActingContextView(context.username(), context.assignmentId(),
                 context.role().name(), context.scope().name(),
-                context.organizationId(), context.branchId(), context.departmentId());
+                context.organizationId(), context.hospitalId(), context.branchId(), context.departmentId());
     }
 }

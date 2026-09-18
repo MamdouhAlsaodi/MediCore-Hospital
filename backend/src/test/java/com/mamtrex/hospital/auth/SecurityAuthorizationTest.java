@@ -5,6 +5,9 @@ import com.mamtrex.hospital.department.Department;
 import com.mamtrex.hospital.department.DepartmentRepository;
 import com.mamtrex.hospital.organization.Branch;
 import com.mamtrex.hospital.organization.BranchRepository;
+import com.mamtrex.hospital.organization.FixtureHospitals;
+import com.mamtrex.hospital.organization.HospitalFacility;
+import com.mamtrex.hospital.organization.HospitalFacilityRepository;
 import com.mamtrex.hospital.organization.HospitalOrganization;
 import com.mamtrex.hospital.organization.HospitalOrganizationRepository;
 import io.jsonwebtoken.Jwts;
@@ -133,6 +136,9 @@ class SecurityAuthorizationTest {
     BranchRepository branches;
 
     @Autowired
+    HospitalFacilityRepository hospitals;
+
+    @Autowired
     DepartmentRepository departments;
 
     /** Destructive branch-state manipulation only (no public deactivation endpoint exists). */
@@ -142,6 +148,10 @@ class SecurityAuthorizationTest {
     /** Direct seam for fabricating legacy/unassigned events exactly as unauthenticated bootstrap code does. */
     @Autowired
     AuditService auditService;
+
+    /** Short transaction seam for department/assignment factory calls with lazy relations. */
+    @Autowired
+    org.springframework.transaction.support.TransactionTemplate transactionTemplate;
 
     /** Unique synthetic suffix per test instance keeps every record disposable. */
     private final String suffix = UUID.randomUUID().toString().substring(0, 8);
@@ -154,9 +164,11 @@ class SecurityAuthorizationTest {
             "accessToken", "tokenType", "username", "roles", "assignments", "actingContext");
     private static final Set<String> ASSIGNMENT_VIEW_KEYS = Set.of(
             "id", "role", "scope", "organizationId", "organizationLabel",
+            "hospitalId", "hospitalLabel",
             "branchId", "branchLabel", "departmentId", "departmentLabel", "enabled");
     private static final Set<String> ACTING_CONTEXT_KEYS = Set.of(
-            "username", "assignmentId", "role", "scope", "organizationId", "branchId", "departmentId");
+            "username", "assignmentId", "role", "scope",
+            "organizationId", "hospitalId", "branchId", "departmentId");
 
     /** Task 11 audit DTO allowlist: exactly these fifteen evidence fields — the entity JSON is never exposed. */
     private static final Set<String> AUDIT_DTO_KEYS = Set.of(
@@ -192,8 +204,9 @@ class SecurityAuthorizationTest {
     }
 
     private Branch ensureBranch(HospitalOrganization org, String code, String location) {
-        return branches.findByOrganizationIdAndCode(org.getId(), code).orElseGet(() ->
-                branches.save(new Branch(org, code, "Synthetic Branch " + code, location)));
+        HospitalFacility hospital = FixtureHospitals.ensureHospital(hospitals, org);
+        return branches.findByHospitalIdAndCode(hospital.getId(), code).orElseGet(() ->
+                branches.save(new Branch(hospital, code, "Synthetic Branch " + code, location)));
     }
 
     private void seedAccountWithAssignment(String username, Role role, AssignmentScope scope,
@@ -206,6 +219,7 @@ class SecurityAuthorizationTest {
             case ORGANIZATION -> assignments
                     .findByAccountIdAndRoleAndScopeAndBranchIsNullAndDepartmentIsNull(account.getId(), role, scope)
                     .isPresent();
+            case HOSPITAL -> false;
             case BRANCH -> assignments
                     .findByAccountIdAndRoleAndScopeAndBranchId(account.getId(), role, scope, branch.getId())
                     .isPresent();
@@ -214,6 +228,8 @@ class SecurityAuthorizationTest {
         if (!present) {
             assignments.save(switch (scope) {
                 case ORGANIZATION -> ActingAssignment.organization(account, org, role);
+                case HOSPITAL -> throw new IllegalArgumentException(
+                        "Account seeding supports organization/branch scopes only");
                 case BRANCH -> ActingAssignment.branch(account, org, role, branch);
                 case DEPARTMENT -> throw new IllegalArgumentException(
                         "Account seeding supports organization/branch scopes only");
@@ -228,6 +244,8 @@ class SecurityAuthorizationTest {
                 encoder.encode(TEST_ACCOUNT_PASSWORD), Set.of(role)));
         assignments.save(switch (scope) {
             case ORGANIZATION -> ActingAssignment.organization(account, org, role);
+            case HOSPITAL -> throw new IllegalArgumentException(
+                    "Account seeding supports organization/branch/department scopes only");
             case BRANCH -> ActingAssignment.branch(account, org, role, branch);
             case DEPARTMENT -> ActingAssignment.department(account, org, role, department);
         });
@@ -874,7 +892,8 @@ class SecurityAuthorizationTest {
     }
 
     private Branch testBranch(String code) {
-        return branches.findByOrganizationIdAndCode(testOrg().getId(), code).orElseThrow();
+        return branches.findByHospitalIdAndCode(
+                FixtureHospitals.ensureHospital(hospitals, testOrg()).getId(), code).orElseThrow();
     }
 
     private UUID assignmentIdFor(String username, Role role) {
@@ -885,11 +904,20 @@ class SecurityAuthorizationTest {
     }
 
     private ResponseEntity<Map<String, Object>> switchContext(String token, UUID assignmentId, UUID branchId) {
+        return switchContext(token, assignmentId, null, branchId);
+    }
+
+    /** Phase 5 switch seam: hospital/branch ids select only server-issued targets (T050). */
+    private ResponseEntity<Map<String, Object>> switchContext(String token, UUID assignmentId,
+                                                              UUID hospitalId, UUID branchId) {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(token);
         headers.setContentType(MediaType.APPLICATION_JSON);
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("assignmentId", assignmentId.toString());
+        if (hospitalId != null) {
+            payload.put("hospitalId", hospitalId.toString());
+        }
         if (branchId != null) {
             payload.put("branchId", branchId.toString());
         }
@@ -1044,7 +1072,7 @@ class SecurityAuthorizationTest {
         HospitalOrganization foreignOrganization = organizations.save(new HospitalOrganization(
                 "AUTHZ-ORG-VIEW-" + suffix, "View Foreign Hospital"));
         Branch foreignBranch = branches.save(
-                new Branch(foreignOrganization, "AUTHZ-BR-VIEW-" + suffix, "Foreign View Branch", "Elsewhere"));
+                new Branch(FixtureHospitals.ensureHospital(hospitals, foreignOrganization), "AUTHZ-BR-VIEW-" + suffix, "Foreign View Branch", "Elsewhere"));
         Department foreignDepartment = departments.save(new Department(
                 foreignBranch, "AUTHZ-DEP-VIEW-" + suffix, "Foreign View Department", "general", "9 Foreign Way"));
 
@@ -1052,9 +1080,15 @@ class SecurityAuthorizationTest {
                 testOrg(), testBranch(DEFAULT_BRANCH_CODE), null);
         ActingAssignment valid = assignments
                 .findByAccountIdAndEnabledTrueOrderByRoleAscScopeAscIdAsc(account.getId()).get(0);
-        ActingAssignment inconsistent = assignments.save(
-                ActingAssignment.department(account, testOrg(), Role.RECEPTIONIST, foreignDepartment));
-        assertTrue(inconsistent.isEnabled(), "the second assignment is enabled — it is omitted for inconsistency only");
+        // Destructive persisted-row seeding: no factory can express a
+        // cross-organization department assignment any more — that is exactly
+        // the invariant under test — so the inconsistent row is inserted
+        // directly and must then be omitted fail-closed everywhere.
+        jdbc.update("""
+                insert into acting_assignments (id, account_id, organization_id, hospital_id, department_id,
+                    role, scope, enabled, created_at, updated_at, version)
+                values (?, ?, ?, null, ?, 'RECEPTIONIST', 'DEPARTMENT', true, now(), now(), 0)
+                """, UUID.randomUUID(), account.getId(), testOrg().getId(), foreignDepartment.getId());
 
         Map<String, Object> login = loginBody(account.getUsername());
         assertEquals(List.of("NURSE"), login.get("roles"), "login selects the deterministic valid assignment");
@@ -1080,26 +1114,33 @@ class SecurityAuthorizationTest {
     void organizationScopeSwitchesOnlyBetweenActiveBranchesInsideItsOrganization() {
         UUID adminAssignment = assignmentIdFor(ADMIN, Role.ADMIN);
         String token = login(ADMIN);
+        UUID fixtureHospitalId = FixtureHospitals.ensureHospital(hospitals, testOrg()).getId();
 
-        ResponseEntity<Map<String, Object>> switched =
-                switchContext(token, adminAssignment, testBranch(OTHER_BRANCH_CODE).getId());
+        ResponseEntity<Map<String, Object>> switched = switchContext(
+                token, adminAssignment, fixtureHospitalId, testBranch(OTHER_BRANCH_CODE).getId());
         assertEquals(HttpStatus.OK, switched.getStatusCode(),
-                "an organization-scope assignment may select another active branch inside its organization");
-        assertEquals(testBranch(OTHER_BRANCH_CODE).getId().toString(),
-                castMap(switched.getBody().get("actingContext")).get("branchId"));
+                "an organization-scope assignment may select another active hospital/branch pair inside its organization");
+        Map<String, Object> switchedContext = castMap(switched.getBody().get("actingContext"));
+        assertEquals(testBranch(OTHER_BRANCH_CODE).getId().toString(), switchedContext.get("branchId"));
+        assertEquals(fixtureHospitalId.toString(), switchedContext.get("hospitalId"),
+                "the replacement context binds the selected hospital id");
 
         HospitalOrganization foreignOrg = organizations.save(
                 new HospitalOrganization("AUTHZ-ORG-FOREIGN-" + suffix, "Foreign Hospital"));
         Branch foreignBranch = branches.save(
-                new Branch(foreignOrg, "AUTHZ-BR-FOREIGN-" + suffix, "Foreign Branch", "Elsewhere"));
-        assertEquals(HttpStatus.FORBIDDEN, switchContext(token, adminAssignment, foreignBranch.getId()).getStatusCode(),
+                new Branch(FixtureHospitals.ensureHospital(hospitals, foreignOrg), "AUTHZ-BR-FOREIGN-" + suffix, "Foreign Branch", "Elsewhere"));
+        assertEquals(HttpStatus.FORBIDDEN,
+                switchContext(token, adminAssignment, fixtureHospitalId, foreignBranch.getId()).getStatusCode(),
                 "a branch of another organization is refused");
 
-        Branch dormant = branches.save(new Branch(testOrg(), "AUTHZ-BR-DORMANT-" + suffix, "Dormant Branch", "Closed"));
+        Branch dormant = branches.save(new Branch(FixtureHospitals.ensureHospital(hospitals, testOrg()),
+                "AUTHZ-BR-DORMANT-" + suffix, "Dormant Branch", "Closed"));
         jdbc.update("update branches set active = false where id = ?", dormant.getId());
-        assertEquals(HttpStatus.FORBIDDEN, switchContext(token, adminAssignment, dormant.getId()).getStatusCode(),
+        assertEquals(HttpStatus.FORBIDDEN,
+                switchContext(token, adminAssignment, fixtureHospitalId, dormant.getId()).getStatusCode(),
                 "an inactive branch of the same organization is refused");
-        assertEquals(HttpStatus.FORBIDDEN, switchContext(token, adminAssignment, UUID.randomUUID()).getStatusCode(),
+        assertEquals(HttpStatus.FORBIDDEN,
+                switchContext(token, adminAssignment, fixtureHospitalId, UUID.randomUUID()).getStatusCode(),
                 "an unknown branch is refused");
     }
 
@@ -1200,7 +1241,7 @@ class SecurityAuthorizationTest {
     void inactiveOrDeletedSelectedBranchFailsClosed() {
         HospitalOrganization org = organizations.save(new HospitalOrganization(
                 "AUTHZ-ORG-BRANCH-STATE-" + suffix, "Branch State Hospital"));
-        Branch only = branches.save(new Branch(org, "AUTHZ-BR-ONLY-" + suffix, "Only Branch", "Nowhere"));
+        Branch only = branches.save(new Branch(FixtureHospitals.ensureHospital(hospitals, org), "AUTHZ-BR-ONLY-" + suffix, "Only Branch", "Nowhere"));
         UserAccount account = newDedicatedAccount("branch-state", Role.STAFF, AssignmentScope.ORGANIZATION, org, null, null);
         String token = login(account.getUsername());
         assertEquals(HttpStatus.OK, get("/api/dashboard", token).getStatusCode());
@@ -1217,6 +1258,97 @@ class SecurityAuthorizationTest {
     }
 
     /**
+     * Phase 5 T053 (FR-004): deactivating a hospital invalidates every
+     * descendant scope's outstanding token immediately — branch, department,
+     * hospital, and network contexts all fail closed on the next request
+     * even though their own branch rows stay active — and every re-login is
+     * refused with the non-enumerating credentials body.
+     */
+    @Test
+    void disabledHospitalImmediatelyInvalidatesEveryDescendantScopedToken() {
+        HospitalOrganization org = organizations.save(new HospitalOrganization(
+                "AUTHZ-ORG-HOSP-DIS-" + suffix, "Hospital Disable Network"));
+        HospitalFacility hospital = hospitals.save(new HospitalFacility(org, "AUTHZ-HOSP-DIS-" + suffix,
+                "Synthetic Disable Hospital " + suffix, "Synthetic Region", "UTC"));
+        Branch branchA = branches.save(new Branch(hospital, "AUTHZ-BR-DIS-A-" + suffix,
+                "Disable Branch A", "1 Disable Way", hospital.getTimeZone()));
+        Branch branchB = branches.save(new Branch(hospital, "AUTHZ-BR-DIS-B-" + suffix,
+                "Disable Branch B", "2 Disable Way", hospital.getTimeZone()));
+        Department department = departments.save(new Department(branchB, "AUTHZ-DEP-DIS-" + suffix,
+                "Disable Department", "general", "3 Disable Way"));
+
+        UserAccount branchUser = accounts.save(new UserAccount("hosp-dis-branch-" + suffix,
+                encoder.encode(TEST_ACCOUNT_PASSWORD), Set.of(Role.NURSE)));
+        assignments.save(ActingAssignment.branch(branchUser, org, Role.NURSE, branchA));
+        UserAccount hospitalUser = accounts.save(new UserAccount("hosp-dis-hospital-" + suffix,
+                encoder.encode(TEST_ACCOUNT_PASSWORD), Set.of(Role.ADMIN)));
+        assignments.save(ActingAssignment.hospital(hospitalUser, org, Role.ADMIN, hospital));
+        UserAccount networkUser = accounts.save(new UserAccount("hosp-dis-network-" + suffix,
+                encoder.encode(TEST_ACCOUNT_PASSWORD), Set.of(Role.STAFF)));
+        assignments.save(ActingAssignment.organization(networkUser, org, Role.STAFF));
+        UserAccount departmentUser = accounts.save(new UserAccount("hosp-dis-dept-" + suffix,
+                encoder.encode(TEST_ACCOUNT_PASSWORD), Set.of(Role.DOCTOR)));
+        transactionTemplate.executeWithoutResult(tx -> assignments.save(ActingAssignment.department(
+                accounts.findById(departmentUser.getId()).orElseThrow(), org, Role.DOCTOR,
+                departments.findById(department.getId()).orElseThrow())));
+
+        String branchToken = login(branchUser.getUsername());
+        String hospitalToken = login(hospitalUser.getUsername());
+        String networkToken = login(networkUser.getUsername());
+        String departmentToken = login(departmentUser.getUsername());
+        assertEquals(HttpStatus.OK, get("/api/dashboard", branchToken).getStatusCode());
+        assertEquals(HttpStatus.OK, get("/api/dashboard", hospitalToken).getStatusCode());
+        assertEquals(HttpStatus.OK, get("/api/dashboard", networkToken).getStatusCode());
+        assertEquals(HttpStatus.OK, get("/api/dashboard", departmentToken).getStatusCode());
+
+        jdbc.update("update hospitals set active = false where id = ?", hospital.getId());
+
+        assertEquals(HttpStatus.UNAUTHORIZED, get("/api/dashboard", branchToken).getStatusCode(),
+                "an inactive hospital invalidates the branch-scoped token immediately (active branch is not enough)");
+        assertEquals(HttpStatus.UNAUTHORIZED, get("/api/dashboard", hospitalToken).getStatusCode(),
+                "an inactive hospital invalidates its own hospital-scoped token immediately");
+        assertEquals(HttpStatus.UNAUTHORIZED, get("/api/dashboard", networkToken).getStatusCode(),
+                "an inactive hospital invalidates the network token whose selected branch hangs beneath it");
+        assertEquals(HttpStatus.UNAUTHORIZED, get("/api/dashboard", departmentToken).getStatusCode(),
+                "an inactive hospital invalidates the department-scoped token immediately");
+
+        for (UserAccount user : List.of(branchUser, hospitalUser, networkUser, departmentUser)) {
+            ResponseEntity<Map<String, Object>> relogin = exchangeLogin(user.getUsername(), TEST_ACCOUNT_PASSWORD);
+            assertEquals(HttpStatus.UNAUTHORIZED, relogin.getStatusCode(),
+                    "no descendant scope can log back in under an inactive hospital");
+            assertEquals(Map.of("error", INVALID_CREDENTIALS_BODY), relogin.getBody(),
+                    "the re-login refusal is the non-enumerating credentials body");
+        }
+    }
+
+    /**
+     * Phase 5 T053: the branch leg of the invalidation matrix in the exact
+     * descendant shape — a BRANCH-scope token dies the moment its own fixed
+     * branch is deactivated, even though the hospital ancestor stays up.
+     */
+    @Test
+    void disabledOwnBranchInvalidatesItsBranchScopedTokenImmediately() {
+        HospitalOrganization org = organizations.save(new HospitalOrganization(
+                "AUTHZ-ORG-BRANCH-DIS-" + suffix, "Branch Disable Network"));
+        HospitalFacility hospital = FixtureHospitals.ensureHospital(hospitals, org);
+        Branch branch = branches.save(new Branch(hospital, "AUTHZ-BR-DIS-" + suffix,
+                "Own Disable Branch", "4 Disable Way", hospital.getTimeZone()));
+        UserAccount branchUser = accounts.save(new UserAccount("branch-dis-" + suffix,
+                encoder.encode(TEST_ACCOUNT_PASSWORD), Set.of(Role.NURSE)));
+        assignments.save(ActingAssignment.branch(branchUser, org, Role.NURSE, branch));
+
+        String token = login(branchUser.getUsername());
+        assertEquals(HttpStatus.OK, get("/api/dashboard", token).getStatusCode());
+
+        jdbc.update("update branches set active = false where id = ?", branch.getId());
+        assertEquals(HttpStatus.UNAUTHORIZED, get("/api/dashboard", token).getStatusCode(),
+                "a deactivated fixed branch invalidates the branch-scoped token immediately");
+        ResponseEntity<Map<String, Object>> relogin = exchangeLogin(branchUser.getUsername(), TEST_ACCOUNT_PASSWORD);
+        assertEquals(HttpStatus.UNAUTHORIZED, relogin.getStatusCode(),
+                "no usable fixed branch — login fails closed");
+    }
+
+    /**
      * Requirement 4 (part 6): department relationships that contradict the
      * assignment fail closed — login refuses the account when the broken
      * assignment is the only one, and switching to it is 403 when a valid
@@ -1227,12 +1359,17 @@ class SecurityAuthorizationTest {
         HospitalOrganization foreignOrg = organizations.save(new HospitalOrganization(
                 "AUTHZ-ORG-DEPT-" + suffix, "Department Foreign Hospital"));
         Branch foreignBranch = branches.save(
-                new Branch(foreignOrg, "AUTHZ-BR-DEPT-" + suffix, "Foreign Department Branch", "Elsewhere"));
+                new Branch(FixtureHospitals.ensureHospital(hospitals, foreignOrg), "AUTHZ-BR-DEPT-" + suffix, "Foreign Department Branch", "Elsewhere"));
         Department foreignDepartment = departments.save(new Department(
                 foreignBranch, "AUTHZ-DEP-" + suffix, "Foreign Department", "general", "1 Foreign Way"));
 
-        UserAccount crossOrg = newDedicatedAccount("dept-cross", Role.NURSE, AssignmentScope.DEPARTMENT,
-                testOrg(), null, foreignDepartment);
+        UserAccount crossOrg = accounts.save(new UserAccount("dept-cross-" + suffix,
+                encoder.encode(TEST_ACCOUNT_PASSWORD), Set.of(Role.NURSE)));
+        jdbc.update("""
+                insert into acting_assignments (id, account_id, organization_id, hospital_id, department_id,
+                    role, scope, enabled, created_at, updated_at, version)
+                values (?, ?, ?, null, ?, 'NURSE', 'DEPARTMENT', true, now(), now(), 0)
+                """, UUID.randomUUID(), crossOrg.getId(), testOrg().getId(), foreignDepartment.getId());
         assertEquals(HttpStatus.UNAUTHORIZED, exchangeLogin(crossOrg.getUsername(), TEST_ACCOUNT_PASSWORD).getStatusCode(),
                 "a department inconsistent with the assignment organization fails login closed");
 
@@ -1250,10 +1387,17 @@ class SecurityAuthorizationTest {
 
         UserAccount mixed = newDedicatedAccount("dept-mixed", Role.NURSE, AssignmentScope.BRANCH,
                 testOrg(), testBranch(DEFAULT_BRANCH_CODE), null);
-        ActingAssignment broken = assignments.save(
-                ActingAssignment.department(mixed, testOrg(), Role.DOCTOR, foreignDepartment));
+        // Destructive persisted-row seeding: the cross-organization department
+        // assignment is inexpressible through the factories, so the broken row
+        // is inserted directly and must be refused fail-closed at switch.
+        java.util.UUID brokenId = java.util.UUID.randomUUID();
+        jdbc.update("""
+                insert into acting_assignments (id, account_id, organization_id, hospital_id, department_id,
+                    role, scope, enabled, created_at, updated_at, version)
+                values (?, ?, ?, null, ?, 'DOCTOR', 'DEPARTMENT', true, now(), now(), 0)
+                """, brokenId, mixed.getId(), testOrg().getId(), foreignDepartment.getId());
         String token = login(mixed.getUsername());
-        assertEquals(HttpStatus.FORBIDDEN, switchContext(token, broken.getId(), null).getStatusCode(),
+        assertEquals(HttpStatus.FORBIDDEN, switchContext(token, brokenId, null).getStatusCode(),
                 "an inconsistent department assignment is refused at switch");
     }
 
@@ -1268,8 +1412,8 @@ class SecurityAuthorizationTest {
         long before = contextSwitchEventCount();
         long beforeForAssignment = switchEventsFor(adminAssignment);
 
-        ResponseEntity<Map<String, Object>> switched =
-                switchContext(token, adminAssignment, testBranch(OTHER_BRANCH_CODE).getId());
+        ResponseEntity<Map<String, Object>> switched = switchContext(token, adminAssignment,
+                testBranch(OTHER_BRANCH_CODE).getHospital().getId(), testBranch(OTHER_BRANCH_CODE).getId());
         assertEquals(HttpStatus.OK, switched.getStatusCode());
         assertEquals(before + 1, contextSwitchEventCount(), "exactly one event per successful switch");
         assertEquals(beforeForAssignment + 1, switchEventsFor(adminAssignment),
@@ -1388,7 +1532,7 @@ class SecurityAuthorizationTest {
         HospitalOrganization foreignOrganization = organizations.save(new HospitalOrganization(
                 "AUTHZ-ORG-DEPT-CLAIM-" + suffix, "Department Claim Hospital"));
         Branch foreignBranch = branches.save(
-                new Branch(foreignOrganization, "AUTHZ-BR-DEPT-CLAIM-" + suffix, "Foreign Claim Branch", "Elsewhere"));
+                new Branch(FixtureHospitals.ensureHospital(hospitals, foreignOrganization), "AUTHZ-BR-DEPT-CLAIM-" + suffix, "Foreign Claim Branch", "Elsewhere"));
         Department foreignDepartment = departments.save(new Department(
                 foreignBranch, "AUTHZ-DEP-CLAIM-" + suffix, "Foreign Claim Department", "general", "7 Foreign Way"));
         String tampered = forgedToken(account.getUsername(), assignmentId, "NURSE", "DEPARTMENT",
@@ -1402,6 +1546,57 @@ class SecurityAuthorizationTest {
                 "a missing departmentId claim fails the structural equality — department null semantics hold");
     }
 
+    /**
+     * Phase 5 T024: the acting hospital is a structural claim. A token whose
+     * hospitalId claim was altered cannot authenticate, and a token without
+     * the hospitalId claim at all (the stale pre-hierarchy shape) is equally
+     * unauthenticated — the claim is required and must match the rebuilt
+     * server context exactly. The re-signed control proves the forging
+     * mechanism itself authenticates.
+     */
+    @Test
+    void hospitalStructuralClaimsFailClosedOnTamperingAndStaleness() {
+        io.jsonwebtoken.Claims claims = Jwts.parser()
+                .verifyWith(Keys.hmacShaKeyFor(TEST_JWT_SECRET.getBytes(StandardCharsets.UTF_8)))
+                .build()
+                .parseSignedClaims(login(NURSE))
+                .getPayload();
+
+        String control = reSignedToken(claims, (String) claims.get("hospitalId"));
+        assertEquals(HttpStatus.OK, get("/api/dashboard", control).getStatusCode(),
+                "the re-signed structurally identical token authenticates (tampering-mechanism control)");
+
+        String tampered = reSignedToken(claims, UUID.randomUUID().toString());
+        assertEquals(HttpStatus.UNAUTHORIZED, get("/api/dashboard", tampered).getStatusCode(),
+                "an altered hospitalId claim cannot authenticate — it must match the server context");
+
+        String stale = reSignedToken(claims, null);
+        assertEquals(HttpStatus.UNAUTHORIZED, get("/api/dashboard", stale).getStatusCode(),
+                "a token without the hospitalId claim (the stale pre-hierarchy shape) stays unauthenticated");
+    }
+
+    /** Re-signs a captured claim set with one structural claim replaced; a null hospitalId omits it. */
+    private String reSignedToken(io.jsonwebtoken.Claims claims, String hospitalId) {
+        Instant now = Instant.now();
+        var builder = Jwts.builder()
+                .subject(claims.getSubject())
+                .claim("assignmentId", claims.get("assignmentId", String.class))
+                .claim("role", claims.get("role", String.class))
+                .claim("scope", claims.get("scope", String.class))
+                .claim("organizationId", claims.get("organizationId", String.class))
+                .claim("branchId", claims.get("branchId", String.class));
+        if (hospitalId != null) {
+            builder.claim("hospitalId", hospitalId);
+        }
+        if (claims.get("departmentId") != null) {
+            builder.claim("departmentId", claims.get("departmentId", String.class));
+        }
+        return builder.issuedAt(Date.from(now))
+                .expiration(Date.from(now.plus(Duration.ofMinutes(30))))
+                .signWith(Keys.hmacShaKeyFor(TEST_JWT_SECRET.getBytes(StandardCharsets.UTF_8)))
+                .compact();
+    }
+
     /** Builds a correctly signed token with arbitrary (possibly tampered) claims. */
     private String forgedToken(String username, UUID assignmentId, String claimedRole, String claimedScope,
                                UUID organizationId, UUID branchId) {
@@ -1411,6 +1606,13 @@ class SecurityAuthorizationTest {
     /** Builds a correctly signed token with arbitrary claims; a null departmentId omits the optional claim. */
     private String forgedToken(String username, UUID assignmentId, String claimedRole, String claimedScope,
                                UUID organizationId, UUID branchId, UUID departmentId) {
+        // Phase 5: the acting hospital is a required structural claim; the
+        // control tokens carry the claimed branch's own facility so the
+        // structural equality still authenticates them.
+        String hospitalId = branches.findById(branchId)
+                .map(Branch::getHospital).map(HospitalFacility::getId)
+                .map(UUID::toString)
+                .orElseThrow(() -> new IllegalStateException("fixture branch missing"));
         Instant now = Instant.now();
         var builder = Jwts.builder()
                 .subject(username)
@@ -1418,6 +1620,7 @@ class SecurityAuthorizationTest {
                 .claim("role", claimedRole)
                 .claim("scope", claimedScope)
                 .claim("organizationId", organizationId.toString())
+                .claim("hospitalId", hospitalId)
                 .claim("branchId", branchId.toString())
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(now.plus(Duration.ofMinutes(30))));
@@ -1531,8 +1734,8 @@ class SecurityAuthorizationTest {
         long before = contextSwitchEventCount();
 
         String token = login(ADMIN);
-        ResponseEntity<Map<String, Object>> switched =
-                switchContext(token, adminAssignment, selectedBranchId);
+        ResponseEntity<Map<String, Object>> switched = switchContext(token, adminAssignment,
+                testBranch(OTHER_BRANCH_CODE).getHospital().getId(), selectedBranchId);
         assertTrue(switched.getStatusCode().is2xxSuccessful(), "the switch must succeed");
         String echoed = switched.getHeaders().getFirst(CORRELATION_HEADER);
         assertBoundedCorrelation(echoed);
@@ -1665,7 +1868,7 @@ class SecurityAuthorizationTest {
                 "system-seeded legacy evidence " + suffix);
 
         ActingContext branchSeedContext = new ActingContext("system", null, null, null,
-                testOrg().getId(), defaultBranch.getId(), null);
+                testOrg().getId(), defaultBranch.getHospital().getId(), defaultBranch.getId(), null);
         SecurityContextHolder.getContext().setAuthentication(
                 UsernamePasswordAuthenticationToken.authenticated(branchSeedContext, null, List.of()));
         auditService.record("CREATE", "BranchSeedAuditFixture", UUID.randomUUID().toString(),
@@ -1687,7 +1890,7 @@ class SecurityAuthorizationTest {
         String orgToken = login(ADMIN);
         UUID adminAssignment = assignmentIdFor(ADMIN, Role.ADMIN);
         ResponseEntity<Map<String, Object>> foreignSwitch =
-                switchContext(orgToken, adminAssignment, otherBranch.getId());
+                switchContext(orgToken, adminAssignment, otherBranch.getHospital().getId(), otherBranch.getId());
         assertTrue(foreignSwitch.getStatusCode().is2xxSuccessful(), "the foreign-branch switch must succeed");
         String foreignToken = String.valueOf(foreignSwitch.getBody().get("accessToken"));
         assertFalse(foreignToken.isBlank(), "the foreign-branch switch must issue a replacement token");

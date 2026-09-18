@@ -9,20 +9,40 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 
+import java.util.Objects;
+
 /**
- * One branch of the single hospital organization (docs/plan3.md Task 2).
- * A branch belongs to exactly one organization, is active by default, and
- * carries a code that is unique inside its organization — enforced here by
- * the {@code (organization_id, code)} DB unique constraint as the
- * concurrency backstop behind the {@link OrganizationService} pre-check.
- * The human code is an identifier only and is never authorization
- * evidence.
+ * One branch of the synthetic network (docs/plan3.md Task 2; Phase 5
+ * data-model.md). Since Phase 5 a branch belongs to exactly one
+ * {@link HospitalFacility} and, through it, to its organization — the
+ * hospital is required, and the organization reference is derived from the
+ * facility's own organization, so {@code branch.hospital.organization ==
+ * branch.organization} holds by construction and the database's composite
+ * consistency FK ({@code fk_branches_hospital_organization}) keeps the
+ * stored pair unrepresentable-divergent. The legacy {@code organization_id}
+ * column stays only as the migration compatibility seam.
+ *
+ * <p>A branch is active by default and carries a code that is unique inside
+ * its hospital — enforced by the {@code (hospital_id, code)} DB unique
+ * constraint ({@code uk_branches_hospital_code}, V5) as the concurrency
+ * backstop behind the service pre-check; the replaced organization-scoped
+ * constraint never widened back. The human code is an identifier only and
+ * is never authorization evidence.</p>
  */
 @Entity
 @Table(name = "branches", uniqueConstraints = @UniqueConstraint(
-        name = "uk_branches_organization_code", columnNames = {"organization_id", "code"}))
+        name = "uk_branches_hospital_code", columnNames = {"hospital_id", "code"}))
 public class Branch extends BaseEntity {
 
+    /**
+     * The owning hospital facility (required). The organization column is
+     * derived from it at construction and never set independently.
+     */
+    @ManyToOne(optional = false, fetch = FetchType.LAZY)
+    @JoinColumn(name = "hospital_id", nullable = false)
+    private HospitalFacility hospital;
+
+    /** Migration compatibility seam: derived from {@link #hospital}; never client-assigned. */
     @ManyToOne(optional = false, fetch = FetchType.LAZY)
     @JoinColumn(name = "organization_id", nullable = false)
     private HospitalOrganization organization;
@@ -60,20 +80,31 @@ public class Branch extends BaseEntity {
      * initializer's legacy seams) stay deterministic. It assigns UTC —
      * a fixed, documented, host-independent zone — never the JVM default.
      */
-    public Branch(HospitalOrganization organization, String code, String name, String locationLabel) {
-        this(organization, code, name, locationLabel, java.time.ZoneId.of("UTC"));
+    public Branch(HospitalFacility hospital, String code, String name, String locationLabel) {
+        this(hospital, code, name, locationLabel, java.time.ZoneId.of("UTC"));
     }
 
-    /** The full constructor: the zone is validated by the branch surface, never taken raw from a client. */
-    public Branch(HospitalOrganization organization, String code, String name, String locationLabel,
+    /**
+     * The full constructor: the owning facility is required, the organization
+     * reference is derived from it (validated consistency — no independent,
+     * possibly divergent organization parameter exists), and the zone is
+     * validated by the branch surface, never taken raw from a client.
+     */
+    public Branch(HospitalFacility hospital, String code, String name, String locationLabel,
                   java.time.ZoneId timeZone) {
-        this.organization = organization;
+        this.hospital = Objects.requireNonNull(hospital, "hospital");
+        this.organization = hospital.getOrganization();
         this.code = code;
         this.name = name;
         this.locationLabel = locationLabel;
         this.timeZone = timeZone;
     }
 
+    public HospitalFacility getHospital() {
+        return hospital;
+    }
+
+    /** The network owner, derived from the facility's own organization. */
     public HospitalOrganization getOrganization() {
         return organization;
     }

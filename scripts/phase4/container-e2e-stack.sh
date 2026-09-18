@@ -119,6 +119,19 @@ case "$action" in
         docker compose version >/dev/null 2>&1 || fail "docker compose is required"
         [ -f "$COMPOSE_FILE" ] || fail "compose.yaml not found"
 
+        # Deterministic root Playwright install (E2E-HARNESS-004): the root
+        # manifests are the only source of truth. The pinned runner is
+        # installed from the root lockfile BEFORE any credential or container
+        # exists, and the test CLI below is invoked strictly from that
+        # repository-local install — npx must never fetch a transient runner
+        # again (a transient runner cannot resolve root @playwright/test).
+        command -v npm >/dev/null || fail "npm is required"
+        [ -f "$REPO_DIR/package.json" ] || fail "root package.json not found"
+        [ -f "$REPO_DIR/package-lock.json" ] || fail "root package-lock.json not found"
+        info "installing pinned root dependencies from package-lock.json (lifecycle scripts, audit, fund disabled)"
+        npm ci --ignore-scripts --no-audit --no-fund \
+            || fail "deterministic root npm ci failed; refusing to start the e2e stack"
+
         expected_migrations="$(ls "$MIGRATION_DIR"/V*.sql | wc -l)"
         [ "$expected_migrations" -gt 0 ] || fail "no migration files found"
 
@@ -159,7 +172,10 @@ case "$action" in
                 && wait_healthy 420 \
                 && prove_ownership; then
                 info "stack proven; starting Playwright container E2E suite"
-                npx playwright test "${@:2}"
+                # Repository-local pinned runner only: --no makes npm exec
+                # fail instead of downloading a transient package. Forwarded
+                # test args are passed through exactly.
+                npm exec --no -- playwright test "${@:2}"
                 overall=$?
                 info "Playwright finished with status $overall"
             else

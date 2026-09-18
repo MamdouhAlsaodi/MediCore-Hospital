@@ -64,12 +64,31 @@ hospital:
     secret: ${HOSPITAL_JWT_SECRET}
     ttl-minutes: 60
 # Phase 4 (plan Task 10, T068; FR-016): the generated contract covers the
-# six demonstrated route families (auth, patients, appointments, admissions,
+# demonstrated route families (auth, patients, appointments, admissions,
 # command-center dashboard, audit) — exactly the domains the frontend
 # generated typed client consumes. Legacy module routes stay undocumented;
 # documenting them would widen the contract surface without any consumer.
+# Phase 5 US1 (T041): the network-hierarchy read joins the contract; the
+# explicit paths allowlist keeps the organization package's legacy ADMIN
+# routes undocumented while adding exactly the one new hierarchy path.
 springdoc:
-  packages-to-scan: com.mamtrex.hospital.auth,com.mamtrex.hospital.patient,com.mamtrex.hospital.appointment,com.mamtrex.hospital.admission,com.mamtrex.hospital.reporting,com.mamtrex.hospital.audit
+  packages-to-scan: com.mamtrex.hospital.auth,com.mamtrex.hospital.patient,com.mamtrex.hospital.appointment,com.mamtrex.hospital.admission,com.mamtrex.hospital.reporting,com.mamtrex.hospital.audit,com.mamtrex.hospital.organization
+  paths-to-match:
+    - /api/auth/login
+    - /api/auth/context
+    - /api/patients
+    - /api/patients/{id}
+    - /api/appointments
+    - /api/appointments/{id}
+    - /api/admissions
+    - /api/admissions/{id}
+    - /api/admissions/{id}/bed
+    - /api/admissions/{id}/status
+    - /api/dashboard
+    - /api/dashboard/branch
+    - /api/dashboard/network
+    - /api/audit
+    - /api/network/hierarchy
 server:
   address: 127.0.0.1
   port: 5501

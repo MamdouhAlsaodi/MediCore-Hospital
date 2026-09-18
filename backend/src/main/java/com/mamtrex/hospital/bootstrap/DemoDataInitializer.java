@@ -18,6 +18,8 @@ import com.mamtrex.hospital.emergency.EmergencyVisit;
 import com.mamtrex.hospital.emergency.EmergencyVisitRepository;
 import com.mamtrex.hospital.organization.Branch;
 import com.mamtrex.hospital.organization.BranchRepository;
+import com.mamtrex.hospital.organization.HospitalFacility;
+import com.mamtrex.hospital.organization.HospitalFacilityRepository;
 import com.mamtrex.hospital.organization.HospitalOrganization;
 import com.mamtrex.hospital.organization.HospitalOrganizationRepository;
 import com.mamtrex.hospital.patient.Patient;
@@ -118,21 +120,22 @@ public class DemoDataInitializer implements ApplicationRunner {
     private final InvoiceRepository invoiceRepository;
     private final BedRepository bedRepository;
     private final HospitalOrganizationRepository organizationRepository;
+    private final HospitalFacilityRepository hospitalRepository;
     private final BranchRepository branchRepository;
     private final DepartmentRepository departmentRepository;
     private final AuditService auditService;
 
     /**
-     * Why thirteen constructor parameters: this bounded seeder needs the
+     * Why fourteen constructor parameters: this bounded seeder needs the
      * whole write surface of the three-branch demo cohort — one repository
-     * per seeded aggregate (including the Task 2 hierarchy, Task 6 beds,
-     * Task 9 availability, and the Task 7 live bed assignments) plus
-     * {@link AuditService} — and Spring constructor injection keeps every
-     * collaborator explicit and fakeable in tests. This remains a
-     * deliberate, documented clean-code exception to the few-dependencies
-     * heuristic, not a pattern to copy elsewhere. Revisit trigger: split
-     * collaborators only when a second seed profile or a second persistence
-     * adapter creates a real independent actor.
+     * per seeded aggregate (including the Task 2 hierarchy, the Phase 5
+     * legacy hospital, Task 6 beds, Task 9 availability, and the Task 7
+     * live bed assignments) plus {@link AuditService} — and Spring
+     * constructor injection keeps every collaborator explicit and fakeable
+     * in tests. This remains a deliberate, documented clean-code exception
+     * to the few-dependencies heuristic, not a pattern to copy elsewhere.
+     * Revisit trigger: split collaborators only when a second seed profile
+     * or a second persistence adapter creates a real independent actor.
      */
     public DemoDataInitializer(PatientRepository patientRepository,
                                StaffMemberRepository staffMemberRepository,
@@ -144,6 +147,7 @@ public class DemoDataInitializer implements ApplicationRunner {
                                InvoiceRepository invoiceRepository,
                                BedRepository bedRepository,
                                HospitalOrganizationRepository organizationRepository,
+                               HospitalFacilityRepository hospitalRepository,
                                BranchRepository branchRepository,
                                DepartmentRepository departmentRepository,
                                AuditService auditService) {
@@ -157,6 +161,7 @@ public class DemoDataInitializer implements ApplicationRunner {
         this.invoiceRepository = invoiceRepository;
         this.bedRepository = bedRepository;
         this.organizationRepository = organizationRepository;
+        this.hospitalRepository = hospitalRepository;
         this.branchRepository = branchRepository;
         this.departmentRepository = departmentRepository;
         this.auditService = auditService;
@@ -167,11 +172,18 @@ public class DemoDataInitializer implements ApplicationRunner {
         seedDemoCohort();
     }
 
-    /** Immutable Task 2/12 hierarchy business keys; the initializer owns only these rows. */
+    /** Immutable Task 2/12 + Phase 5 hierarchy business keys; the initializer owns only these rows. */
     static final String DEMO_ORGANIZATION_CODE = "DEMO-ORG-001";
+    static final String DEMO_HOSPITAL_CODE = "LEGACY-HOSPITAL-001";
+    static final String DEMO_HOSPITAL_RIVERSIDE_CODE = "DEMO-HOSP-002";
+    static final String DEMO_HOSPITAL_HARBORVIEW_CODE = "DEMO-HOSP-003";
     static final String DEMO_BRANCH_CODE = "DEMO-BR-001";
     static final String DEMO_BRANCH_NORTH_CODE = "DEMO-BR-002";
     static final String DEMO_BRANCH_HARBOR_CODE = "DEMO-BR-003";
+    static final String DEMO_BRANCH_RIVERSIDE_EAST_CODE = "DEMO-BR-1101";
+    static final String DEMO_BRANCH_RIVERSIDE_WEST_CODE = "DEMO-BR-1102";
+    static final String DEMO_BRANCH_HARBORVIEW_PIER_CODE = "DEMO-BR-2201";
+    static final String DEMO_BRANCH_HARBORVIEW_DUNE_CODE = "DEMO-BR-2202";
 
     /**
      * Seeds the synthetic three-branch demo cohort; safe to call repeatedly
@@ -181,25 +193,77 @@ public class DemoDataInitializer implements ApplicationRunner {
      */
     void seedDemoCohort() {
         Branch main = seedDemoHierarchy();
-        Branch north = seedBranch(main.getOrganization(), DEMO_BRANCH_NORTH_CODE,
+        HospitalFacility hospital = main.getHospital();
+        Branch north = seedBranch(hospital, DEMO_BRANCH_NORTH_CODE,
                 "Demo North Branch", "9 Demo North Road",
                 "DEMO-DEP-0101", "Demo General Practice", "general medicine", "Demo Wing C");
-        Branch harbor = seedBranch(main.getOrganization(), DEMO_BRANCH_HARBOR_CODE,
+        Branch harbor = seedBranch(hospital, DEMO_BRANCH_HARBOR_CODE,
                 "Demo Harbor Branch", "17 Demo Harbor Lane",
                 "DEMO-DEP-0201", "Demo Harbor Clinic", "general medicine", "Demo Pavilion D");
 
         seedDefaultBranchCohort(main);
         seedNorthBranchCohort(north);
         seedHarborBranchCohort(harbor);
+        // Phase 5 US1 (T038): two deterministic fixture hospitals with two
+        // bare branches each — the network spans three hospitals and three
+        // IANA zones while the Phase 4 workflow cohort stays untouched.
+        seedFixtureHospital(organizationRepository.findByCode(DEMO_ORGANIZATION_CODE).orElseThrow(),
+                DEMO_HOSPITAL_RIVERSIDE_CODE, "Demo Riverside Hospital", "Demo Riverside Region",
+                "America/New_York",
+                DEMO_BRANCH_RIVERSIDE_EAST_CODE, "Demo Riverside East Branch", "100 Demo Riverside Road",
+                DEMO_BRANCH_RIVERSIDE_WEST_CODE, "Demo Riverside West Branch", "102 Demo Riverside Road");
+        seedFixtureHospital(organizationRepository.findByCode(DEMO_ORGANIZATION_CODE).orElseThrow(),
+                DEMO_HOSPITAL_HARBORVIEW_CODE, "Demo Harborview Hospital", "Demo Harborview Region",
+                "Asia/Tokyo",
+                DEMO_BRANCH_HARBORVIEW_PIER_CODE, "Demo Harborview Pier Branch", "200 Demo Pier Parade",
+                DEMO_BRANCH_HARBORVIEW_DUNE_CODE, "Demo Harborview Dune Branch", "202 Demo Dune Drive");
     }
 
     /**
-     * Task 2 hierarchy fixtures: the synthetic organization, the active
-     * default branch, and only the departments this initializer owns on the
-     * default branch, each created assigned to that branch. Stable keys: the
-     * organization code, the (organization, code) branch pair, and the
-     * (branch, code) department pair. An existing row is reused untouched;
-     * only the creating path records an audit event, so reruns add nothing.
+     * One Phase 5 US1 fixture hospital with two bare synthetic branches,
+     * all under stable business keys and lookup-before-create: a rerun
+     * inserts nothing, and only the creating paths record audit events (the
+     * hospital event keeps the context-less shape — a hospital row has no
+     * owning branch — while each branch event carries the derived acting
+     * hospital). The branches carry the hospital's own validated IANA zone
+     * so every fixture branch stays zone-resolvable.
+     */
+    private void seedFixtureHospital(HospitalOrganization organization, String hospitalCode, String hospitalName,
+                                     String regionLabel, String timeZoneId,
+                                     String firstBranchCode, String firstBranchName, String firstBranchLocation,
+                                     String secondBranchCode, String secondBranchName, String secondBranchLocation) {
+        HospitalFacility hospital = hospitalRepository
+                .findByOrganizationIdAndCode(organization.getId(), hospitalCode)
+                .orElseGet(() -> {
+                    HospitalFacility saved = hospitalRepository.save(new HospitalFacility(
+                            organization, hospitalCode, hospitalName, regionLabel, timeZoneId));
+                    auditService.record("CREATE", "HospitalFacility",
+                            saved.getId().toString(), "created");
+                    return saved;
+                });
+        createBranchIfAbsent(hospital, firstBranchCode, firstBranchName, firstBranchLocation);
+        createBranchIfAbsent(hospital, secondBranchCode, secondBranchName, secondBranchLocation);
+    }
+
+    /** Lookup-before-create branch insert plus its branch-attributed CREATE event. */
+    private void createBranchIfAbsent(HospitalFacility hospital, String code, String name, String location) {
+        if (branchRepository.findByHospitalIdAndCode(hospital.getId(), code).isPresent()) {
+            return;
+        }
+        Branch saved = branchRepository.save(
+                new Branch(hospital, code, name, location, hospital.getTimeZone()));
+        recordSystemEvent(saved, "CREATE", "Branch", saved.getId().toString(), "created");
+    }
+
+    /**
+     * Task 2 + Phase 5 hierarchy fixtures: the synthetic organization, the
+     * one deterministic legacy hospital (Phase 5 T027 — the Phase 4 cohort
+     * is preserved under it unchanged), and only the departments this
+     * initializer owns on the default branch, each created assigned to that
+     * branch. Stable keys: the organization code, the (organization, code)
+     * hospital pair, the (hospital, code) branch pair, and the (branch,
+     * code) department pair. An existing row is reused untouched; only the
+     * creating path records an audit event, so reruns add nothing.
      */
     private Branch seedDemoHierarchy() {
         HospitalOrganization organization = organizationRepository
@@ -213,10 +277,22 @@ public class DemoDataInitializer implements ApplicationRunner {
                             saved.getId().toString(), "created");
                     return saved;
                 });
+        HospitalFacility hospital = hospitalRepository
+                .findByOrganizationIdAndCode(organization.getId(), DEMO_HOSPITAL_CODE)
+                .orElseGet(() -> {
+                    HospitalFacility saved = hospitalRepository.save(new HospitalFacility(
+                            organization, DEMO_HOSPITAL_CODE, "Demo Legacy Hospital",
+                            "Demo Region", "UTC"));
+                    // The hospital row has no owning branch: its event also
+                    // keeps the fully context-less startup shape.
+                    auditService.record("CREATE", "HospitalFacility",
+                            saved.getId().toString(), "created");
+                    return saved;
+                });
         Branch main = branchRepository
-                .findByOrganizationIdAndCode(organization.getId(), DEMO_BRANCH_CODE)
+                .findByHospitalIdAndCode(hospital.getId(), DEMO_BRANCH_CODE)
                 .orElseGet(() ->
-                        createBranch(organization, DEMO_BRANCH_CODE, "Demo Main Branch", "1 Demo Campus",
+                        createBranch(hospital, DEMO_BRANCH_CODE, "Demo Main Branch", "1 Demo Campus",
                                 java.time.ZoneId.of("UTC")));
         seedDemoDepartment(main, "DEMO-DEP-0001", "Demo Internal Medicine", "internal medicine", "Demo Tower A");
         seedDemoDepartment(main, "DEMO-DEP-0002", "Demo Emergency Care", "emergency medicine", "Demo Tower B");
@@ -224,11 +300,12 @@ public class DemoDataInitializer implements ApplicationRunner {
     }
 
     /**
-     * One Task 12 synthetic branch of the demo organization with its one
-     * initializer-owned department, both under stable business keys, so the
-     * three branches carry obviously different size and geography.
+     * One Task 12 synthetic branch of the demo organization's legacy
+     * hospital with its one initializer-owned department, both under stable
+     * business keys, so the three branches carry obviously different size
+     * and geography.
      */
-    private Branch seedBranch(HospitalOrganization organization, String branchCode, String branchName,
+    private Branch seedBranch(HospitalFacility hospital, String branchCode, String branchName,
                               String location, String departmentCode, String departmentName,
                               String specialty, String departmentLocation) {
         // Phase 4 (FR-012): each demo branch carries its own documented,
@@ -243,16 +320,16 @@ public class DemoDataInitializer implements ApplicationRunner {
             default -> null;
         };
         Branch branch = branchRepository
-                .findByOrganizationIdAndCode(organization.getId(), branchCode)
-                .orElseGet(() -> createBranch(organization, branchCode, branchName, location, zone));
+                .findByHospitalIdAndCode(hospital.getId(), branchCode)
+                .orElseGet(() -> createBranch(hospital, branchCode, branchName, location, zone));
         seedDemoDepartment(branch, departmentCode, departmentName, specialty, departmentLocation);
         return branch;
     }
 
     /** Branch insert plus its CREATE event attributed to the branch itself. */
-    private Branch createBranch(HospitalOrganization organization, String code, String name,
+    private Branch createBranch(HospitalFacility hospital, String code, String name,
                                 String location, java.time.ZoneId zone) {
-        Branch saved = branchRepository.save(new Branch(organization, code, name, location, zone));
+        Branch saved = branchRepository.save(new Branch(hospital, code, name, location, zone));
         recordSystemEvent(saved, "CREATE", "Branch", saved.getId().toString(), "created");
         return saved;
     }
@@ -641,7 +718,8 @@ public class DemoDataInitializer implements ApplicationRunner {
     private void recordSystemEvent(Branch owningBranch, String action, String resourceType,
                                    String resourceId, String details) {
         ActingContext context = new ActingContext("system", null, null, null,
-                owningBranch.getOrganization().getId(), owningBranch.getId(), null);
+                owningBranch.getOrganization().getId(), owningBranch.getHospital().getId(),
+                owningBranch.getId(), null);
         SecurityContextHolder.getContext().setAuthentication(
                 UsernamePasswordAuthenticationToken.authenticated(context, null, List.of()));
         try {

@@ -25,11 +25,13 @@ import java.util.UUID;
  * the client.
  *
  * <p>Parsing extracts the structural claims — subject, assignment pointer,
- * scope, organization, selected branch, and optional department — exactly
- * once into the immutable {@link StructuralClaims} pointer value. Every
- * structural claim except {@code departmentId} is required: a missing,
- * malformed, or unknown value throws through the same fail-closed boundary
- * as a bad signature. The role claim is deliberately absent from that value:
+ * scope, organization, acting hospital, selected branch, and optional
+ * department — exactly once into the immutable {@link StructuralClaims}
+ * pointer value. Every structural claim except {@code departmentId} is
+ * required: a missing, malformed, or unknown value throws through the same
+ * fail-closed boundary as a bad signature (a pre-hierarchy token without
+ * the {@code hospitalId} claim is exactly such a stale token and stays
+ * unauthenticated). The role claim is deliberately absent from that value:
  * it is never compared, never trusted, and never authoritative.</p>
  */
 @Service
@@ -44,7 +46,7 @@ public class JwtService {
         this.ttl = ttl;
     }
 
-    /** Issues a token bound to one acting context; branch is always selected, department only for its scope. */
+    /** Issues a token bound to one acting context; hospital and branch are always selected, department only for its scope. */
     public String issue(ActingContext context) {
         Instant now = Instant.now();
         var builder = Jwts.builder()
@@ -53,6 +55,7 @@ public class JwtService {
                 .claim("role", context.role().name())
                 .claim("scope", context.scope().name())
                 .claim("organizationId", context.organizationId().toString())
+                .claim("hospitalId", context.hospitalId().toString())
                 .claim("branchId", context.branchId().toString())
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(now.plus(Duration.ofMinutes(ttl))));
@@ -83,7 +86,8 @@ public class JwtService {
         }
         return new StructuralClaims(subject, requiredUuid(claims, "assignmentId"),
                 requiredScope(claims), requiredUuid(claims, "organizationId"),
-                requiredUuid(claims, "branchId"), optionalUuid(claims, "departmentId"));
+                requiredUuid(claims, "hospitalId"), requiredUuid(claims, "branchId"),
+                optionalUuid(claims, "departmentId"));
     }
 
     private static UUID requiredUuid(Claims claims, String name) {
@@ -109,12 +113,13 @@ public class JwtService {
 
     /**
      * The immutable structural token pointer: the subject, the assignment
-     * pointer, the scope, the organization, the selected branch, and the
-     * optional department. It is the only token content the filter forwards —
-     * every field is re-verified against rebuilt server state, and the role
-     * claim is intentionally not carried because it is never authoritative.
+     * pointer, the scope, the organization, the acting hospital, the
+     * selected branch, and the optional department. It is the only token
+     * content the filter forwards — every field is re-verified against
+     * rebuilt server state, and the role claim is intentionally not carried
+     * because it is never authoritative.
      */
     public record StructuralClaims(String subject, UUID assignmentId, AssignmentScope scope,
-                                   UUID organizationId, UUID branchId, UUID departmentId) {
+                                   UUID organizationId, UUID hospitalId, UUID branchId, UUID departmentId) {
     }
 }

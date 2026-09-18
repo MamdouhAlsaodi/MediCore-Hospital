@@ -55,7 +55,18 @@ public class AuthController {
 
     public record LoginRequest(@NotBlank String username, @NotBlank String password) {}
 
-    public record ContextSwitchRequest(@NotNull UUID assignmentId, UUID branchId) {}
+    /**
+     * The context-switch body (Phase 5 T050/T051): the assignment pointer is
+     * mandatory; the hospital and branch ids select only among the
+     * server-issued targets of that assignment (FR-007). Their requiredness
+     * is shape-dependent and enforced server-side: a selection scope
+     * (ORGANIZATION, HOSPITAL) must carry the target branch, and a supplied
+     * hospital id must match the server-derived chain — an omitted hospital
+     * is derived from it, never taken on faith. Fixed scopes (BRANCH,
+     * DEPARTMENT) derive their chain from the assignment and accept only
+     * matching ids.
+     */
+    public record ContextSwitchRequest(@NotNull UUID assignmentId, UUID hospitalId, UUID branchId) {}
 
     @ApiResponses({
             /** The verified session: token, enabled assignments, and the selected acting context. */
@@ -104,17 +115,20 @@ public class AuthController {
              * T068: the 403 is owned by this controller's contextRefused handler,
              * which answers with the shared ApiError shape — not the generic
              * security-error body — so it is documented on the operation itself.
+             * Phase 5: the refusal also covers missing, unknown, foreign, or
+             * inactive hospital/branch targets — every supplied id must match
+             * the assignment's server-issued active chain.
              */
             @ApiResponse(responseCode = "403", description = "The switch to the requested assignment is refused "
-            + "(unknown, disabled, or out-of-scope target). Shared ApiError body with a controlled, "
-            + "non-widening message.",
+            + "(unknown, disabled, or out-of-scope target, or a missing/foreign/inactive hospital or branch "
+            + "target). Shared ApiError body with a controlled, non-widening message.",
             content = @Content(mediaType = "application/json",
                     schema = @Schema(implementation = ApiError.class)))
     })
     @PostMapping("/context")
     public ActingContextService.Session switchContext(@AuthenticationPrincipal ActingContext actor,
                                                       @Valid @RequestBody ContextSwitchRequest request) {
-        return sessions.switchContext(actor, request.assignmentId(), request.branchId());
+        return sessions.switchContext(actor, request.assignmentId(), request.hospitalId(), request.branchId());
     }
 
     /**

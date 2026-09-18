@@ -44,12 +44,16 @@ class BranchTimeServiceTest {
 
     private static Branch branch(ZoneId zone) {
         HospitalOrganization org = new HospitalOrganization("ZONE-ORG", "Demo Synthetic Hospital");
-        return new Branch(org, "ZONE-BR", "Demo Branch", "1 Demo Campus", zone);
+        HospitalFacility hospital = new HospitalFacility(
+                org, "ZONE-HOSP", "Demo Hospital", "Demo Region", "UTC");
+        return new Branch(hospital, "ZONE-BR", "Demo Branch", "1 Demo Campus", zone);
     }
 
     private static Branch legacyBranch() {
         HospitalOrganization org = new HospitalOrganization("ZONE-ORG", "Demo Synthetic Hospital");
-        return new Branch(org, "ZONE-BR-LEGACY", "Demo Legacy Branch", "2 Demo Campus", (java.time.ZoneId) null);
+        HospitalFacility hospital = new HospitalFacility(
+                org, "ZONE-HOSP", "Demo Hospital", "Demo Region", "UTC");
+        return new Branch(hospital, "ZONE-BR-LEGACY", "Demo Legacy Branch", "2 Demo Campus", (java.time.ZoneId) null);
     }
 
     /** Ordinary conversion: a New York local summer time is UTC-4. */

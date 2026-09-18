@@ -24,6 +24,8 @@ import com.mamtrex.hospital.emergency.EmergencyVisit;
 import com.mamtrex.hospital.emergency.EmergencyVisitRepository;
 import com.mamtrex.hospital.organization.Branch;
 import com.mamtrex.hospital.organization.BranchRepository;
+import com.mamtrex.hospital.organization.HospitalFacility;
+import com.mamtrex.hospital.organization.HospitalFacilityRepository;
 import com.mamtrex.hospital.organization.HospitalOrganization;
 import com.mamtrex.hospital.organization.HospitalOrganizationRepository;
 import com.mamtrex.hospital.patient.Patient;
@@ -70,7 +72,24 @@ import static org.junit.jupiter.api.Assertions.*;
  * fabricated assignment, role, or organization), the typed branch and
  * network dashboards count the cohort exactly with nonzero coverage per
  * branch, repeated initialization inserts zero records and zero events,
- * and the disabled default touches no store and records no event. The
+ * Pins the opt-in bootstrap behavior: the initializer does not exist by
+ * default (no flag, no writes), the dedicated {@code medicore.demo.seed}
+ * flag produces the coherent synthetic operations cohort — one stable
+ * synthetic organization, three obviously synthetic hospitals (the legacy
+ * facility plus the Phase 5 US1 fixture pair) with seven branches of varied
+ * size under stable business keys, branch-owned departments and
+ * professionals on the legacy cohort, dated same-branch availability, beds
+ * in every operational status, same-branch patients, appointments,
+ * admissions with live bed assignments, emergency visits, and simulated
+ * invoices — every seeded reference resolves same-branch, no branch-owned
+ * row has null or dangling ownership, no bed/admission contradiction
+ * exists, every newly created seeded record produces exactly one audit
+ * event attributed to the system actor carrying the owning branch as its
+ * only context value (never a fabricated assignment, role, or
+ * organization), the typed branch and network dashboards count the cohort
+ * exactly with nonzero coverage per legacy branch, repeated initialization
+ * inserts zero records and zero events, and the disabled default touches no
+ * store and records no event. The
  * opt-in review-account bootstrap also pins the enabled acting assignments
  * of the cohort: ADMIN at ORGANIZATION scope and doctor/nurse at BRANCH
  * scope on the deterministic first-by-code demo branch. Runs against an
@@ -97,13 +116,33 @@ class DemoDataInitializerTest {
     /** Long disposable test-only value; never a real credential. */
     static final String TEST_ACCOUNT_PASSWORD = "disposable-test-password-demo-01";
 
-    /** Stable demo business keys: one organization, three synthetic branches. */
+    /** Stable demo business keys: one organization, three hospitals, seven synthetic branches. */
     private static final String DEMO_ORG_CODE = "DEMO-ORG-001";
+    private static final String DEMO_LEGACY_HOSPITAL_CODE = "LEGACY-HOSPITAL-001";
+    private static final String DEMO_HOSPITAL_RIVERSIDE_CODE = "DEMO-HOSP-002";
+    private static final String DEMO_HOSPITAL_HARBORVIEW_CODE = "DEMO-HOSP-003";
+    private static final Set<String> DEMO_HOSPITAL_CODES = Set.of(
+            DEMO_LEGACY_HOSPITAL_CODE, DEMO_HOSPITAL_RIVERSIDE_CODE, DEMO_HOSPITAL_HARBORVIEW_CODE);
     private static final String DEMO_BRANCH_CODE = "DEMO-BR-001";
     private static final String DEMO_BRANCH_NORTH_CODE = "DEMO-BR-002";
     private static final String DEMO_BRANCH_HARBOR_CODE = "DEMO-BR-003";
-    private static final Set<String> DEMO_BRANCH_CODES =
-            Set.of(DEMO_BRANCH_CODE, DEMO_BRANCH_NORTH_CODE, DEMO_BRANCH_HARBOR_CODE);
+    private static final String DEMO_BRANCH_RIVERSIDE_EAST_CODE = "DEMO-BR-1101";
+    private static final String DEMO_BRANCH_RIVERSIDE_WEST_CODE = "DEMO-BR-1102";
+    private static final String DEMO_BRANCH_HARBORVIEW_PIER_CODE = "DEMO-BR-2201";
+    private static final String DEMO_BRANCH_HARBORVIEW_DUNE_CODE = "DEMO-BR-2202";
+    private static final Set<String> DEMO_BRANCH_CODES = Set.of(
+            DEMO_BRANCH_CODE, DEMO_BRANCH_NORTH_CODE, DEMO_BRANCH_HARBOR_CODE,
+            DEMO_BRANCH_RIVERSIDE_EAST_CODE, DEMO_BRANCH_RIVERSIDE_WEST_CODE,
+            DEMO_BRANCH_HARBORVIEW_PIER_CODE, DEMO_BRANCH_HARBORVIEW_DUNE_CODE);
+
+    /** Deterministic per-hospital branch layout of the Phase 5 US1 fixture (T038). */
+    private static final Map<String, List<String>> DEMO_BRANCHES_BY_HOSPITAL_CODE = Map.of(
+            DEMO_LEGACY_HOSPITAL_CODE,
+            List.of(DEMO_BRANCH_CODE, DEMO_BRANCH_NORTH_CODE, DEMO_BRANCH_HARBOR_CODE),
+            DEMO_HOSPITAL_RIVERSIDE_CODE,
+            List.of(DEMO_BRANCH_RIVERSIDE_EAST_CODE, DEMO_BRANCH_RIVERSIDE_WEST_CODE),
+            DEMO_HOSPITAL_HARBORVIEW_CODE,
+            List.of(DEMO_BRANCH_HARBORVIEW_PIER_CODE, DEMO_BRANCH_HARBORVIEW_DUNE_CODE));
 
     /** Branch-owned demo departments keyed per branch. */
     private static final Set<String> DEMO_DEPARTMENT_CODES =
@@ -126,13 +165,15 @@ class DemoDataInitializerTest {
 
     /**
      * Exact audit ledger of one full first run: one CREATE per newly created
-     * row (1 organization + 3 branches + 4 departments + 6 patients + 5
-     * professionals + 4 appointments + 5 availability intervals + 8 beds + 4
-     * admissions + 5 emergency visits + 7 invoices = 52) plus the two
-     * admission-bed assignment actions recorded with the
-     * {@code AdmissionService} UPDATE convention. A second run adds zero.
+     * row (1 organization + 3 hospitals (1 legacy + 2 Phase 5 US1 fixture
+     * hospitals) + 7 branches (3 legacy + 4 US1 fixture branches) + 4
+     * departments + 6 patients + 5 professionals + 4 appointments + 5
+     * availability intervals + 8 beds + 4 admissions + 5 emergency visits +
+     * 7 invoices = 59) plus the two admission-bed assignment actions
+     * recorded with the {@code AdmissionService} UPDATE convention. A second
+     * run adds zero.
      */
-    private static final long FULL_AUDIT_LEDGER_SIZE = 54L;
+    private static final long FULL_AUDIT_LEDGER_SIZE = 61L;
 
     /** Meaningless demo triage labels (docs/plan2.md Task 8: never clinical advice). */
     private static final Set<String> DEMO_TRIAGE_LABELS = Set.of("1", "2", "3", "4", "5");
@@ -178,6 +219,9 @@ class DemoDataInitializerTest {
 
     @Autowired
     BranchRepository branches;
+
+    @Autowired
+    HospitalFacilityRepository hospitals;
 
     @Autowired
     DepartmentRepository departments;
@@ -233,20 +277,35 @@ class DemoDataInitializerTest {
     }
 
     /**
-     * Task 12 hierarchy: exactly one synthetic organization with exactly
-     * three obviously synthetic branches of varied size, all active, all
-     * bound to that organization under immutable business keys, plus only
-     * the initializer-owned departments distributed across the branches.
+     * Phase 5 US1 hierarchy (T038/T039): exactly one synthetic organization
+     * with exactly three obviously synthetic hospitals (the deterministic
+     * legacy hospital plus two Phase 5 fixture hospitals across distinct
+     * IANA zones) and seven synthetic branches — three under the legacy
+     * hospital and exactly two under each fixture hospital — all active,
+     * all bound to that organization under immutable business keys, plus
+     * only the initializer-owned departments on the legacy-hospital
+     * branches.
      */
     @Test
-    void threeBranchHierarchyIsSeededUnderStableBusinessKeys() {
+    void multiHospitalHierarchyIsSeededUnderStableBusinessKeys() {
         List<HospitalOrganization> orgs = organizations.findAll().stream().toList();
         assertEquals(1, orgs.size(), "the initializer must own exactly one organization");
         assertEquals(DEMO_ORG_CODE, orgs.get(0).getCode(), "the organization code must be the immutable demo key");
         assertTrue(orgs.get(0).getName().startsWith("Demo "), "the organization name must be obviously synthetic");
 
+        // Phase 5 US1 (T038): exactly three deterministic hospitals — the
+        // legacy facility of the Phase 4 cohort plus the US1 fixture pair.
+        List<HospitalFacility> demoHospitals = hospitals.findAll().stream().toList();
+        assertEquals(3, demoHospitals.size(), "the initializer must own exactly three hospitals");
+        assertEquals(DEMO_HOSPITAL_CODES, demoHospitals.stream()
+                        .map(HospitalFacility::getCode).collect(Collectors.toSet()),
+                "the hospitals must carry exactly the stable deterministic business keys");
+        assertTrue(demoHospitals.stream().allMatch(h -> orgs.get(0).getId().equals(h.getOrganization().getId())),
+                "every demo hospital must belong to the demo organization");
+        assertTrue(demoHospitals.stream().allMatch(HospitalFacility::isActive), "every demo hospital must be active");
+
         List<Branch> demoBranches = branches.findAll().stream().toList();
-        assertEquals(3, demoBranches.size(), "the initializer must own exactly three synthetic branches");
+        assertEquals(7, demoBranches.size(), "the initializer must own exactly seven synthetic branches");
         assertEquals(DEMO_BRANCH_CODES, demoBranches.stream().map(Branch::getCode).collect(Collectors.toSet()),
                 "the branches must carry exactly the stable DEMO-BR keys");
         assertTrue(demoBranches.stream().allMatch(Branch::isActive), "every demo branch must be active");
@@ -256,6 +315,15 @@ class DemoDataInitializerTest {
                 "every branch must carry a location label");
         assertTrue(demoBranches.stream().allMatch(b -> orgs.get(0).getId().equals(b.getOrganization().getId())),
                 "every demo branch must belong to the demo organization");
+        Map<String, List<String>> branchCodesByHospitalCode = new java.util.TreeMap<>();
+        for (HospitalFacility hospital : demoHospitals) {
+            branchCodesByHospitalCode.put(hospital.getCode(), demoBranches.stream()
+                    .filter(b -> hospital.getId().equals(b.getHospital().getId()))
+                    .map(Branch::getCode).sorted().toList());
+        }
+        assertEquals(DEMO_BRANCHES_BY_HOSPITAL_CODE, branchCodesByHospitalCode,
+                "each hospital must own exactly its deterministic branch set "
+                        + "(legacy cohort under the legacy hospital, two branches per fixture hospital)");
 
         // Varied size: the three branches own different numbers of rows.
         List<Department> ownedDepartments = departments.findAll().stream()
@@ -293,6 +361,64 @@ class DemoDataInitializerTest {
         assertEquals(2L, bedsByBranchCode.get(DEMO_BRANCH_HARBOR_CODE), "harbor branch: two beds");
     }
 
+    /**
+     * Phase 5 US1 fixture quality (T039): the fixture spans at least two
+     * IANA zones (the demo cohort deliberately covers three — UTC,
+     * America/New_York, Asia/Tokyo), every branch inherits a named IANA
+     * zone, and the fixture is deterministic across restarts: two more
+     * seeding runs insert zero hospitals/branches/events and leave every
+     * hospital and branch business key and identity untouched.
+     */
+    @Test
+    void phase5FixtureSpansSeveralZonesAndIsDeterministicAcrossRestart() {
+        java.time.ZoneId UTC = java.time.ZoneId.of("UTC");
+        java.time.ZoneId newYork = java.time.ZoneId.of("America/New_York");
+        java.time.ZoneId tokyo = java.time.ZoneId.of("Asia/Tokyo");
+
+        Map<String, HospitalFacility> hospitalByCode = hospitals.findAll().stream()
+                .collect(Collectors.toMap(HospitalFacility::getCode, h -> h));
+        assertEquals(Set.of(UTC, newYork, tokyo), hospitalByCode.values().stream()
+                        .map(HospitalFacility::getTimeZone).collect(Collectors.toSet()),
+                "the demo hospitals must span at least two IANA zones (fixture covers three)");
+
+        Map<String, java.time.ZoneId> zoneByBranchCode = branches.findAll().stream()
+                .collect(Collectors.toMap(Branch::getCode, Branch::getTimeZone));
+        assertEquals(DEMO_BRANCH_CODES, zoneByBranchCode.keySet());
+        assertEquals(UTC, zoneByBranchCode.get(DEMO_BRANCH_CODE));
+        assertEquals(newYork, zoneByBranchCode.get(DEMO_BRANCH_NORTH_CODE));
+        assertEquals(tokyo, zoneByBranchCode.get(DEMO_BRANCH_HARBOR_CODE));
+        assertEquals(newYork, zoneByBranchCode.get(DEMO_BRANCH_RIVERSIDE_EAST_CODE));
+        assertEquals(newYork, zoneByBranchCode.get(DEMO_BRANCH_RIVERSIDE_WEST_CODE));
+        assertEquals(tokyo, zoneByBranchCode.get(DEMO_BRANCH_HARBORVIEW_PIER_CODE));
+        assertEquals(tokyo, zoneByBranchCode.get(DEMO_BRANCH_HARBORVIEW_DUNE_CODE));
+
+        // Deterministic across restart: identities and keys are stable, and
+        // repeated seeding inserts nothing new anywhere.
+        Map<String, UUID> branchIdByCode = branches.findAll().stream()
+                .collect(Collectors.toMap(Branch::getCode, Branch::getId));
+        Map<String, UUID> hospitalIdByCode = hospitalByCode.entrySet().stream()
+                .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().getId()));
+        Map<String, Long> countsBefore = Map.of(
+                "hospitals", hospitals.count(),
+                "branches", branches.count(),
+                "auditEvents", auditEvents.count());
+
+        initializer.seedDemoCohort();
+        initializer.seedDemoCohort();
+
+        assertEquals(countsBefore, Map.of(
+                        "hospitals", hospitals.count(),
+                        "branches", branches.count(),
+                        "auditEvents", auditEvents.count()),
+                "a restart re-seed must insert zero hospitals, branches, and events");
+        assertEquals(hospitalIdByCode, hospitals.findAll().stream()
+                        .collect(Collectors.toMap(HospitalFacility::getCode, HospitalFacility::getId)),
+                "hospital business keys and identities must stay deterministic across restarts");
+        assertEquals(branchIdByCode, branches.findAll().stream()
+                        .collect(Collectors.toMap(Branch::getCode, Branch::getId)),
+                "branch business keys and identities must stay deterministic across restarts");
+    }
+
     // ------------------------------------------------------------------
     // Referential integrity: ownership and same-branch references.
     // ------------------------------------------------------------------
@@ -309,7 +435,7 @@ class DemoDataInitializerTest {
         Map<UUID, String> branchCodeById = branches.findAll().stream()
                 .collect(Collectors.toMap(Branch::getId, Branch::getCode));
         assertEquals(DEMO_BRANCH_CODES, Set.copyOf(branchCodeById.values()),
-                "the only owners in the isolated demo store are the three demo branches");
+                "the only owners in the isolated demo store are the seven demo branches");
 
         for (Patient patient : patients.findAll()) {
             assertNotNull(patient.getBranch(), "seeded patient " + patient.getMedicalRecordNumber()
@@ -577,10 +703,10 @@ class DemoDataInitializerTest {
         List<AuditEvent> events = auditEvents.findAll().stream().toList();
         assertEquals(FULL_AUDIT_LEDGER_SIZE, events.size(),
                 "seeding must record exactly one audit event per seeded action "
-                        + "(52 row inserts plus 2 bed-assignment actions)");
+                        + "(59 row inserts plus 2 bed-assignment actions)");
         assertTrue(events.stream().allMatch(e -> "system".equals(e.getActor())),
                 "startup seeding has no authenticated user, so every actor must be system");
-        assertEquals(52, events.stream().filter(e -> "CREATE".equals(e.getAction())).count(),
+        assertEquals(59, events.stream().filter(e -> "CREATE".equals(e.getAction())).count(),
                 "every newly created row must produce exactly one CREATE event");
         assertEquals(2, events.stream().filter(e -> "UPDATE".equals(e.getAction())).count(),
                 "exactly the two bed-assignment actions produce UPDATE events");
@@ -596,13 +722,24 @@ class DemoDataInitializerTest {
         Map<String, List<AuditEvent>> byType = events.stream()
                 .collect(Collectors.groupingBy(AuditEvent::getResourceType));
         assertEquals(Set.of("Patient", "StaffMember", "Appointment", "StaffAvailability", "Admission",
-                        "EmergencyVisit", "Invoice", "Bed", "HospitalOrganization", "Branch", "Department"),
+                        "EmergencyVisit", "Invoice", "Bed", "HospitalOrganization", "HospitalFacility",
+                        "Branch", "Department"),
                 byType.keySet(), "event resource types must follow the conventions the services use");
         UUID organizationId = organizations.findByCode(DEMO_ORG_CODE).orElseThrow().getId();
         Set<UUID> branchIds = branches.findAll().stream().map(Branch::getId).collect(Collectors.toSet());
         assertTrue(events.stream().filter(e -> e.getBranchId() != null)
                         .allMatch(e -> organizationId.equals(e.getOrganizationId())),
                 "every branch-attributed seed event must carry its owning organization");
+        // Phase 5 (T026): every branch-attributed seed event also carries the
+        // acting hospital derived from the owning branch — bounded context,
+        // never guessed, never a fabricated assignment.
+        Set<UUID> hospitalIds = branches.findAll().stream()
+                .map(b -> b.getHospital().getId()).collect(Collectors.toSet());
+        assertEquals(3, hospitalIds.size(),
+                "the demo cohort must span exactly the three deterministic demo hospitals");
+        assertTrue(events.stream().filter(e -> e.getBranchId() != null)
+                        .allMatch(e -> e.getHospitalId() != null && hospitalIds.contains(e.getHospitalId())),
+                "every branch-attributed seed event must carry its acting hospital");
         for (Map.Entry<String, List<AuditEvent>> entry : byType.entrySet()) {
             String type = entry.getKey();
             List<AuditEvent> typed = entry.getValue();
@@ -612,8 +749,14 @@ class DemoDataInitializerTest {
                     assertNull(typed.get(0).getBranchId(),
                             "the organization row has no owning branch, so its event stays context-less");
                 }
+                case "HospitalFacility" -> {
+                    assertEquals(3, typed.size(),
+                            "the legacy hospital plus the two Phase 5 US1 fixture hospitals");
+                    assertTrue(typed.stream().allMatch(e -> e.getBranchId() == null),
+                            "a hospital row has no owning branch, so its event stays context-less");
+                }
                 case "Branch" -> {
-                    assertEquals(3, typed.size());
+                    assertEquals(7, typed.size());
                     assertTrue(typed.stream().allMatch(e -> e.getBranchId() != null
                                     && branchIds.contains(e.getBranchId())
                                     && e.getBranchId().toString().equals(e.getResourceId())),
@@ -747,10 +890,22 @@ class DemoDataInitializerTest {
 
         DashboardDtos.NetworkSummary network = networkSummary(organization.getId());
         assertEquals(organization.getId(), network.organizationId());
-        assertEquals(3, network.branches().size(), "the network view must compare all three branches");
-        assertEquals(List.of(DEMO_BRANCH_CODE, DEMO_BRANCH_NORTH_CODE, DEMO_BRANCH_HARBOR_CODE),
+        assertEquals(7, network.branches().size(),
+                "the network view must compare all seven branches of the three hospitals");
+        assertEquals(List.of(DEMO_BRANCH_CODE, DEMO_BRANCH_NORTH_CODE, DEMO_BRANCH_HARBOR_CODE,
+                        DEMO_BRANCH_RIVERSIDE_EAST_CODE, DEMO_BRANCH_RIVERSIDE_WEST_CODE,
+                        DEMO_BRANCH_HARBORVIEW_PIER_CODE, DEMO_BRANCH_HARBORVIEW_DUNE_CODE),
                 network.branches().stream().map(DashboardDtos.BranchSummary::branchCode).toList(),
                 "branch summaries must appear in deterministic code order");
+        for (String emptyBranchCode : List.of(DEMO_BRANCH_RIVERSIDE_EAST_CODE, DEMO_BRANCH_RIVERSIDE_WEST_CODE,
+                DEMO_BRANCH_HARBORVIEW_PIER_CODE, DEMO_BRANCH_HARBORVIEW_DUNE_CODE)) {
+            DashboardDtos.BranchSummary fixtureBranch = network.branches().stream()
+                    .filter(b -> b.branchCode().equals(emptyBranchCode)).findFirst().orElseThrow();
+            assertEquals(0L, fixtureBranch.patients(),
+                    "a Phase 5 fixture branch without a workflow cohort must stay an honest zero");
+            assertEquals(0L, fixtureBranch.admissions());
+            assertEquals(0L, fixtureBranch.bedsAvailable());
+        }
         assertEquals(6L, network.patients());
         assertEquals(4L, network.appointments());
         assertEquals(4L, network.admissions());
@@ -774,7 +929,7 @@ class DemoDataInitializerTest {
     private DashboardDtos.BranchSummary branchSummary(Branch branch) {
         ActingContext actingContext = new ActingContext("system-dashboard-reader",
                 UUID.randomUUID(), Role.ADMIN, AssignmentScope.BRANCH,
-                branch.getOrganization().getId(), branch.getId(), null);
+                branch.getOrganization().getId(), branch.getHospital().getId(), branch.getId(), null);
         SecurityContextHolder.getContext().setAuthentication(
                 UsernamePasswordAuthenticationToken.authenticated(actingContext, null, List.of()));
         try {
@@ -785,8 +940,10 @@ class DemoDataInitializerTest {
     }
 
     private DashboardDtos.NetworkSummary networkSummary(UUID organizationId) {
+        Branch readerBranch = branches.findAll().stream().findFirst().orElseThrow();
         ActingContext actingContext = new ActingContext("system-network-reader",
-                UUID.randomUUID(), Role.ADMIN, AssignmentScope.ORGANIZATION, organizationId, null, null);
+                UUID.randomUUID(), Role.ADMIN, AssignmentScope.ORGANIZATION, organizationId,
+                readerBranch.getHospital().getId(), readerBranch.getId(), null);
         SecurityContextHolder.getContext().setAuthentication(
                 UsernamePasswordAuthenticationToken.authenticated(actingContext, null, List.of()));
         try {
@@ -811,7 +968,9 @@ class DemoDataInitializerTest {
     @Test
     void cohortActingAssignmentsAreEnabledAndDeterministicallyBound() {
         HospitalOrganization organization = organizations.findByCode(DEMO_ORG_CODE).orElseThrow();
-        Branch defaultBranch = branches.findByOrganizationIdAndCode(organization.getId(), DEMO_BRANCH_CODE)
+        HospitalFacility fixtureHospital = hospitals.findByOrganizationIdAndCode(
+                organization.getId(), "LEGACY-HOSPITAL-001").orElseThrow();
+        Branch defaultBranch = branches.findByHospitalIdAndCode(fixtureHospital.getId(), DEMO_BRANCH_CODE)
                 .orElseThrow();
 
         List<ActingAssignment> seeded = assignments.findAll().stream().toList();
@@ -862,7 +1021,7 @@ class DemoDataInitializerTest {
                         .filter(department -> department.getBranch() != null).count(),
                 "reruns must not assign or create additional owned departments");
         assertEquals(1, organizations.count(), "reruns must not inflate organizations");
-        assertEquals(3, branches.count(), "reruns must not inflate branches");
+        assertEquals(7, branches.count(), "reruns must not inflate branches");
     }
 
     /**
@@ -884,7 +1043,7 @@ class DemoDataInitializerTest {
                         Map.entry("emergencyVisits", TOTAL_EMERGENCY_VISITS),
                         Map.entry("invoices", TOTAL_INVOICES),
                         Map.entry("organizations", 1L),
-                        Map.entry("branches", 3L),
+                        Map.entry("branches", 7L),
                         Map.entry("departments", 4L),
                         Map.entry("auditEvents", FULL_AUDIT_LEDGER_SIZE)),
                 before, "the startup run must have produced the exact first-run composition");

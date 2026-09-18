@@ -104,6 +104,9 @@ class PatientJourneyApiTest {
     @Autowired
     BranchRepository branches;
 
+    @Autowired
+    com.mamtrex.hospital.organization.HospitalFacilityRepository hospitals;
+
     /** Unique synthetic suffix per test instance keeps every record disposable. */
     private final String suffix = UUID.randomUUID().toString().substring(0, 8);
 
@@ -128,8 +131,9 @@ class PatientJourneyApiTest {
         }
         HospitalOrganization org = organizations.findByCode(TEST_ORG_CODE).orElseGet(() ->
                 organizations.save(new HospitalOrganization(TEST_ORG_CODE, "Synthetic Journey Hospital")));
-        Branch branch = branches.findByOrganizationIdAndCode(org.getId(), TEST_BRANCH_CODE).orElseGet(() ->
-                branches.save(new Branch(org, TEST_BRANCH_CODE, "Synthetic Journey Branch", "1 Journey Way")));
+        var fixtureHospital = com.mamtrex.hospital.organization.FixtureHospitals.ensureHospital(hospitals, org);
+        Branch branch = branches.findByHospitalIdAndCode(fixtureHospital.getId(), TEST_BRANCH_CODE).orElseGet(() ->
+                branches.save(new Branch(fixtureHospital, TEST_BRANCH_CODE, "Synthetic Journey Branch", "1 Journey Way")));
         ensureAssignment(ADMIN_USER, Role.ADMIN, AssignmentScope.ORGANIZATION, org, null);
         ensureAssignment(RECEPTIONIST, Role.RECEPTIONIST, AssignmentScope.BRANCH, org, branch);
         ensureAssignment(DENIED, Role.STAFF, AssignmentScope.BRANCH, org, branch);
@@ -142,6 +146,7 @@ class PatientJourneyApiTest {
             case ORGANIZATION -> assignments
                     .findByAccountIdAndRoleAndScopeAndBranchIsNullAndDepartmentIsNull(account.getId(), role, scope)
                     .isPresent();
+            case HOSPITAL -> false;
             case BRANCH -> assignments
                     .findByAccountIdAndRoleAndScopeAndBranchId(account.getId(), role, scope, branch.getId())
                     .isPresent();
@@ -150,6 +155,7 @@ class PatientJourneyApiTest {
         if (!present) {
             assignments.save(switch (scope) {
                 case ORGANIZATION -> ActingAssignment.organization(account, org, role);
+                case HOSPITAL -> throw new IllegalArgumentException("These suites seed organization/branch scopes only");
                 case BRANCH -> ActingAssignment.branch(account, org, role, branch);
                 case DEPARTMENT -> throw new IllegalArgumentException("These suites seed organization/branch scopes only");
             });

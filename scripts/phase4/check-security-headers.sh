@@ -14,6 +14,10 @@
 #        - GET /login      (SPA fallback, 200) -> headers present
 #        - GET /api/       (same-origin proxied /api route, 200)
 #                                              -> headers present, routing intact
+#      Both live dependencies (stub upstream, nginx frontend) are proven
+#      ready with bounded positive polls BEFORE any route probe; a startup
+#      race fails the check instead of producing a false 502 failure or a
+#      false PASS.
 #
 # Everything is process-owned and disposable: containers use the
 # medicore_phase4_ disposable prefix on a private network, nothing is
@@ -101,10 +105,31 @@ class H(http.server.BaseHTTPRequestHandler):
 
 http.server.HTTPServer(("0.0.0.0",8080),H).serve_forever()' >/dev/null 2>&1 \
   || fail "could not start the disposable stub upstream"
+# Bounded positive readiness proof for the stub upstream: `docker run -d`
+# returns when the process starts, NOT when python's HTTP server accepts
+# connections (measured cold-start window under host load: ~0.9s–11.8s).
+# Without this proof the proxied /api/ probe can fire while the upstream is
+# still binding its listener and truthfully report a 502 — the exact
+# stage-8 failure seen in-sequence. Poll from INSIDE the stub (loopback
+# only; the network is --internal with nothing published to the host).
+# Fail-closed: no readiness within 30s fails the check — no extra sleep,
+# no accepting a transient 502, no suppressed status.
+stub_ready=0
+for _ in $(seq 1 30); do
+  if docker exec "$STUB" wget -q -O /dev/null "http://127.0.0.1:8080/" >/dev/null 2>&1; then
+    stub_ready=1
+    break
+  fi
+  sleep 1
+done
+[ "$stub_ready" = "1" ] || fail "the disposable stub upstream never accepted connections within 30s"
+echo "PASS live: disposable stub upstream is accepting connections"
 docker run -d --rm --name "$FRONTEND" --network "$NETWORK" "$IMAGE" >/dev/null 2>&1 \
   || fail "could not start the disposable frontend container"
-# Bounded readiness wait: a fixed sleep races nginx startup under load —
-# poll the shell route until nginx answers, with a truthful 30s bound.
+# Bounded readiness wait for the second live dependency (nginx): a fixed
+# sleep races startup under load — poll the shell route until nginx
+# answers, with a truthful 30s bound. Both live dependencies are now
+# positively proven ready before any route probe below.
 ready=0
 for _ in $(seq 1 30); do
   if docker exec "$FRONTEND" wget -q -S -O /dev/null "http://127.0.0.1:8080/" >/dev/null 2>&1; then

@@ -3,6 +3,7 @@ package com.mamtrex.hospital.auth;
 import org.junit.jupiter.api.Test;
 import com.mamtrex.hospital.organization.Branch;
 import com.mamtrex.hospital.organization.BranchRepository;
+import com.mamtrex.hospital.organization.HospitalFacility;
 import com.mamtrex.hospital.organization.HospitalOrganization;
 import com.mamtrex.hospital.organization.HospitalOrganizationRepository;
 import org.mockito.ArgumentCaptor;
@@ -214,7 +215,7 @@ class DevAdminInitializerTest {
         UserAccount account = new UserAccount(username, "pre-existing-untouched-hash", Set.of(Role.ADMIN));
         when(accounts.findByUsername(username)).thenReturn(Optional.of(account));
         HospitalOrganization organization = new HospitalOrganization("DEMO-ORG-001", "Demo Synthetic Hospital");
-        Branch branch = new Branch(organization, "DEMO-BR-001", "Demo Main Branch", "1 Demo Campus");
+        Branch branch = branchOf(organization, "DEMO-BR-001");
         when(organizations.findAll(any(Sort.class))).thenReturn(List.of(organization));
         when(branches.findByOrganizationIdAndActiveTrueOrderByCodeAsc(organization.getId()))
                 .thenReturn(List.of(branch));
@@ -276,7 +277,7 @@ class DevAdminInitializerTest {
         // One shared deterministic hierarchy: both review accounts act on the
         // same active default branch of the same organization.
         HospitalOrganization organization = new HospitalOrganization("DEMO-ORG-001", "Demo Synthetic Hospital");
-        Branch branch = new Branch(organization, "DEMO-BR-001", "Demo Main Branch", "1 Demo Campus");
+        Branch branch = branchOf(organization, "DEMO-BR-001");
         UserAccount doctor = new UserAccount("doctor", "pre-existing-doctor-hash", Set.of(Role.DOCTOR));
         UserAccount nurse = new UserAccount("nurse", "pre-existing-nurse-hash", Set.of(Role.NURSE));
         when(accounts.findByUsername("doctor")).thenReturn(Optional.of(doctor));
@@ -384,9 +385,9 @@ class DevAdminInitializerTest {
         HospitalOrganizationRepository organizations = mock(HospitalOrganizationRepository.class);
         BranchRepository branches = mock(BranchRepository.class);
         HospitalOrganization organization = new HospitalOrganization("DEMO-ORG-001", "Demo Synthetic Hospital");
-        Branch main = new Branch(organization, "DEMO-BR-001", "Demo Main Branch", "1 Demo Campus");
-        Branch north = new Branch(organization, "DEMO-BR-002", "Demo North Branch", "9 Demo North Road");
-        Branch harbor = new Branch(organization, "DEMO-BR-003", "Demo Harbor Branch", "17 Demo Harbor Lane");
+        Branch main = branchOf(organization, "DEMO-BR-001");
+        Branch north = branchOf(organization, "DEMO-BR-002");
+        Branch harbor = branchOf(organization, "DEMO-BR-003");
         when(accounts.findByUsername("doctor")).thenReturn(Optional.of(
                 new UserAccount("doctor", "pre-existing-doctor-hash", Set.of(Role.DOCTOR))));
         when(accounts.findByUsername("nurse")).thenReturn(Optional.of(
@@ -411,5 +412,12 @@ class DevAdminInitializerTest {
             assertEquals(organization, assignment.getOrganization());
             assertNull(assignment.getDepartment());
         }
+    }
+
+    /** A branch bound to the organization's deterministic fixture hospital (Phase 5 shape). */
+    private static Branch branchOf(HospitalOrganization organization, String code) {
+        HospitalFacility hospital = new HospitalFacility(
+                organization, "FIXTURE-HOSP-001", "Synthetic Fixture Hospital", "Fixture Region", "UTC");
+        return new Branch(hospital, code, "Demo " + code, "1 Demo Campus");
     }
 }

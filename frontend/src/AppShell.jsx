@@ -8,8 +8,8 @@ import BedsPage from './features/beds/BedsPage.jsx';
 import AppointmentsPage from './features/appointments/AppointmentsPage.jsx';
 import AuditPage from './features/audit/AuditPage.jsx';
 import PatientsPage from './features/patients/PatientsPage.jsx';
-import BranchSelector from './features/branches/BranchSelector.jsx';
-import { fetchOrganizationView } from './features/branches/actingContextApi.js';
+import NetworkContextSelector from './features/network/NetworkContextSelector.jsx';
+import { fetchNetworkHierarchy } from './features/network/networkApi.js';
 import { actingAssignmentOf, actingContextKey } from './auth.js';
 import { defaultDestination, permittedDestinations } from './navigation.js';
 
@@ -59,28 +59,46 @@ function Screen({ destination, session, onSessionExpired, onNavigate }) {
   );
 }
 
-// Branch lines come only from the server-issued session. A branch-bound
-// acting context (every scope the server issues binds one concrete branch)
-// is never described as "organization-wide": for an ORGANIZATION-scope
-// context the bound branch is named from the server's active-branch list,
-// with a neutral loading state while that list is in flight and a neutral
-// id fallback when the branch is absent from it.
-function actingContextLines(session, organizationView, organizationLoading) {
+// Context lines come only from server-issued data (Phase 5, FR-008). A
+// branch-bound acting context is never described as "organization-wide":
+// selection scopes (ORGANIZATION, HOSPITAL) name the acting hospital and
+// branch from the server-derived network hierarchy loaded under the current
+// acting context, with a neutral loading state while it is in flight and a
+// neutral id fallback when the branch is absent from it. Fixed scopes
+// (BRANCH, DEPARTMENT) carry their own server-issued labels, now including
+// the hospital.
+function locatedHierarchyBranch(hierarchy, branchId) {
+  if (!hierarchy || !branchId) return null;
+  for (const hospital of Array.isArray(hierarchy.hospitals) ? hierarchy.hospitals : []) {
+    for (const branch of Array.isArray(hospital?.branches) ? hospital.branches : []) {
+      if (branch?.id === branchId) return { hospitalName: hospital.name, branchName: branch.name };
+    }
+  }
+  return null;
+}
+
+function actingContextLines(session, hierarchy, hierarchyLoading) {
   const context = session.actingContext;
   const assignment = actingAssignmentOf(session);
   if (!context || !assignment) return [];
 
   const organizationName = assignment.organizationLabel ?? 'Unknown organization';
-  if (context.scope === 'ORGANIZATION') {
-    const activeBranches = Array.isArray(organizationView?.activeBranches)
-      ? organizationView.activeBranches
-      : [];
-    const current = activeBranches.find((branch) => branch?.id === context.branchId);
-    if (current) return [`${organizationName} — ${current.name}`];
-    if (organizationLoading) return [`${organizationName} — loading branch…`];
-    return [`${organizationName} — branch ${context.branchId}`];
+  const located = locatedHierarchyBranch(hierarchy, context.branchId);
+  if (context.scope === 'ORGANIZATION' || context.scope === 'HOSPITAL') {
+    const scopeName = context.scope === 'ORGANIZATION'
+      ? organizationName
+      : assignment.hospitalLabel ?? 'Unknown hospital';
+    if (located) {
+      return [context.scope === 'ORGANIZATION'
+        ? `${organizationName} — ${located.hospitalName} — ${located.branchName}`
+        : `${scopeName} — ${located.branchName}`];
+    }
+    if (hierarchyLoading) return [`${scopeName} — loading branch…`];
+    return [`${scopeName} — branch ${context.branchId}`];
   }
-  const lines = [assignment.branchLabel ?? 'Unknown branch'];
+  const lines = [];
+  if (assignment.hospitalLabel) lines.push(assignment.hospitalLabel);
+  lines.push(assignment.branchLabel ?? 'Unknown branch');
   if (assignment.departmentLabel) lines.push(assignment.departmentLabel);
   return lines;
 }
@@ -96,45 +114,59 @@ export default function AppShell({ session, onLogout, onSessionExpired, onContex
   const screenNavRef = useRef(null);
 
   const assignments = Array.isArray(session.assignments) ? session.assignments : [];
-  // The server-owned active-branch list is needed exactly when the session
-  // carries an ORGANIZATION-scope assignment: it names the current branch of
-  // a branch-bound organization token and provides the switch targets for
-  // the selector. Branch/department-only sessions never fetch it.
-  const needsOrganization = assignments.some(
-    (assignment) => assignment?.scope === 'ORGANIZATION' && assignment?.id
+  // The server-derived network hierarchy is needed exactly when the session
+  // carries a selection-scope assignment (ORGANIZATION, HOSPITAL): it names
+  // the acting hospital/branch of the bound token and provides the only
+  // switch targets the selector may offer. Fixed-scope-only sessions never
+  // fetch it. The state is tagged with the acting-context key it loaded
+  // under and gated at render phase, so a hierarchy response that resolves
+  // after a context switch can never paint for the new context (Phase 5,
+  // FR-009 — not even for one render).
+  const needsHierarchy = assignments.some(
+    (assignment) => (assignment?.scope === 'ORGANIZATION' || assignment?.scope === 'HOSPITAL')
+      && assignment?.id
   );
-  const [organization, setOrganization] = useState(null);
-  const [organizationLoading, setOrganizationLoading] = useState(false);
-  const [organizationError, setOrganizationError] = useState('');
+  const contextKeyValue = actingContextKey(session);
+  const [hierarchy, setHierarchy] = useState(
+    { contextKey: contextKeyValue, view: null, loading: false, error: '' }
+  );
 
   useEffect(() => {
-    if (!needsOrganization) return;
+    if (!needsHierarchy) {
+      setHierarchy({ contextKey: contextKeyValue, view: null, loading: false, error: '' });
+      return;
+    }
     let active = true;
-    setOrganization(null);
-    setOrganizationError('');
-    setOrganizationLoading(true);
-    fetchOrganizationView({ token: session.token, onUnauthorized: onSessionExpired })
+    setHierarchy({ contextKey: contextKeyValue, view: null, loading: true, error: '' });
+    fetchNetworkHierarchy({ token: session.token, onUnauthorized: onSessionExpired })
       .then((view) => {
         if (!active) return;
-        setOrganization(view);
-        setOrganizationLoading(false);
+        setHierarchy({ contextKey: contextKeyValue, view, loading: false, error: '' });
       })
       .catch((error) => {
         if (!active) return;
-        setOrganizationLoading(false);
         // 401 is ownership of the shell: the session-expiry callback returns
         // the app to Login, so no local error is raised on top of it. Every
-        // other failure (403 included — the endpoint is ADMIN-authorized)
-        // keeps the prior token/context/selection and surfaces as text.
+        // other failure keeps the prior token/context/selection and surfaces
+        // as text in the selector.
         if (error instanceof ApiError && error.status === 401) return;
-        setOrganizationError(
-          error instanceof ApiError ? error.message : 'Branch options could not be loaded.'
-        );
+        setHierarchy({
+          contextKey: contextKeyValue,
+          view: null,
+          loading: false,
+          error: error instanceof ApiError ? error.message : 'Network options could not be loaded.',
+        });
       });
     return () => { active = false; };
-  }, [session.token, needsOrganization, onSessionExpired]);
+  }, [contextKeyValue, session.token, needsHierarchy, onSessionExpired]);
 
-  const contextKeyValue = actingContextKey(session);
+  // Render-phase gate: only hierarchy state tagged with the CURRENT acting
+  // context key is ever exposed to the whoami lines or the selector. A late
+  // response resolved under a switched context is discarded here — before
+  // paint — regardless of any effect timing.
+  const currentHierarchy = hierarchy.contextKey === contextKeyValue
+    ? hierarchy
+    : { view: null, loading: true, error: '' };
 
   // Predictable focus after a screen change: navigation and a successful
   // acting-context switch both remount the selected screen, which would
@@ -187,7 +219,7 @@ export default function AppShell({ session, onLogout, onSessionExpired, onContex
 
   const context = session.actingContext ?? null;
   const actingRole = context?.role ?? session.roles.join(', ');
-  const contextLines = actingContextLines(session, organization, organizationLoading);
+  const contextLines = actingContextLines(session, currentHierarchy.view, currentHierarchy.loading);
 
   return (
     <div className="app">
@@ -201,11 +233,11 @@ export default function AppShell({ session, onLogout, onSessionExpired, onContex
             <span key={line} className="whoami-context">{line}</span>
           ))}
         </div>
-        <BranchSelector
+        <NetworkContextSelector
           session={session}
-          organization={organization}
-          organizationLoading={organizationLoading}
-          organizationError={organizationError}
+          hierarchy={currentHierarchy.view}
+          hierarchyLoading={currentHierarchy.loading}
+          hierarchyError={currentHierarchy.error}
           onContextSwitch={onContextSwitch}
           onSessionExpired={onSessionExpired}
         />
@@ -234,10 +266,11 @@ export default function AppShell({ session, onLogout, onSessionExpired, onContex
             <span>Training build</span>
           </div>
         </header>
-        {/* The acting-context key remounts the selected screen after a
-            successful switch, so the branch-scoped view reloads from the
+        {/* The acting-context key (complete assignment + hospital + branch
+            + department identity) remounts the selected screen after a
+            successful switch, so the context-bound view reloads from the
             server with the new context-bound token and no stale state from
-            the previous branch survives. */}
+            the previous context survives. */}
         <Screen
           key={actingContextKey(session)}
           destination={selected}

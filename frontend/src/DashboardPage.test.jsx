@@ -336,6 +336,40 @@ describe('DashboardPage', () => {
     expect(screen.getByText('Loading…')).toBeInTheDocument();
   });
 
+  it('cannot paint a network comparison resolved under a switched acting context', async () => {
+    const deferredNetwork = [];
+    const fetchMock = vi.fn((path) => {
+      if (path === '/api/dashboard') {
+        return Promise.resolve(jsonResponse(summaryFor(WEST_BRANCH_ID, 'WEST', 'West Clinic', {})));
+      }
+      if (path === '/api/dashboard/network') {
+        return new Promise((resolve) => { deferredNetwork.push(resolve); });
+      }
+      return Promise.resolve(jsonResponse({ error: 'not found' }, 404));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const view = render(
+      <DashboardPage session={sessionFor('ADMIN', 'ORGANIZATION', EAST_BRANCH_ID)} onSessionExpired={vi.fn()} onNavigate={vi.fn()} />
+    );
+
+    // Switch to another ORGANIZATION context while the network comparison
+    // of the first one is still in flight.
+    view.rerender(
+      <DashboardPage session={sessionFor('ADMIN', 'ORGANIZATION', WEST_BRANCH_ID)} onSessionExpired={vi.fn()} onNavigate={vi.fn()} />
+    );
+    deferredNetwork[0](jsonResponse({ ...NETWORK_SUMMARY, organizationName: 'Stale Network' }));
+    // The new context issues its own network read; the late old-context
+    // response resolves but must never paint under the switched context.
+    await waitFor(() => expect(deferredNetwork.length).toBe(2));
+    expect(screen.queryByText('Stale Network')).not.toBeInTheDocument();
+    expect(screen.getByText('Loading network comparison…')).toBeInTheDocument();
+
+    // Positive control: only the new context's own response paints.
+    deferredNetwork[1](jsonResponse(NETWORK_SUMMARY));
+    expect(await screen.findByText('Main Hospital Group')).toBeInTheDocument();
+    expect(screen.queryByText('Stale Network')).not.toBeInTheDocument();
+  });
+
   describe('render-phase context gate contract', () => {
     const KEY_A = 'assign-a:branch-a';
     const KEY_B = 'assign-b:branch-b';
@@ -370,6 +404,18 @@ describe('DashboardPage', () => {
       expect(gated.summary).toBeNull();
       // The network section is never exposed when the context does not allow it.
       expect(networkDisplayState({ contextKey: KEY_A, enabled: false, loaded: loadedA }).status).toBe('hidden');
+    });
+
+    it('treats contexts that differ only in the hospital coordinate as different keys', () => {
+      // Phase 5 (FR-009): the acting-context key is the complete assignment
+      // + hospital + branch + department identity — two keys differing only
+      // in the hospital segment can never share loaded data.
+      const loaded = { contextKey: 'assign-a:hospital-1:branch-a:', status: 'ready', loadError: '', summary: BRANCH_SUMMARY };
+      const sameEverythingElse = branchDisplayState({ contextKey: 'assign-a:hospital-2:branch-a:', loaded });
+      expect(sameEverythingElse.status).toBe('loading');
+      expect(sameEverythingElse.summary).toBeNull();
+      const identical = branchDisplayState({ contextKey: 'assign-a:hospital-1:branch-a:', loaded });
+      expect(identical).toBe(loaded);
     });
   });
 });

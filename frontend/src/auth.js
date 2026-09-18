@@ -28,6 +28,8 @@ function isValidAssignmentView(value) {
     && isNonEmptyString(value.scope)
     && isNonEmptyString(value.organizationId)
     && value.enabled === true
+    && isOptionalNonEmptyString(value.hospitalId)
+    && isOptionalNonEmptyString(value.hospitalLabel)
     && isOptionalNonEmptyString(value.branchId)
     && isOptionalNonEmptyString(value.branchLabel)
     && isOptionalNonEmptyString(value.departmentId)
@@ -38,7 +40,16 @@ function assignmentMatchesContext(assignment, context) {
   if (assignment.role !== context.role || assignment.scope !== context.scope) return false;
   if (assignment.organizationId !== context.organizationId) return false;
   if ((assignment.departmentId ?? null) !== (context.departmentId ?? null)) return false;
-  return assignment.scope === 'ORGANIZATION' || assignment.branchId === context.branchId;
+  if (assignment.scope === 'ORGANIZATION') return true;
+  // A fixed-scope assignment (HOSPITAL, BRANCH, DEPARTMENT) owns exactly one
+  // hospital (Phase 5, FR-008): a context naming a different one is tampered
+  // or stale and fails the reload closed. When either side omits the field
+  // (the browser login parser stores the context without it) the identity
+  // resolves through the assignment below — never invented here.
+  if (assignment.hospitalId && context.hospitalId && assignment.hospitalId !== context.hospitalId) {
+    return false;
+  }
+  return assignment.branchId === context.branchId;
 }
 
 // Strict allowlist of the selected acting context: the assignment pointer,
@@ -52,6 +63,7 @@ function isValidActingContext(value) {
     && isNonEmptyString(value.role)
     && isNonEmptyString(value.scope)
     && isNonEmptyString(value.organizationId)
+    && isOptionalNonEmptyString(value.hospitalId)
     && isNonEmptyString(value.branchId)
     && isOptionalNonEmptyString(value.departmentId);
 }
@@ -104,13 +116,42 @@ export function clearSession() {
   sessionStorage.removeItem(SESSION_KEY);
 }
 
-// Stable identity of the acting context: assignment pointer plus the bound
-// branch. Screens use it to reload branch-scoped data after a successful
-// context switch; sessions without an acting context share one neutral key.
-export function actingContextKey(session) {
+// The complete identity of the acting context (Phase 5, FR-008/FR-009):
+// the assignment pointer plus the hospital, branch, and department the
+// server bound it to. The hospital resolves from the acting context when
+// the session records it there and from the acting assignment for the
+// fixed scopes (HOSPITAL, BRANCH, DEPARTMENT) that own their hospital —
+// covering sessions stored by the frozen login parser, whose context
+// record omits the field. An ORGANIZATION context's hospital is branch-
+// specific and only known where the session carries it; no client-side
+// lookup ever invents one. Returns null when the session carries no
+// usable acting context.
+export function actingContextIdentity(session) {
   const context = session?.actingContext;
-  if (!context?.assignmentId || !context?.branchId) return 'no-acting-context';
-  return `${context.assignmentId}:${context.branchId}`;
+  if (!context?.assignmentId || !context?.branchId) return null;
+  const assignment = actingAssignmentOf(session);
+  return {
+    assignmentId: context.assignmentId,
+    hospitalId: context.hospitalId ?? null,
+    branchId: context.branchId,
+    departmentId: context.departmentId ?? null,
+    resolvedHospitalId: context.hospitalId
+      ?? (assignment && assignment.scope !== 'ORGANIZATION' ? assignment.hospitalId ?? null : null),
+  };
+}
+
+// Stable identity of the acting context: the complete assignment +
+// hospital + branch + department chain (Phase 5, FR-009). Screens use it
+// to reload context-bound data after a successful switch; sessions without
+// an acting context share one neutral key. A context whose hospital
+// differs never shares a key with one whose hospital matches, so data
+// loaded under one hospital cannot survive a switch into another even
+// when every other coordinate is identical.
+export function actingContextKey(session) {
+  const identity = actingContextIdentity(session);
+  if (!identity) return 'no-acting-context';
+  const hospitalId = identity.resolvedHospitalId ?? '';
+  return `${identity.assignmentId}:${hospitalId}:${identity.branchId}:${identity.departmentId ?? ''}`;
 }
 
 // The server-issued assignment view the acting context points at, or null

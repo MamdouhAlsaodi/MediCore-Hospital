@@ -19,6 +19,7 @@ import type {
   CreateAppointmentRequest,
   CreatePatientRequest,
   LoginRequest,
+  NetworkHierarchy,
   NetworkSummary,
   PatientResponse,
   Session,
@@ -109,6 +110,12 @@ export function getAppointment(id: string): HttpRequest {
 }
 
 export type getAppointmentResponse = AppointmentResponse;
+
+export function getAuthorizedNetworkHierarchy(): HttpRequest {
+  return { method: 'GET', path: "/api/network/hierarchy" };
+}
+
+export type getAuthorizedNetworkHierarchyResponse = NetworkHierarchy;
 
 export function getBranchSummary(): HttpRequest {
   return { method: 'GET', path: "/api/dashboard/branch" };

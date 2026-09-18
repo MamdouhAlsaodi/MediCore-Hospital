@@ -7,6 +7,7 @@ export interface ActingContextView {
   "assignmentId": string;
   "branchId": string;
   "departmentId": string;
+  "hospitalId": string;
   "organizationId": string;
   "role": string;
   "scope": string;
@@ -54,6 +55,8 @@ export interface AssignmentView {
   "departmentId": string;
   "departmentLabel": string;
   "enabled": boolean;
+  "hospitalId": string;
+  "hospitalLabel": string;
   "id": string;
   "organizationId": string;
   "organizationLabel": string;
@@ -101,9 +104,19 @@ export interface BranchSummary {
   "todayAppointments": number;
 }
 
+export interface BranchView {
+  "active": boolean;
+  "code": string;
+  "hospitalId": string;
+  "id": string;
+  "name": string;
+  "timeZone": string;
+}
+
 export interface ContextSwitchRequest {
   "assignmentId": string;
   "branchId"?: string;
+  "hospitalId"?: string;
 }
 
 export interface CreateAdmissionRequest {
@@ -140,9 +153,26 @@ export interface CurrentBed {
   "ward": string;
 }
 
+export interface HospitalView {
+  "active": boolean;
+  "branches": BranchView[];
+  "code": string;
+  "id": string;
+  "name": string;
+  "regionLabel": string;
+  "timeZone": string;
+}
+
 export interface LoginRequest {
   "password": string;
   "username": string;
+}
+
+export interface NetworkHierarchy {
+  "hospitals": HospitalView[];
+  "organizationCode": string;
+  "organizationId": string;
+  "organizationName": string;
 }
 
 export interface NetworkSummary {

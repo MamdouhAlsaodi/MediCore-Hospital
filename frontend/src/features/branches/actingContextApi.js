@@ -7,22 +7,25 @@ import { switchActingContext as switchActingContextHttpRequest } from '../../gen
 
 // Acting-context transport (docs/plan3.md Task 5): the only client path to
 // POST /api/auth/context. The request carries the target assignment id AND
-// the concrete branch id selected in the UI. For an ORGANIZATION-scope
-// target the branch comes from the server's own active-branch allowlist
-// (GET /api/organization, see fetchOrganizationView), so switching the same
-// organization assignment from branch A to branch B is a single request
-// naming both ids — the server never silently picks a branch behind the
-// UI's back. For BRANCH/DEPARTMENT targets the only branch ever sent is the
-// one the server-issued assignment fixes. The response is validated with
+// the concrete hospital/branch pair selected in the UI (Phase 5 T050/T051:
+// the server matches a supplied hospital against its own derived chain and
+// refuses foreign or inactive pairs). For ORGANIZATION- and HOSPITAL-scope
+// targets the pair comes from the server's own network hierarchy
+// (GET /api/network/hierarchy via fetchNetworkHierarchy), so switching to
+// another hospital/branch is a single request naming all three ids — the
+// server never silently picks a target behind the UI's back. For
+// BRANCH/DEPARTMENT targets the only pair ever sent is the one the
+// server-issued assignment fixes. The response is validated with
 // the same strict allowlist as login, so a successful switch always yields
 // a complete replacement session: new context-bound token, updated acting
 // context, and the current assignment list. Components never call fetch
 // directly.
-export async function switchContext({ token, assignmentId, branchId, onUnauthorized } = {}) {
+export async function switchContext({ token, assignmentId, hospitalId, branchId, onUnauthorized } = {}) {
   const body = { assignmentId };
-  // Only a server-issued branch id is ever sent; absent/null lets the
-  // server fail closed on fixed scopes, and the selector always resolves a
-  // concrete branch for an ORGANIZATION target before calling.
+  // Only server-issued ids are ever sent; absent/null lets the server fail
+  // closed on fixed scopes, and the selector always resolves a concrete
+  // hospital/branch pair for a selection target before calling.
+  if (hospitalId) body.hospitalId = hospitalId;
   if (branchId) body.branchId = branchId;
 
   const request = switchActingContextHttpRequest(body);

@@ -54,4 +54,6 @@ import java.util.UUID;
  public UUID getSourceHospitalId(){return sourceHospitalId;}
  public UUID getDestinationHospitalId(){return destinationHospitalId;}
  public UUID getTransferId(){return transferId;}
+ /** Phase 5 US4 transfer evidence seam (T081/T093–T096): stamps the bounded transfer context exactly once, by the recording service inside the same transaction. */
+ public void stampTransferContext(UUID transferId, UUID sourceHospitalId, UUID destinationHospitalId){this.transferId=transferId;this.sourceHospitalId=sourceHospitalId;this.destinationHospitalId=destinationHospitalId;}
 }

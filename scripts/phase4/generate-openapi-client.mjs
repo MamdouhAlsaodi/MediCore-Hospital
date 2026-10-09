@@ -10,7 +10,8 @@
 //
 // The client is transport-agnostic on purpose: every operation returns an
 // `HttpRequest` descriptor (method, fully-substituted path, optional JSON
-// body) that the frontend's single shared `apiFetch` boundary executes. The
+// body and operation-required headers) that the frontend's single shared
+// `apiFetch` boundary executes. The
 // generated module never calls fetch itself, so headers, error mapping, and
 // session handling stay owned by the existing shared boundary (T073).
 //
@@ -22,11 +23,12 @@
 // approximated.
 //
 // Requiredness policy (documented, wire-verified): a property of a schema
-// referenced as a SUCCESS RESPONSE is required unless it is explicitly
-// nullable, because every demonstrated response is a strict DTO record whose
-// components Jackson always serializes (nulls included). A property of a
-// request-body schema follows the contract's own `required` list, which
-// springdoc derives from the jakarta validation annotations.
+// referenced as a SUCCESS RESPONSE is present unless explicitly nullable
+// and not listed as required. A nullable property explicitly required by
+// the contract remains present but may hold null. The DTO records serialize
+// nulls, so nullable transfer fields explicitly declare required presence.
+// A property of a request-body schema follows the contract's own `required`
+// list, which springdoc derives from the jakarta validation annotations.
 
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -233,6 +235,22 @@ function queryParameters(operation, pathItemParams) {
   return params;
 }
 
+function headerParameters(operation, pathItemParams) {
+  return [...(pathItemParams ?? []), ...(operation.parameters ?? [])]
+    .filter((parameter) => parameter.in === 'header')
+    .map((parameter) => {
+      // Unsupported shapes must not silently produce descriptors missing headers.
+      if (parameter.required !== true || parameter.schema?.type !== 'string') {
+        fail(`unsupported header parameter: ${JSON.stringify(parameter)}`);
+      }
+      const name = parameter.name;
+      const tsName = name.replace(/-([a-z])/gi, (_match, letter) => letter.toUpperCase())
+        .replace(/^[A-Z]/, (letter) => letter.toLowerCase());
+      if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(tsName)) fail(`unsupported header name: ${name}`);
+      return { name, tsName };
+    });
+}
+
 function tsIdentifier(name) {
   if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name)) return JSON.stringify(name);
   return name;
@@ -276,11 +294,16 @@ function emitOperation(pathName, method, operation, pathItemParams) {
   const opId = operation.operationId ?? fail(`operation on ${method.toUpperCase()} ${pathName} has no operationId`);
   const pathParams = pathParamExpressions(operation, pathItemParams);
   const query = queryParameters(operation, pathItemParams);
+  const headers = headerParameters(operation, pathItemParams);
   const body = requestBodyInfo(operation);
+  if (body && !body.required && headers.length > 0) {
+    fail(`optional body cannot precede required header arguments for ${opId}`);
+  }
 
   const args = [];
   for (const param of pathParams) args.push(`${param.tsName}: string`);
   if (body) args.push(body.required ? `request: ${body.name}` : `request?: ${body.name}`);
+  for (const header of headers) args.push(`${header.tsName}: string`);
   if (query.length > 0) args.push(`query?: ${opId}QueryParams`);
 
   let pathExpression = JSON.stringify(pathName);
@@ -297,6 +320,9 @@ function emitOperation(pathName, method, operation, pathItemParams) {
 
   const descriptorParts = [`method: '${method.toUpperCase()}'`, `path: ${pathExpression}`];
   if (body) descriptorParts.push('body: request');
+  if (headers.length > 0) {
+    descriptorParts.push(`headers: { ${headers.map(({ name, tsName }) => `${JSON.stringify(name)}: ${tsName}`).join(', ')} }`);
+  }
 
   const deprecated = operation.deprecated === true
     ? '/** @deprecated Retained compatibility alias; see the contract document. */\n'
@@ -349,6 +375,7 @@ export interface HttpRequest {
   method: HttpMethod;
   path: string;
   body?: unknown;
+  headers?: Record<string, string>;
 }
 
 type QueryValue = string | number | boolean | undefined;

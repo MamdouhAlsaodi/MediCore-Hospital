@@ -30,6 +30,7 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -188,6 +189,43 @@ class OpenApiContractTest {
         assertStatuses(audit, 200, 400, 401, 403);
         assertErrorSchemaDocutesClientFault(audit, "400");
 
+        // --- transfers (Phase 5 US4, T101) --------------------------------
+        assertStatuses(op(paths, "/api/transfers", "get"), 200, 401, 403);
+        Map<String, Object> createTransfer = op(paths, "/api/transfers", "post");
+        assertStatuses(createTransfer, 201, 400, 401, 403, 404, 409);
+        assertErrorSchemaDocutesClientFault(createTransfer, "409");
+        assertRequestBodyRef(createTransfer, "CreateTransferRequest");
+        assertHeaderParameter(createTransfer, "Idempotency-Key", true);
+        Map<String, Object> getTransfer = op(paths, "/api/transfers/{id}", "get");
+        assertStatuses(getTransfer, 200, 401, 403, 404);
+        for (String action : List.of("accept", "reject", "cancel", "start-transit", "complete")) {
+            Map<String, Object> transition = op(paths, "/api/transfers/{id}/" + action, "post");
+            assertStatuses(transition, 200, 400, 401, 403, 404, 409);
+            assertHeaderParameter(transition, "Idempotency-Key", true);
+        }
+        assertRequestBodyRef(op(paths, "/api/transfers/{id}/accept", "post"), "AcceptTransferRequest");
+        assertRequestBodyRef(op(paths, "/api/transfers/{id}/reject", "post"), "TransitionReasonRequest");
+        assertRequired(schema(schemas, "CreateTransferRequest"), "patientId", "sourceAdmissionId",
+                "destinationHospitalId", "reasonCode");
+        assertRequired(schema(schemas, "AcceptTransferRequest"), "destinationBranchId",
+                "destinationBedId", "expectedVersion");
+        assertRequired(schema(schemas, "TransitionReasonRequest"), "reasonCode", "expectedVersion");
+        Map<String, Object> transferView = schema(schemas, "TransferView");
+        assertRequired(transferView, "id", "transferNumber", "patientId", "sourceHospitalId",
+                "sourceBranchId", "destinationHospitalId", "status", "requestedAt", "version",
+                "destinationBranchId", "destinationBedId", "acceptedAt", "transitStartedAt",
+                "completedAt", "cancelledAt", "rejectedAt");
+        Map<String, Object> statusProperty = prop(transferView, "status");
+        assertNotNull(statusProperty.get("enum"),
+                "the bounded transfer lifecycle enum must be documented on the view status");
+        for (String nullable : List.of("destinationBranchId", "destinationBedId", "acceptedAt",
+                "transitStartedAt", "completedAt", "cancelledAt", "rejectedAt")) {
+            Map<String, Object> property = prop(transferView, nullable);
+            assertTrue(Boolean.TRUE.equals(property.get("nullable"))
+                            || property.get("type") instanceof List<?> types && types.contains("null"),
+                    "TransferView." + nullable + " must allow null in the served OpenAPI schema; actual=" + property);
+        }
+
         // --- security scheme ----------------------------------------------
         Map<String, Object> securitySchemes =
                 (Map<String, Object>) ((Map<String, Object>) doc.get("components")).get("securitySchemes");
@@ -257,6 +295,22 @@ class OpenApiContractTest {
         assertTrue(branchProps.containsKey("todayAppointments")
                         && branchProps.containsKey("bedsOccupied") && branchProps.containsKey("invoicesVoid"),
                 "the typed command-center summary must expose its metric contract");
+    }
+
+    @Test
+    void headerParameterMustMatchNameLocationAndRequirednessOnOneParameter() {
+        Map<String, Object> operation = Map.of("parameters", List.of(
+                Map.of("name", "Idempotency-Key", "in", "query", "required", true),
+                Map.of("name", "Other", "in", "header", "required", true)));
+        assertThrows(AssertionError.class,
+                () -> assertHeaderParameter(operation, "Idempotency-Key", true));
+        assertThrows(AssertionError.class,
+                () -> assertHeaderParameter(Map.of("parameters", List.of(
+                        Map.of("name", "Idempotency-Key", "in", "header", "required", false))),
+                        "Idempotency-Key", true));
+        assertHeaderParameter(Map.of("parameters", List.of(
+                Map.of("name", "Idempotency-Key", "in", "header", "required", true))),
+                "Idempotency-Key", true);
     }
 
     // ------------------------------------------------------------------
@@ -392,6 +446,21 @@ class OpenApiContractTest {
             Map<String, Object> props = (Map<String, Object>) schema.get("properties");
             assertTrue(props != null && props.keySet().containsAll(Set.of("status", "error", "message", "path")),
                     "an inline client-fault schema must match the shared ApiError shape");
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void assertHeaderParameter(Map<String, Object> operation, String headerName,
+                                              boolean required) {
+        List<Map<String, Object>> parameters = (List<Map<String, Object>>) operation.get("parameters");
+        assertNotNull(parameters, "the operation must document its parameters");
+        Map<String, Object> parameter = parameters.stream()
+                .filter(p -> headerName.equals(p.get("name")) && "header".equals(p.get("in")))
+                .findFirst().orElse(null);
+        assertNotNull(parameter, "the operation must document the " + headerName + " header parameter");
+        if (required) {
+            assertEquals(Boolean.TRUE, parameter.get("required"),
+                    headerName + " must be a required header");
         }
     }
 

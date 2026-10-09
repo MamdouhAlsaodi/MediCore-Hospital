@@ -15,18 +15,20 @@ servers:
 security:
 - bearerAuth: []
 tags:
+- name: audit
+  description: Scope-aware audit evidence reads (ADMIN only)
 - name: auth
   description: Login and authenticated acting-context switch
-- name: patients
-  description: Patient registry within the acting branch
+- name: dashboard
+  description: Command-center reads for the acting branch/organization
+- name: Transfers
+  description: "Inter-hospital transfer lifecycle (synthetic, non-clinical)"
 - name: appointments
   description: Booked appointment windows within the acting branch
 - name: admissions
   description: Admission lifecycle and atomic bed assignment
-- name: dashboard
-  description: Command-center reads for the acting branch/organization
-- name: audit
-  description: Scope-aware audit evidence reads (ADMIN only)
+- name: patients
+  description: Patient registry within the acting branch
 paths:
   /api/patients/{id}:
     get:
@@ -295,6 +297,436 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiError"
+  /api/transfers:
+    get:
+      tags:
+      - Transfers
+      summary: List transfers visible to the acting hospital
+      operationId: listAuthorizedTransfers
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - REQUESTED
+          - ACCEPTED
+          - IN_TRANSIT
+          - COMPLETED
+          - REJECTED
+          - CANCELLED
+      responses:
+        "200":
+          description: Scoped transfer list
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TransferView"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+    post:
+      tags:
+      - Transfers
+      summary: Request an inter-hospital transfer
+      operationId: requestTransfer
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        description: Bounded idempotency key
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTransferRequest"
+        required: true
+      responses:
+        "201":
+          description: Transfer created in REQUESTED state
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/TransferView"
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          description: "Missing, invalid, or expired bearer token; the acting session\
+            \ is gone. The body is one generic non-enumerating error field."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
+  /api/transfers/{id}/start-transit:
+    post:
+      tags:
+      - Transfers
+      summary: Start transit and hand off the source admission/bed
+      operationId: startTransferTransit
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          description: Transfer moved in transit
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/TransferView"
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          description: "Missing, invalid, or expired bearer token; the acting session\
+            \ is gone. The body is one generic non-enumerating error field."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
+  /api/transfers/{id}/reject:
+    post:
+      tags:
+      - Transfers
+      summary: Reject the transfer (terminal)
+      operationId: rejectTransfer
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TransitionReasonRequest"
+        required: true
+      responses:
+        "200":
+          description: Rejected transfer
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/TransferView"
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          description: "Missing, invalid, or expired bearer token; the acting session\
+            \ is gone. The body is one generic non-enumerating error field."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
+  /api/transfers/{id}/complete:
+    post:
+      tags:
+      - Transfers
+      summary: "Complete: destination admission, reservation consumed, bed occupied"
+      operationId: completeTransfer
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          description: Completed transfer
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/TransferView"
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          description: "Missing, invalid, or expired bearer token; the acting session\
+            \ is gone. The body is one generic non-enumerating error field."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
+  /api/transfers/{id}/cancel:
+    post:
+      tags:
+      - Transfers
+      summary: Cancel the transfer (terminal)
+      operationId: cancelTransfer
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TransitionReasonRequest"
+        required: true
+      responses:
+        "200":
+          description: Cancelled transfer
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/TransferView"
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          description: "Missing, invalid, or expired bearer token; the acting session\
+            \ is gone. The body is one generic non-enumerating error field."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
+  /api/transfers/{id}/accept:
+    post:
+      tags:
+      - Transfers
+      summary: Accept and reserve the destination bed atomically
+      operationId: acceptTransfer
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcceptTransferRequest"
+        required: true
+      responses:
+        "200":
+          description: Accepted transfer with reservation
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/TransferView"
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          description: "Missing, invalid, or expired bearer token; the acting session\
+            \ is gone. The body is one generic non-enumerating error field."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
   /api/patients:
     get:
       tags:
@@ -697,6 +1129,51 @@ paths:
         "400":
           description: "Malformed request body, malformed field value, or a failed\
             \ validation constraint (shared ApiError body)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /api/transfers/{id}:
+    get:
+      tags:
+      - Transfers
+      summary: Fetch one transfer visible to the acting hospital
+      operationId: getAuthorizedTransfer
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: Scoped transfer view
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/TransferView"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "400":
+          description: A path value is malformed for its typed target (shared ApiError
+            body).
           content:
             application/json:
               schema:
@@ -1229,6 +1706,143 @@ components:
           format: uuid
       required:
       - bedId
+    CreateTransferRequest:
+      type: object
+      properties:
+        patientId:
+          type: string
+          format: uuid
+        sourceAdmissionId:
+          type: string
+          format: uuid
+        destinationHospitalId:
+          type: string
+          format: uuid
+        reasonCode:
+          type: string
+          minLength: 1
+      required:
+      - destinationHospitalId
+      - patientId
+      - reasonCode
+      - sourceAdmissionId
+    TransferView:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        transferNumber:
+          type: string
+        patientId:
+          type: string
+          format: uuid
+        sourceHospitalId:
+          type: string
+          format: uuid
+        sourceBranchId:
+          type: string
+          format: uuid
+        destinationHospitalId:
+          type: string
+          format: uuid
+        destinationBranchId:
+          type:
+          - string
+          - "null"
+          format: uuid
+        destinationBedId:
+          type:
+          - string
+          - "null"
+          format: uuid
+        status:
+          type: string
+          enum:
+          - REQUESTED
+          - ACCEPTED
+          - IN_TRANSIT
+          - COMPLETED
+          - REJECTED
+          - CANCELLED
+        reasonCode:
+          type: string
+        requestedAt:
+          type: string
+          format: date-time
+        acceptedAt:
+          type:
+          - string
+          - "null"
+          format: date-time
+        transitStartedAt:
+          type:
+          - string
+          - "null"
+          format: date-time
+        completedAt:
+          type:
+          - string
+          - "null"
+          format: date-time
+        cancelledAt:
+          type:
+          - string
+          - "null"
+          format: date-time
+        rejectedAt:
+          type:
+          - string
+          - "null"
+          format: date-time
+        version:
+          type: integer
+          format: int64
+      required:
+      - acceptedAt
+      - cancelledAt
+      - completedAt
+      - destinationBedId
+      - destinationBranchId
+      - destinationHospitalId
+      - id
+      - patientId
+      - rejectedAt
+      - requestedAt
+      - sourceBranchId
+      - sourceHospitalId
+      - status
+      - transferNumber
+      - transitStartedAt
+      - version
+    TransitionReasonRequest:
+      type: object
+      properties:
+        reasonCode:
+          type: string
+          minLength: 1
+        expectedVersion:
+          type: integer
+          format: int64
+      required:
+      - expectedVersion
+      - reasonCode
+    AcceptTransferRequest:
+      type: object
+      properties:
+        destinationBranchId:
+          type: string
+          format: uuid
+        destinationBedId:
+          type: string
+          format: uuid
+        expectedVersion:
+          type: integer
+          format: int64
+      required:
+      - destinationBedId
+      - destinationBranchId
+      - expectedVersion
     CreatePatientRequest:
       type: object
       properties:

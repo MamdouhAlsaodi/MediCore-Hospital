@@ -8,6 +8,7 @@ on:
       - 'backend/src/test/java/com/mamtrex/hospital/infrastructure/**'
       - 'backend/src/main/java/com/mamtrex/hospital/patient/**'
       - 'backend/src/main/java/com/mamtrex/hospital/transfer/**'
+      - 'backend/src/main/java/com/mamtrex/hospital/idempotency/**'
       - 'backend/pom.xml'
       - '.github/workflows/phase5-postgres.yml'
 
@@ -25,10 +26,10 @@ jobs:
           distribution: temurin
           java-version: '21'
           cache: maven
-      - name: PostgreSQL-backed integration suites (V6 migration, MRN races, Flyway, profile, db-loss)
+      - name: PostgreSQL-backed integration suites (V7 migration, transfer races, MRN races, Flyway, profile, db-loss)
         run: |
           cd backend
-          mvn -B test -Dtest='FlywayPostgresIntegrationTest,Phase5MigrationIntegrationTest,PostgresConcurrencyIntegrationTest,PostgresProfileContextIntegrationTest,LivenessReadinessDbLossIntegrationTest,NetworkPatientConcurrencyIntegrationTest'
+          mvn -B test -Dtest='FlywayPostgresIntegrationTest,Phase5MigrationIntegrationTest,PostgresConcurrencyIntegrationTest,PostgresProfileContextIntegrationTest,LivenessReadinessDbLossIntegrationTest,NetworkPatientConcurrencyIntegrationTest,TransferConcurrencyIntegrationTest,TransferV7IntegrityIntegrationTest'
       - name: Summarize
         if: always()
         run: |

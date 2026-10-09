@@ -403,7 +403,7 @@ class Phase5MigrationIntegrationTest {
     void v6AppliesToEmptySchemaAndIsRestartIdempotent() {
         var db = PostgresContainerSupport.newIsolatedDatabase();
         MigrateResult first = flywayFor(db).migrate();
-        assertEquals(6, first.migrationsExecuted, "V1..V6 must apply to an empty database");
+        assertEquals(7, first.migrationsExecuted, "V1..V7 must apply to an empty database");
         MigrateResult second = flywayFor(db).migrate();
         assertEquals(0, second.migrationsExecuted, "a restart must reapply nothing");
         assertEquals(0, flywayFor(db).info().pending().length, "no pending migrations may remain");

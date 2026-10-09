@@ -129,6 +129,12 @@ public class SecurityConfig {
                         // service owns narrowing. Ordered ahead of the
                         // ADMIN-only /api/** catch-all.
                         .requestMatchers(HttpMethod.GET, "/api/network/hierarchy").authenticated()
+                        // Phase 5 US4 (T098): transfer routes are authenticated for the
+                        // operational roles; the server-side service matrix (T089)
+                        // owns the per-command source/destination role and hospital
+                        // checks, and foreign hospitals stay undetectable (404).
+                        .requestMatchers("/api/transfers/**")
+                            .hasAnyRole("ADMIN", "DOCTOR", "NURSE")
                         .requestMatchers(HttpMethod.GET, "/api/staff/**")
                             .hasAnyRole("ADMIN", "HR", "RECEPTIONIST")
                         .requestMatchers("/api/organization/**", "/api/branches/**")

@@ -70,7 +70,11 @@ public class AppointmentService {
 
     public AppointmentDtos.AppointmentResponse create(AppointmentDtos.CreateAppointmentRequest r) {
         Branch branch = actingBranch();
-        Patient patient = patients.findByIdAndBranchId(r.patientId(), branch.getId())
+        // Phase 5 US3 (T073): ACTIVE hospital access grant required — a
+        // foreign-hospital id 404s like a nonexistent one.
+        Patient patient = patients.findByIdAndActiveHospitalAccess(r.patientId(),
+                        branch.getOrganization().getId(), branch.getHospital().getId(),
+                        com.mamtrex.hospital.patient.PatientAccessStatus.ACTIVE)
                 .orElseThrow(() -> new NotFoundException("Patient not found: " + r.patientId()));
         StaffMember professional = professionals.findByIdAndBranchId(r.professionalId(), branch.getId())
                 .orElseThrow(() -> new NotFoundException("Professional not found: " + r.professionalId()));

@@ -87,9 +87,13 @@ public class AdmissionService {
 
     public AdmissionDtos.AdmissionResponse create(AdmissionDtos.CreateAdmissionRequest r) {
         Branch acting = actingBranch();
-        Patient patient = patients.findById(r.patientId())
+        // Phase 5 US3 (T073): the patient must hold an ACTIVE access grant
+        // for the acting hospital (and belong to its organization) — a
+        // foreign-hospital id 404s like a nonexistent one.
+        Patient patient = patients.findByIdAndActiveHospitalAccess(r.patientId(),
+                        acting.getOrganization().getId(), acting.getHospital().getId(),
+                        com.mamtrex.hospital.patient.PatientAccessStatus.ACTIVE)
                 .orElseThrow(() -> new NotFoundException("Patient not found: " + r.patientId()));
-        requireActingBranch(patient.getBranch(), "Patient not found: " + r.patientId());
         Bed bed = null;
         if (r.bedId() != null) {
             bed = availableBedInBranch(r.bedId(), acting.getId());

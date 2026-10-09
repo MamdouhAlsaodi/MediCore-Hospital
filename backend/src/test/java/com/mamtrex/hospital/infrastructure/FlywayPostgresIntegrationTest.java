@@ -76,7 +76,7 @@ class FlywayPostgresIntegrationTest {
     void migratesEmptyDatabaseToCurrentVersion() throws Exception {
         var db = PostgresContainerSupport.newIsolatedDatabase();
         MigrateResult result = flywayFor(db).migrate();
-        assertEquals(5, result.migrationsExecuted, "V1..V5 must apply to an empty database");
+        assertEquals(6, result.migrationsExecuted, "V1..V6 must apply to an empty database");
         assertRequiredSchemaObjects(db);
     }
 
@@ -85,7 +85,7 @@ class FlywayPostgresIntegrationTest {
     void secondStartupAppliesZeroPendingMigrations() {
         var db = PostgresContainerSupport.newIsolatedDatabase();
         MigrateResult first = flywayFor(db).migrate();
-        assertEquals(5, first.migrationsExecuted);
+        assertEquals(6, first.migrationsExecuted);
         MigrateResult second = flywayFor(db).migrate();
         assertEquals(0, second.migrationsExecuted, "a restart must reapply nothing");
         assertEquals(0, flywayFor(db).info().pending().length, "no pending migrations may remain");
@@ -306,10 +306,10 @@ class FlywayPostgresIntegrationTest {
                 "insert into acting_assignments (id, account_id, organization_id, hospital_id, branch_id, role, scope, enabled, created_at, updated_at, version) "
                         + "values ('" + assignmentId + "'::uuid, '" + accountId + "'::uuid, '" + orgId + "'::uuid, '"
                         + hospitalId + "'::uuid, '" + branchId + "'::uuid, 'DOCTOR', 'BRANCH', true, now(), now(), 0)",
-                "insert into patients (id, branch_id, medical_record_number, full_name, date_of_birth, active, created_at, updated_at, version) "
-                        + "values ('" + patientA + "'::uuid, '" + branchId + "'::uuid, 'DEMO-MRN-0001', 'Demo Patient Alpha', '1991-02-03', true, now(), now(), 0)",
-                "insert into patients (id, branch_id, medical_record_number, full_name, date_of_birth, active, created_at, updated_at, version) "
-                        + "values ('" + patientB + "'::uuid, '" + branchId + "'::uuid, 'DEMO-MRN-0002', 'Demo Patient Bravo', '1992-03-04', true, now(), now(), 0)",
+                "insert into patients (id, organization_id, branch_id, medical_record_number, full_name, date_of_birth, active, created_at, updated_at, version) "
+                        + "values ('" + patientA + "'::uuid, '" + orgId + "'::uuid, '" + branchId + "'::uuid, 'DEMO-MRN-0001', 'Demo Patient Alpha', '1991-02-03', true, now(), now(), 0)",
+                "insert into patients (id, organization_id, branch_id, medical_record_number, full_name, date_of_birth, active, created_at, updated_at, version) "
+                        + "values ('" + patientB + "'::uuid, '" + orgId + "'::uuid, '" + branchId + "'::uuid, 'DEMO-MRN-0002', 'Demo Patient Bravo', '1992-03-04', true, now(), now(), 0)",
                 "insert into staff_members (id, branch_id, employee_code, full_name, profession, department, created_at, updated_at, version) "
                         + "values ('" + staffId + "'::uuid, '" + branchId + "'::uuid, 'DEMO-STAFF-001', 'Demo Professional One', 'doctor', 'Demo Internal Medicine', now(), now(), 0)",
                 "insert into staff_availability (id, branch_id, staff_member_id, starts_at, ends_at, created_at, updated_at, version) "

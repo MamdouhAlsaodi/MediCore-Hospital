@@ -42,11 +42,18 @@ paths:
           format: uuid
       responses:
         "200":
-          description: OK
+          description: The patient
           content:
-            '*/*':
+            application/json:
               schema:
                 $ref: "#/components/schemas/PatientResponse"
+        "404":
+          description: Unknown id or a patient the acting hospital holds no active
+            access grant for (shared ApiError body; the two are indistinguishable)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
         "401":
           description: "Missing, invalid, or expired bearer token; the acting session\
             \ is gone. The body is one generic non-enumerating error field."
@@ -80,13 +87,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiError"
-        "404":
-          description: No resource referenced by the path exists inside the acting
-            scope (shared ApiError body).
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ApiError"
     put:
       tags:
       - patient-controller
@@ -106,11 +106,18 @@ paths:
         required: true
       responses:
         "200":
-          description: OK
+          description: The updated patient
           content:
-            '*/*':
+            application/json:
               schema:
                 $ref: "#/components/schemas/PatientResponse"
+        "404":
+          description: Unknown id or a patient the acting hospital holds no active
+            access grant for (shared ApiError body)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
         "401":
           description: "Missing, invalid, or expired bearer token; the acting session\
             \ is gone. The body is one generic non-enumerating error field."
@@ -140,13 +147,6 @@ paths:
         "400":
           description: "Malformed request body, malformed field value, or a failed\
             \ validation constraint (shared ApiError body)."
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ApiError"
-        "404":
-          description: No resource referenced by the path exists inside the acting
-            scope (shared ApiError body).
           content:
             application/json:
               schema:
@@ -1165,6 +1165,21 @@ components:
           type: string
         active:
           type: boolean
+    ApiError:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        status:
+          type: integer
+          format: int32
+        error:
+          type: string
+        message:
+          type: string
+        path:
+          type: string
     UpdateAdmissionStatusRequest:
       type: object
       properties:
@@ -1205,21 +1220,6 @@ components:
         room:
           type: string
         bedNumber:
-          type: string
-    ApiError:
-      type: object
-      properties:
-        timestamp:
-          type: string
-          format: date-time
-        status:
-          type: integer
-          format: int32
-        error:
-          type: string
-        message:
-          type: string
-        path:
           type: string
     AssignBedRequest:
       type: object

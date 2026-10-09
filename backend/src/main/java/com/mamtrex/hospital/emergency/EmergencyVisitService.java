@@ -79,7 +79,11 @@ public class EmergencyVisitService {
 
     public EmergencyVisitDtos.EmergencyVisitResponse create(EmergencyVisitDtos.CreateEmergencyVisitRequest r) {
         Branch acting = actingBranch();
-        Patient patient = patients.findByIdAndBranchId(r.patientId(), acting.getId())
+        // Phase 5 US3 (T073): ACTIVE hospital access grant required — a
+        // foreign-hospital id 404s like a nonexistent one.
+        Patient patient = patients.findByIdAndActiveHospitalAccess(r.patientId(),
+                        acting.getOrganization().getId(), acting.getHospital().getId(),
+                        com.mamtrex.hospital.patient.PatientAccessStatus.ACTIVE)
                 .orElseThrow(() -> new NotFoundException("Patient not found: " + r.patientId()));
         // Ownership is server-stamped from the acting branch; the create
         // request carries no branch field, so client input can never choose it.

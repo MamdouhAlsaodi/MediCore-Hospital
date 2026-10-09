@@ -107,6 +107,30 @@ describe('PatientsPage', () => {
     expect(screen.queryByRole('list', { name: 'Patient results' })).not.toBeInTheDocument();
   });
 
+  it('renders foreign-hospital search results as empty without leaking details (US3 T076)', async () => {
+    // Server contract (T071): a search identifier that belongs to another hospital
+    // resolves to an empty list or a generic not-found — never a 403 body naming
+    // the foreign hospital, and never a partial patient record.
+    fetchMock.mockImplementation(() => Promise.resolve(jsonResponse([], 200)));
+    renderPatients();
+    await waitForPatientList().catch(() => {});
+
+    const user = userEvent.setup();
+    await user.type(screen.getByRole('searchbox', { name: 'Search patients' }), 'MRN-FOREIGN-777');
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/patients?q=MRN-FOREIGN-777');
+    const empty = await screen.findByText(/no patients match/i);
+    expect(empty).toHaveTextContent(/search/i);
+    // No foreign hospital identifier, patient name, or disclosure alert may appear.
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByText(/foreign hospital/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/another hospital/i)).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain('NET-HOSP');
+    expect(document.body.textContent).not.toContain('Amal Hassan');
+  });
+
   it('shows a visible network error when the server is unreachable', async () => {
     fetchMock.mockImplementation(() => Promise.reject(new TypeError('Failed to fetch')));
     renderPatients();

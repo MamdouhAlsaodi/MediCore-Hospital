@@ -48,6 +48,21 @@ public class PatientController {
                         r.phone(), r.email(), r.nationalId(), r.address()));
     }
 
+    /**
+     * Phase 5 US3 (T071): a patient outside the acting hospital's ACTIVE
+     * access grants — including any foreign-hospital id — is indistinguishable
+     * from a nonexistent one: the same generic 404 with the shared ApiError
+     * body, never a scoped error that would disclose existence.
+     */
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "The patient",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = PatientDtos.PatientResponse.class))),
+            @ApiResponse(responseCode = "404", description = "Unknown id or a patient the acting hospital "
+                    + "holds no active access grant for (shared ApiError body; the two are indistinguishable)",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = ApiError.class)))
+    })
     @GetMapping("/{id}")
     public PatientDtos.PatientResponse get(@PathVariable UUID id) {
         return PatientDtos.PatientResponse.from(service.get(id));
@@ -58,6 +73,16 @@ public class PatientController {
         return service.list(q).stream().map(PatientDtos.PatientResponse::from).toList();
     }
 
+    /** Same generic 404 refusal contract as GET (T071). */
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "The updated patient",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = PatientDtos.PatientResponse.class))),
+            @ApiResponse(responseCode = "404", description = "Unknown id or a patient the acting hospital "
+                    + "holds no active access grant for (shared ApiError body)",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = ApiError.class)))
+    })
     @PutMapping("/{id}")
     public PatientDtos.PatientResponse update(@PathVariable UUID id, @Valid @RequestBody PatientDtos.UpdatePatientRequest r) {
         return PatientDtos.PatientResponse.from(service.update(id, r.fullName(), r.phone(), r.email(), r.address()));

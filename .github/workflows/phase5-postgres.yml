@@ -10,6 +10,10 @@ on:
       - 'backend/src/main/java/com/mamtrex/hospital/transfer/**'
       - 'backend/src/main/java/com/mamtrex/hospital/idempotency/**'
       - 'backend/pom.xml'
+      - 'api/openapi/medicore-v1.yaml'
+      - 'frontend/src/generated/api/**'
+      - 'scripts/phase4/lib-openapi.sh'
+      - 'scripts/phase4/generate-openapi-client.mjs'
       - '.github/workflows/phase5-postgres.yml'
 
 permissions:
@@ -30,6 +34,8 @@ jobs:
         run: |
           cd backend
           mvn -B test -Dtest='FlywayPostgresIntegrationTest,Phase5MigrationIntegrationTest,PostgresConcurrencyIntegrationTest,PostgresProfileContextIntegrationTest,LivenessReadinessDbLossIntegrationTest,NetworkPatientConcurrencyIntegrationTest,TransferConcurrencyIntegrationTest,TransferV7IntegrityIntegrationTest'
+      - name: Served OpenAPI and generated-client byte drift (disposable Docker backend)
+        run: scripts/phase4/check-openapi-drift.sh
       - name: Summarize
         if: always()
         run: |

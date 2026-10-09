@@ -127,14 +127,27 @@ class NetworkPatientConcurrencyIntegrationTest {
         var branchB = branches.findByHospitalIdAndCode(hospitalB.getId(), BRANCH_B_CODE).orElseGet(() ->
                 branches.save(new com.mamtrex.hospital.organization.Branch(
                         hospitalB, BRANCH_B_CODE, "Race Branch B", "2 Race Way")));
-        assignments.save(com.mamtrex.hospital.auth.ActingAssignment.branch(
-                accounts.findByUsername(USER_A).orElseThrow(),
-                org, com.mamtrex.hospital.auth.Role.RECEPTIONIST, branchA));
-        assignments.save(com.mamtrex.hospital.auth.ActingAssignment.branch(
-                accounts.findByUsername(USER_B).orElseThrow(),
-                org, com.mamtrex.hospital.auth.Role.RECEPTIONIST, branchB));
+        // The Spring context (and its disposable database) is shared by both race
+        // tests; re-seeding must stay idempotent or the logical-scope unique index
+        // on acting_assignments rejects the second fixture run (V5 FR-004).
+        seedAssignmentOnce(USER_A, org, com.mamtrex.hospital.auth.Role.RECEPTIONIST, branchA);
+        seedAssignmentOnce(USER_B, org, com.mamtrex.hospital.auth.Role.RECEPTIONIST, branchB);
         this.tokenA = login(USER_A);
         this.tokenB = login(USER_B);
+    }
+
+    /** Idempotent BRANCH assignment fixture: re-running seed() never duplicates. */
+    private void seedAssignmentOnce(String username, com.mamtrex.hospital.organization.HospitalOrganization org,
+                                    com.mamtrex.hospital.auth.Role role,
+                                    com.mamtrex.hospital.organization.Branch branch) {
+        var account = accounts.findByUsername(username).orElseThrow();
+        boolean exists = assignments
+                .findByAccountIdAndEnabledTrueOrderByRoleAscScopeAscIdAsc(account.getId()).stream()
+                .anyMatch(a -> a.getScope() == com.mamtrex.hospital.auth.AssignmentScope.BRANCH
+                        && branch.getId().equals(a.getBranch() == null ? null : a.getBranch().getId()));
+        if (!exists) {
+            assignments.save(com.mamtrex.hospital.auth.ActingAssignment.branch(account, org, role, branch));
+        }
     }
 
     /** Same-hospital duplicate-MRN race: one winner, one typed 409, one row. */

@@ -88,11 +88,11 @@ class Phase5MigrationIntegrationTest {
     @Test
     void v5AppliesToEmptySchemaAndIsRestartIdempotent() {
         var db = PostgresContainerSupport.newIsolatedDatabase();
-        MigrateResult first = flywayFor(db).migrate();
+        MigrateResult first = flywayToTarget(db, "5").migrate();
         assertEquals(5, first.migrationsExecuted, "V1..V5 must apply to an empty database");
-        MigrateResult second = flywayFor(db).migrate();
+        MigrateResult second = flywayToTarget(db, "5").migrate();
         assertEquals(0, second.migrationsExecuted, "a restart must reapply nothing");
-        assertEquals(0, flywayFor(db).info().pending().length, "no pending migrations may remain");
+        assertEquals(0, flywayToTarget(db, "5").info().pending().length, "no pending migrations may remain");
     }
 
     /** Phase 4-shaped data backfills deterministically, including across independent databases. */
@@ -421,8 +421,8 @@ class Phase5MigrationIntegrationTest {
         var dbA = PostgresContainerSupport.newIsolatedDatabase();
         var dbB = PostgresContainerSupport.newIsolatedDatabase();
         for (var db : List.of(dbA, dbB)) {
-            flywayToTarget(db, "5").migrate();
-            seedPhase4ShapedCohort(db);
+            flywayToTarget(db, "4").migrate();
+            seedV5ShapedCohort(db);
             seedPatient(db);
         }
         flywayFor(dbA).migrate();
@@ -448,8 +448,8 @@ class Phase5MigrationIntegrationTest {
     @Test
     void v6RefusesMalformedPatientOwnership() throws Exception {
         var db = PostgresContainerSupport.newIsolatedDatabase();
-        flywayToTarget(db, "5").migrate();
-        seedPhase4ShapedCohort(db);
+        flywayToTarget(db, "4").migrate();
+        seedV5ShapedCohort(db);
         seedPatient(db);
         try (Connection c = FlywayPostgresIntegrationTest.connection(db); Statement s = c.createStatement()) {
             s.execute("update patients set branch_id = null where id = '" + PATIENT_ID + "'");
@@ -543,9 +543,59 @@ class Phase5MigrationIntegrationTest {
                 + name + "', 'Region', 'UTC', true, now(), now(), 0)");
     }
 
-    /** Deterministic Phase 4-shaped synthetic cohort (V4 schema target). */
+    /**
+     * Deterministic V5-shaped synthetic cohort for V6 tests: migrate to target
+     * "5" first (V5 itself derives LEGACY-HOSPITAL-001 and backfills
+     * branches.hospital_id / assignment hospital scope), then add a V4-era
+     * patient whose ownership V6 must backfill.
+     */
+    private static void seedV5ShapedCohort(PostgresContainerSupport.DisposableDatabase db) throws Exception {
+        // The organization must exist BEFORE V5 runs so its deterministic legacy
+        // hospital derivation has an owner row; seed it at the V4 target, then
+        // migrate to "5" (which creates LEGACY-HOSPITAL-001 and backfills scope).
+        try (Connection c = FlywayPostgresIntegrationTest.connection(db); Statement s = c.createStatement()) {
+            s.execute("insert into hospital_organizations (id, code, name, created_at, updated_at, version) "
+                    + "values ('" + ORG_ID + "', 'BACKFILL-ORG', 'Synthetic Backfill Network', now(), now(), 0)");
+        }
+        flywayToTarget(db, "5").migrate();
+        String legacyHospital = scalar(db,
+                "select id::text from hospitals where code = 'LEGACY-HOSPITAL-001'");
+        try (Connection c = FlywayPostgresIntegrationTest.connection(db); Statement s = c.createStatement()) {
+            String[] statements = {
+                "insert into branches (id, organization_id, hospital_id, code, name, location_label, active, created_at, "
+                        + "updated_at, version) values ('" + BRANCH_MAIN + "', '" + ORG_ID + "', '" + legacyHospital
+                        + "', 'BACKFILL-BR-1', 'Synthetic Main', '1 Backfill Way', true, now(), now(), 0)",
+                "insert into branches (id, organization_id, hospital_id, code, name, location_label, active, created_at, "
+                        + "updated_at, version) values ('" + BRANCH_OTHER + "', '" + ORG_ID + "', '" + legacyHospital
+                        + "', 'BACKFILL-BR-2', 'Synthetic Other', '2 Backfill Way', true, now(), now(), 0)",
+                "insert into departments (id, branch_id, code, name, specialty, location, created_at, updated_at, "
+                        + "version) values ('" + DEPT_ID + "', '" + BRANCH_MAIN + "', 'BACKFILL-DEP-1', "
+                        + "'Synthetic Department', 'general', 'Demo Tower', now(), now(), 0)",
+                "insert into user_accounts (id, username, password_hash, enabled, created_at, updated_at, version) "
+                        + "values ('" + ACCOUNT_ID + "', 'backfill-review', "
+                        + "'disposable-bcrypt-hash-not-a-credential', true, now(), now(), 0)",
+                "insert into acting_assignments (id, account_id, organization_id, hospital_id, branch_id, role, scope, enabled, "
+                        + "created_at, updated_at, version) values ('" + BRANCH_ASSIGNMENT + "', '" + ACCOUNT_ID
+                        + "', '" + ORG_ID + "', '" + legacyHospital + "', '" + BRANCH_MAIN + "', 'DOCTOR', 'BRANCH', true, now(), now(), 0)",
+                "insert into acting_assignments (id, account_id, organization_id, hospital_id, department_id, role, scope, "
+                        + "enabled, created_at, updated_at, version) values ('" + DEPT_ASSIGNMENT + "', '"
+                        + ACCOUNT_ID + "', '" + ORG_ID + "', '" + legacyHospital + "', '" + DEPT_ID + "', 'NURSE', 'DEPARTMENT', true, "
+                        + "now(), now(), 0)",
+                "insert into acting_assignments (id, account_id, organization_id, role, scope, enabled, created_at, "
+                        + "updated_at, version) values ('" + ORG_ASSIGNMENT + "', '" + ACCOUNT_ID + "', '" + ORG_ID
+                        + "', 'ADMIN', 'ORGANIZATION', true, now(), now(), 0)"
+            };
+            for (String sql : statements) {
+                s.execute(sql);
+            }
+        }
+    }
+
+    /** Deterministic Phase 4-shaped synthetic cohort (V4 schema target, pre-hierarchy). */
     private static void seedPhase4ShapedCohort(PostgresContainerSupport.DisposableDatabase db) throws Exception {
         try (Connection c = FlywayPostgresIntegrationTest.connection(db); Statement s = c.createStatement()) {
+            // V4 target: hospitals table does not exist yet and BRANCH/DEPARTMENT
+            // assignments carry no hospital_id (V5 backfills it from the branch/department).
             String[] statements = {
                 "insert into hospital_organizations (id, code, name, created_at, updated_at, version) "
                         + "values ('" + ORG_ID + "', 'BACKFILL-ORG', 'Synthetic Backfill Network', now(), now(), 0)",

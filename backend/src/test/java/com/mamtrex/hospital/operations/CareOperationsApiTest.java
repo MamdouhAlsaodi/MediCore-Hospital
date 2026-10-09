@@ -185,6 +185,13 @@ class CareOperationsApiTest {
     private static final String TEST_ORG_CODE = "CAREOPS-ORG";
     private static final String TEST_BRANCH_CODE = "CAREOPS-BR-DEFAULT";
 
+    /** Phase 5 US3 (T074): a second hospital in the same synthetic network. */
+    private static final String CROSS_HOSPITAL_CODE = "CAREOPS-HOSP-ZCROSS";
+    private static final String CROSS_BRANCH_CODE = "CAREOPS-BR-ZCROSS";
+    private static final String CROSS_DOCTOR = "careops-cross-doctor";
+    private static final String CROSS_BILLING = "careops-cross-billing";
+    private static final String CROSS_RECEPTIONIST = "careops-cross-receptionist";
+
     private UserAccount account(String username, Role role) {
         return new UserAccount(username, encoder.encode(TEST_ACCOUNT_PASSWORD), Set.of(role));
     }
@@ -217,6 +224,21 @@ class CareOperationsApiTest {
         ensureAssignment(DOCTOR_USER, Role.DOCTOR, AssignmentScope.BRANCH, org, branch);
         ensureAssignment(NURSE_USER, Role.NURSE, AssignmentScope.BRANCH, org, branch);
         ensureAssignment(RECEPTIONIST_USER, Role.RECEPTIONIST, AssignmentScope.BRANCH, org, branch);
+
+        // Phase 5 US3 (T074): a second hospital + branch in the same network,
+        // with a doctor and a billing user acting inside it.
+        var crossHospital = hospitals.findByOrganizationIdAndCode(org.getId(), CROSS_HOSPITAL_CODE).orElseGet(() ->
+                hospitals.save(new com.mamtrex.hospital.organization.HospitalFacility(
+                        org, CROSS_HOSPITAL_CODE, "Synthetic CareOps Cross Hospital", "Cross Region", "UTC")));
+        var crossBranch = branches.findByHospitalIdAndCode(crossHospital.getId(), CROSS_BRANCH_CODE).orElseGet(() ->
+                branches.save(new Branch(crossHospital, CROSS_BRANCH_CODE,
+                        "Synthetic CareOps Cross Branch", "2 CareOps Way")));
+        record(account(CROSS_DOCTOR, Role.DOCTOR));
+        record(account(CROSS_BILLING, Role.BILLING));
+        record(account(CROSS_RECEPTIONIST, Role.RECEPTIONIST));
+        ensureAssignment(CROSS_DOCTOR, Role.DOCTOR, AssignmentScope.BRANCH, org, crossBranch);
+        ensureAssignment(CROSS_BILLING, Role.BILLING, AssignmentScope.BRANCH, org, crossBranch);
+        ensureAssignment(CROSS_RECEPTIONIST, Role.RECEPTIONIST, AssignmentScope.BRANCH, org, crossBranch);
     }
 
     private void ensureAssignment(String username, Role role, AssignmentScope scope,
@@ -1855,6 +1877,58 @@ class CareOperationsApiTest {
      * synthetic complaint — nothing else. The optional patientId override
      * lets failure tests substitute unknown or malformed references.
      */
+    /**
+     * Phase 5 US3 (T074): cross-hospital regression matrix for the dependent
+     * care workflows. A patient registered at the fixture hospital is
+     * invisible to a second hospital in the same network — the generic 404 on
+     * every read AND every dependent create (admission, emergency visit,
+     * invoice), an empty search, and a shared 409 on a duplicate MRN create —
+     * while the same workflows keep succeeding at the registering hospital.
+     */
+    @Test
+    void crossHospitalPatientAccessRegressionMatrix() {
+        String adminToken = login(ADMIN_USER);
+        String doctorToken = login(DOCTOR_USER);
+        String crossDoctorToken = login(CROSS_DOCTOR);
+        String crossBillingToken = login(CROSS_BILLING);
+        String crossReceptionistToken = login(CROSS_RECEPTIONIST);
+        String patientId = createSyntheticPatient(adminToken, "xhosp");
+        String mrn = "MRN-CAREOPS-" + suffix + "-xhosp";
+
+        // Reads: the foreign hospital gets the generic 404 and an empty search.
+        assertEquals(HttpStatus.NOT_FOUND, getStatus("/api/patients/" + patientId, crossDoctorToken).getStatusCode(),
+                "the foreign hospital must not read the patient");
+        ResponseEntity<List<Map<String, Object>>> foreignSearch = rest.exchange(
+                "/api/patients?q={q}", HttpMethod.GET, new HttpEntity<>(headers(crossDoctorToken)),
+                new ParameterizedTypeReference<List<Map<String, Object>>>() {}, "Synthetic Patient " + suffix);
+        assertTrue(foreignSearch.getBody().isEmpty(), "the foreign hospital must not discover the patient via search");
+
+        // Dependent creates: every family refuses the foreign patient reference.
+        assertEquals(HttpStatus.NOT_FOUND,
+                post("/api/admissions", crossDoctorToken, admissionCreatePayload("xhosp-a", patientId)).getStatusCode(),
+                "the foreign hospital must not admit the patient");
+        assertEquals(HttpStatus.NOT_FOUND,
+                post("/api/emergency-visits", crossDoctorToken, emergencyCreatePayload("xhosp-e", patientId)).getStatusCode(),
+                "the foreign hospital must not register an emergency visit for the patient");
+        assertEquals(HttpStatus.NOT_FOUND,
+                post("/api/invoices", crossBillingToken, invoicePayload("xhosp-i", patientId)).getStatusCode(),
+                "the foreign hospital must not invoice the patient");
+
+        // Network MRN uniqueness: the foreign hospital's duplicate create is the shared 409.
+        assertEquals(HttpStatus.CONFLICT,
+                post("/api/patients", crossReceptionistToken, Map.of(
+                        "medicalRecordNumber", mrn,
+                        "fullName", "Cross Hospital Impostor " + suffix)).getStatusCode(),
+                "the duplicate MRN create from the foreign hospital must be the shared 409");
+
+        // Same-hospital positive controls: the workflows keep working for the owning hospital.
+        assertEquals(HttpStatus.OK,
+                post("/api/admissions", doctorToken, admissionCreatePayload("xhosp-ok", patientId)).getStatusCode(),
+                "the owning hospital's admission create must keep succeeding");
+        assertEquals(HttpStatus.OK, getStatus("/api/patients/" + patientId, doctorToken).getStatusCode(),
+                "the owning hospital must keep reading the patient");
+    }
+
     private Map<String, Object> emergencyCreatePayload(String tag, String patientIdOverride) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("patientId", patientIdOverride != null ? patientIdOverride : UUID.randomUUID().toString());

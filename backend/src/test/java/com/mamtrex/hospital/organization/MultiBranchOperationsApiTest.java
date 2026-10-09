@@ -180,6 +180,9 @@ class MultiBranchOperationsApiTest {
     PatientRepository patients;
 
     @Autowired
+    com.mamtrex.hospital.patient.PatientHospitalAccessRepository patientHospitalAccess;
+
+    @Autowired
     StaffMemberRepository staffMembers;
 
     @Autowired
@@ -1213,12 +1216,17 @@ class MultiBranchOperationsApiTest {
                 "a cross-branch bed reference at creation must be the generic 404");
         assertEquals(admissionsBefore, admissions.count(), "the refused create must persist nothing");
 
-        // Cross-branch patient at creation: generic 404, nothing persists.
-        Map<String, Object> crossPatient = admissionCreatePayload("xpat", patientB);
-        crossPatient.put("bedId", String.valueOf(bedA1.get("id")));
-        assertEquals(HttpStatus.NOT_FOUND, postJson("/api/admissions", tokenA, crossPatient).getStatusCode(),
-                "a cross-branch patient reference at creation must be the generic 404");
-        assertEquals(admissionsBefore, admissions.count(), "the refused create must persist nothing");
+        // Phase 5 US3 adaptation: the patient's visibility authority is the
+        // hospital access grant, so a patient of the SAME hospital registered
+        // at another branch is a legal reference — the grant is hospital
+        // scoped and the admission row still binds to the acting branch.
+        // (No bed attached, so the local-bed scenario below is untouched.)
+        Map<String, Object> sameHospitalPatient = admissionCreatePayload("samehosp", patientB);
+        ResponseEntity<Map<String, Object>> sameHospitalCreated = postJson("/api/admissions", tokenA, sameHospitalPatient);
+        assertTrue(sameHospitalCreated.getStatusCode().is2xxSuccessful(),
+                "a same-hospital cross-branch patient reference is legal under the network identity");
+        assertEquals(branchA.getId().toString(), String.valueOf(sameHospitalCreated.getBody().get("branchId")),
+                "the admission row still binds to the acting branch");
 
         // Successful create with a branch-local bed.
         Map<String, Object> localCreate = admissionCreatePayload("local", patientA);
@@ -1590,14 +1598,19 @@ class MultiBranchOperationsApiTest {
         String visitB = String.valueOf(createdB.getBody().get("id"));
         assertEquals(visitsBefore + 2, emergencyVisits.count(), "exactly the two creates may persist");
 
-        // Cross-branch patient reference: the generic 404, nothing persists,
-        // no audit event.
-        assertEquals(HttpStatus.NOT_FOUND, postJson("/api/emergency-visits", tokenA,
-                        emergencyCreatePayload("xpat", patientB)).getStatusCode(),
-                "a cross-branch patient reference must be indistinguishable from a nonexistent one");
-        assertEquals(visitsBefore + 2, emergencyVisits.count(), "the refused create must persist nothing");
-        assertEquals(createsBefore + 2, auditEventCount("EmergencyVisit", "CREATE"),
-                "exactly the two successful creates own CREATE audit events; the refusal records none");
+        // Phase 5 US3 adaptation: the patient's visibility authority is the
+        // hospital access grant, so the same hospital's branch-B patient is
+        // a legal reference at branch A — the visit row still binds to the
+        // acting branch, and the refusal semantics remain for workflow rows.
+        ResponseEntity<Map<String, Object>> crossPatientVisit = postJson("/api/emergency-visits", tokenA,
+                emergencyCreatePayload("xpat", patientB));
+        assertTrue(crossPatientVisit.getStatusCode().is2xxSuccessful(),
+                "a same-hospital cross-branch patient reference is legal under the network identity");
+        assertEquals(branchA.getId().toString(), String.valueOf(crossPatientVisit.getBody().get("branchId")),
+                "the visit row still binds to the acting branch");
+        assertEquals(visitsBefore + 3, emergencyVisits.count(), "exactly the three creates may persist");
+        assertEquals(createsBefore + 3, auditEventCount("EmergencyVisit", "CREATE"),
+                "exactly the three successful creates own CREATE audit events");
 
         // List: each branch sees exactly its own visits, never the other's.
         List<String> idsA = listOfIds(getList("/api/emergency-visits", tokenA));
@@ -1714,12 +1727,16 @@ class MultiBranchOperationsApiTest {
         String invoiceB = String.valueOf(createdB.getBody().get("id"));
         assertEquals(invoicesBefore + 2, invoices.count(), "exactly the two creates may persist");
 
-        // Cross-branch patient reference: the generic 404, nothing persists,
-        // no audit event.
-        assertEquals(HttpStatus.NOT_FOUND, postJson("/api/invoices", tokenA,
-                        invoiceCreatePayload("xpat", patientB)).getStatusCode(),
-                "a cross-branch patient reference must be indistinguishable from a nonexistent one");
-        assertEquals(invoicesBefore + 2, invoices.count(), "the refused create must persist nothing");
+        // Phase 5 US3 adaptation: the same hospital's branch-B patient is a
+        // legal reference at branch A; the invoice row still binds to the
+        // acting branch.
+        ResponseEntity<Map<String, Object>> crossPatientInvoice = postJson("/api/invoices", tokenA,
+                invoiceCreatePayload("xpat", patientB));
+        assertTrue(crossPatientInvoice.getStatusCode().is2xxSuccessful(),
+                "a same-hospital cross-branch patient reference is legal under the network identity");
+        assertEquals(branchA.getId().toString(), String.valueOf(crossPatientInvoice.getBody().get("branchId")),
+                "the invoice row still binds to the acting branch");
+        assertEquals(invoicesBefore + 3, invoices.count(), "exactly the three creates may persist");
 
         // Invoice-number uniqueness stays global under branch scoping:
         // reusing branch A's number from branch B is the shared conflict.
@@ -1727,9 +1744,9 @@ class MultiBranchOperationsApiTest {
         duplicate.put("invoiceNumber", numberA);
         assertEquals(HttpStatus.CONFLICT, postJson("/api/invoices", tokenB, duplicate).getStatusCode(),
                 "invoice-number uniqueness stays global — a cross-branch duplicate is still the shared conflict");
-        assertEquals(invoicesBefore + 2, invoices.count(), "the refused duplicate must persist nothing");
-        assertEquals(createsBefore + 2, auditEventCount("Invoice", "CREATE"),
-                "exactly the two successful creates own CREATE audit events; both refusals record none");
+        assertEquals(invoicesBefore + 3, invoices.count(), "the refused duplicate must persist nothing");
+        assertEquals(createsBefore + 3, auditEventCount("Invoice", "CREATE"),
+                "exactly the three successful creates own CREATE audit events; the refusals record none");
 
         // List: each branch sees exactly its own invoices, never the other's.
         List<String> idsA = listOfIds(getList("/api/invoices", tokenA));
@@ -2243,20 +2260,25 @@ class MultiBranchOperationsApiTest {
         assertEquals(branchA.getId().toString(), String.valueOf(appointmentA.get("branchId")),
                 "the appointment must be owned by the acting branch");
 
-        // Cross-branch detail reads are the shared 404 — indistinguishable from nonexistent.
-        assertEquals(HttpStatus.NOT_FOUND, getJson("/api/patients/" + patientB.get("id"), tokenA).getStatusCode(),
-                "branch A must not see branch B's patient");
+        // Cross-branch detail reads are the shared 404 — indistinguishable
+        // from nonexistent. Phase 5 US3 adaptation: the patient is
+        // hospital-scoped now, so the same hospital's other branch CAN read
+        // it; the workflow rows (professional, appointment) stay branch-
+        // isolated exactly as before.
+        assertEquals(HttpStatus.OK, getJson("/api/patients/" + patientB.get("id"), tokenA).getStatusCode(),
+                "branch A resolves the same hospital's branch-B patient through the hospital grant");
         assertEquals(HttpStatus.NOT_FOUND, getJson("/api/staff/" + staffB, tokenA).getStatusCode(),
                 "branch A must not see branch B's professional");
         assertEquals(HttpStatus.NOT_FOUND, getJson("/api/appointments/" + appointmentB.get("id"), tokenA).getStatusCode(),
                 "branch A must not see branch B's appointment");
-        assertEquals(HttpStatus.NOT_FOUND, getJson("/api/patients/" + patientA.get("id"), tokenB).getStatusCode(),
-                "the isolation is symmetric");
+        assertEquals(HttpStatus.OK, getJson("/api/patients/" + patientA.get("id"), tokenB).getStatusCode(),
+                "the hospital-level visibility is symmetric");
 
         // Lists resolve only inside the acting branch.
         List<String> patientIdsA = listOfIds(getList("/api/patients", tokenA));
         assertTrue(patientIdsA.contains(String.valueOf(patientA.get("id"))), "branch A lists its own patient");
-        assertFalse(patientIdsA.contains(String.valueOf(patientB.get("id"))), "branch A never lists branch B's patient");
+        assertTrue(patientIdsA.contains(String.valueOf(patientB.get("id"))),
+                "branch A also lists the same hospital's branch-B patient (hospital-scoped grant)");
         List<String> staffIdsA = listOfIds(getList("/api/staff", tokenA));
         assertTrue(staffIdsA.contains(staffA), "branch A lists its own professional");
         assertFalse(staffIdsA.contains(staffB), "branch A never lists branch B's professional");
@@ -2265,11 +2287,14 @@ class MultiBranchOperationsApiTest {
         assertFalse(appointmentIdsA.contains(String.valueOf(appointmentB.get("id"))),
                 "branch A never lists branch B's appointment");
 
-        // Search resolves only inside the acting branch (the per-instance suffix matches exactly this method's rows).
-        assertEquals(List.of(String.valueOf(patientA.get("id"))), listOfIds(getList("/api/patients?q=" + suffix, tokenA)),
-                "the branch-scoped search must match only branch A's row");
-        assertEquals(List.of(String.valueOf(patientB.get("id"))), listOfIds(getList("/api/patients?q=" + suffix, tokenB)),
-                "the same query from branch B must match only branch B's row");
+        // Search is hospital-scoped under US3: the shared per-instance suffix
+        // matches both branches' patients, and both branches see both rows.
+        List<String> searchA = listOfIds(getList("/api/patients?q=" + suffix, tokenA));
+        assertTrue(searchA.contains(String.valueOf(patientA.get("id")))
+                        && searchA.contains(String.valueOf(patientB.get("id"))),
+                "branch A's search resolves every patient of its hospital");
+        assertEquals(searchA, listOfIds(getList("/api/patients?q=" + suffix, tokenB)),
+                "the hospital-scoped search is symmetric across the hospital's branches");
     }
 
     /**
@@ -2294,22 +2319,28 @@ class MultiBranchOperationsApiTest {
         String staffA = createVerifiedSchedulableStaffId(tokenA, "ra");
         String staffB = createVerifiedSchedulableStaffId(tokenB, "rb");
 
+        // Phase 5 US3 adaptation: the same hospital's branch-B patient is a
+        // legal reference at branch A (hospital-scoped grant). The time is
+        // shifted so the later same-branch pair still owns a free interval.
+        Map<String, Object> crossPatientAppointment = new HashMap<>(
+                appointmentPayload(String.valueOf(patientB.get("id")), staffA));
+        crossPatientAppointment.put("scheduledAt", "2036-07-08T09:00:00");
+        assertTrue(postJson("/api/appointments", tokenA, crossPatientAppointment).getStatusCode().is2xxSuccessful(),
+                "a same-hospital cross-branch patient reference is legal under the network identity");
+
         long appointmentCreatesBefore = auditEventCount("Appointment", "CREATE");
-        assertEquals(HttpStatus.NOT_FOUND, postJson("/api/appointments", tokenA,
-                        appointmentPayload(String.valueOf(patientB.get("id")), staffA)).getStatusCode(),
-                "a cross-branch patient reference must be indistinguishable from a nonexistent one");
         assertEquals(HttpStatus.NOT_FOUND, postJson("/api/appointments", tokenA,
                         appointmentPayload(String.valueOf(patientA.get("id")), staffB)).getStatusCode(),
                 "a cross-branch professional reference must be refused like an unknown one");
         assertEquals(appointmentCreatesBefore, auditEventCount("Appointment", "CREATE"),
-                "failed cross-branch writes must record no audit event");
+                "the refused cross-branch professional write records no audit event");
 
         assertTrue(postJson("/api/appointments", tokenA,
                         appointmentPayload(String.valueOf(patientA.get("id")), staffA))
                         .getStatusCode().is2xxSuccessful(),
                 "the same-branch reference pair must succeed");
         assertEquals(appointmentCreatesBefore + 1, auditEventCount("Appointment", "CREATE"),
-                "exactly one Appointment CREATE audit event must follow the successful write");
+                "exactly one Appointment CREATE audit event must follow the same-branch successful write");
 
         Map<String, Object> duplicateMrn = new HashMap<>(patientCreatePayload("rb-dup"));
         duplicateMrn.put("medicalRecordNumber", patientA.get("medicalRecordNumber"));
@@ -2384,6 +2415,8 @@ class MultiBranchOperationsApiTest {
         staffAvailability.deleteAll();
         beds.deleteAll();
         staffMembers.deleteAll();
+        // Phase 5 US3: the access grants reference patients, so they leave first.
+        patientHospitalAccess.deleteAll();
         patients.deleteAll();
         assignments.deleteAll();
         departments.deleteAll();

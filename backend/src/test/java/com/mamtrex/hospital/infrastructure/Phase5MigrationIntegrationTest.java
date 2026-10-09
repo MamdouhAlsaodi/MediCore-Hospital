@@ -61,6 +61,11 @@ class Phase5MigrationIntegrationTest {
     private static final String AUDIT_WITH_BRANCH = "00000000-0000-0000-00a5-000000000009";
     private static final String AUDIT_LEGACY = "00000000-0000-0000-00a5-00000000000a";
 
+    /** Fixed patient fixture UUID (deterministic across databases). */
+    private static final String PATIENT_ID = "00000000-0000-0000-00a5-0000000000e0";
+
+    private static final String V6_REFUSAL_MARKER = "V6 blocked";
+
     private static final String HOSPITAL_1 = "00000000-0000-0000-00a5-0000000000b0";
     private static final String HOSPITAL_2 = "00000000-0000-0000-00a5-0000000000b1";
 
@@ -389,10 +394,147 @@ class Phase5MigrationIntegrationTest {
         }
     }
 
+    /**
+     * Phase 5 US3 (T063): V6 applies to an empty schema, is restart-idempotent,
+     * and is covered by the V5 tests' empty-schema proof (migrationsExecuted
+     * counts). Isolated below with its own proof.
+     */
+    @Test
+    void v6AppliesToEmptySchemaAndIsRestartIdempotent() {
+        var db = PostgresContainerSupport.newIsolatedDatabase();
+        MigrateResult first = flywayFor(db).migrate();
+        assertEquals(6, first.migrationsExecuted, "V1..V6 must apply to an empty database");
+        MigrateResult second = flywayFor(db).migrate();
+        assertEquals(0, second.migrationsExecuted, "a restart must reapply nothing");
+        assertEquals(0, flywayFor(db).info().pending().length, "no pending migrations may remain");
+    }
+
+    /**
+     * Phase 5 US3 (T063): a Phase 4-shaped synthetic patient cohort backfills
+     * deterministically — the patient derives its organization from its
+     * registering branch and receives exactly one ACTIVE LEGACY_MIGRATION
+     * grant for that branch's legacy hospital, with the identical result in
+     * two independent databases.
+     */
+    @Test
+    void v6BackfillsPatientOwnershipAndLegacyGrantsDeterministically() throws Exception {
+        var dbA = PostgresContainerSupport.newIsolatedDatabase();
+        var dbB = PostgresContainerSupport.newIsolatedDatabase();
+        for (var db : List.of(dbA, dbB)) {
+            flywayToTarget(db, "5").migrate();
+            seedPhase4ShapedCohort(db);
+            seedPatient(db);
+        }
+        flywayFor(dbA).migrate();
+        flywayFor(dbB).migrate();
+
+        String hospitalA = scalar(dbA, "select id::text from hospitals where code = 'LEGACY-HOSPITAL-001'");
+        String hospitalB = scalar(dbB, "select id::text from hospitals where code = 'LEGACY-HOSPITAL-001'");
+        assertEquals(ORG_ID, scalar(dbA, "select organization_id::text from patients where id = '" + PATIENT_ID + "'"),
+                "the patient's organization must derive from its registering branch");
+        assertEquals(1, Long.parseLong(scalar(dbA, "select count(*) from patient_hospital_access")),
+                "exactly one legacy grant must be backfilled for the one fixture patient");
+        assertEquals(hospitalA, scalar(dbA, "select hospital_id::text from patient_hospital_access"),
+                "the grant must belong to the registering branch's hospital");
+        assertEquals("ACTIVE", scalar(dbA, "select status from patient_hospital_access"));
+        assertEquals("LEGACY_MIGRATION", scalar(dbA, "select source from patient_hospital_access"));
+        assertEquals(hospitalA, hospitalB,
+                "the same Phase 4-shaped input must produce the identical backfill in both databases");
+        MigrateResult restart = flywayFor(dbA).migrate();
+        assertEquals(0, restart.migrationsExecuted, "restart must apply zero migrations");
+    }
+
+    /** Phase 5 US3 (T063): a patient with un-derivable ownership blocks V6 instead of being guessed. */
+    @Test
+    void v6RefusesMalformedPatientOwnership() throws Exception {
+        var db = PostgresContainerSupport.newIsolatedDatabase();
+        flywayToTarget(db, "5").migrate();
+        seedPhase4ShapedCohort(db);
+        seedPatient(db);
+        try (Connection c = FlywayPostgresIntegrationTest.connection(db); Statement s = c.createStatement()) {
+            s.execute("update patients set branch_id = null where id = '" + PATIENT_ID + "'");
+        }
+        var refused = assertThrows(org.flywaydb.core.api.FlywayException.class, () -> flywayFor(db).migrate());
+        assertTrue(refused.getMessage().contains(V6_REFUSAL_MARKER),
+                "a patient without a derivable organization must block V6: " + refused.getMessage());
+        assertEquals(0, Long.parseLong(scalar(db, """
+                select count(*) from flyway_schema_history where version = '6' and success
+                """)), "the refused migration must not record success");
+        assertEquals(0, countViaDb(db, "select count(*) from information_schema.tables "
+                + "where table_name = 'patient_hospital_access'"),
+                "the refused database keeps its V5 shape (no partial application)");
+    }
+
+    /** Phase 5 US3 (T063): exact V6 metadata — columns, FKs, bounds, partial unique index. */
+    @Test
+    void v6PostgreSQLMetadataAssertions() throws Exception {
+        var db = PostgresContainerSupport.newIsolatedDatabase();
+        flywayFor(db).migrate();
+        try (Connection c = FlywayPostgresIntegrationTest.connection(db); Statement s = c.createStatement()) {
+            assertEquals(1, count(s, "select count(*) from information_schema.tables "
+                    + "where table_name = 'patient_hospital_access'"), "the access table must exist");
+            assertEquals(1, count(s, """
+                    select count(*) from information_schema.columns
+                    where table_name = 'patients' and column_name = 'organization_id'
+                      and is_nullable = 'NO'
+                    """), "patients.organization_id must be NOT NULL");
+            for (String column : new String[] {
+                    "patient_id", "hospital_id", "organization_id", "status", "source",
+                    "source_transfer_id", "created_at", "updated_at", "revoked_at", "version"}) {
+                assertEquals(1, count(s, "select count(*) from information_schema.columns where table_name = "
+                        + "'patient_hospital_access' and column_name = '" + column + "'"),
+                        "required access column missing: " + column);
+            }
+            for (String fk : new String[] {
+                    "fk_patients_organization", "fk_access_patient", "fk_access_hospital",
+                    "fk_access_patient_organization", "fk_access_hospital_organization"}) {
+                assertEquals(1, count(s, "select count(*) from information_schema.table_constraints where "
+                        + "constraint_name = '" + fk + "' and constraint_type = 'FOREIGN KEY'"),
+                        "required V6 foreign key missing: " + fk);
+            }
+            String statusCheck = scalarVia(s, "select check_clause from information_schema.check_constraints "
+                    + "where constraint_name = 'ck_patient_hospital_access_status'");
+            assertTrue(statusCheck.contains("ACTIVE") && statusCheck.contains("REVOKED"),
+                    "the status check must bound the lifecycle: " + statusCheck);
+            assertTrue(count(s, "select count(*) from information_schema.check_constraints where "
+                    + "constraint_name = 'ck_patient_hospital_access_source'") == 1, "the source check must exist");
+            assertEquals(1, count(s, "select count(*) from pg_indexes where indexname = "
+                    + "'uq_patient_hospital_access_active'"), "the partial active-grant unique index must exist");
+            String indexDef = scalarVia(s, "select indexdef from pg_indexes where indexname = "
+                    + "'uq_patient_hospital_access_active'");
+            assertTrue(indexDef.toLowerCase().contains("where"),
+                    "the unique index must be partial (REVOKED history stays legal): " + indexDef);
+            for (String index : new String[] {
+                    "idx_patient_hospital_access_hospital", "idx_patient_hospital_access_patient",
+                    "idx_patients_organization"}) {
+                assertEquals(1, count(s, "select count(*) from pg_indexes where indexname = '" + index + "'"),
+                        "required V6 read index missing: " + index);
+            }
+            assertTrue(count(s, "select count(*) from flyway_schema_history where success") >= 6,
+                    "flyway history must record the applied migrations including V6");
+        }
+    }
+
     // ------------------------------------------------------------ helpers
 
     private interface StringBinder {
         String apply(String id, String hospital, String branch, String role, String scope);
+    }
+
+    private static void seedPatient(PostgresContainerSupport.DisposableDatabase db) throws Exception {
+        try (Connection c = FlywayPostgresIntegrationTest.connection(db); Statement s = c.createStatement()) {
+            s.execute("insert into patients (id, branch_id, medical_record_number, full_name, active, created_at, "
+                    + "updated_at, version) values ('" + PATIENT_ID + "', '" + BRANCH_MAIN + "', 'MRN-V6-FIXTURE-1', "
+                    + "'Synthetic V6 Patient', true, now(), now(), 0)");
+        }
+    }
+
+    private static long countViaDb(PostgresContainerSupport.DisposableDatabase db, String query) throws Exception {
+        try (Connection c = FlywayPostgresIntegrationTest.connection(db); Statement s = c.createStatement();
+             ResultSet rs = s.executeQuery(query)) {
+            assertTrue(rs.next(), "scalar query must return a row: " + query);
+            return rs.getLong(1);
+        }
     }
 
     private static void hospitalInsert(Statement s, String id, String code, String name) throws SQLException {

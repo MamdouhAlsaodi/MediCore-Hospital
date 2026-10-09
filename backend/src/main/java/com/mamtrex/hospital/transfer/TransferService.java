@@ -242,6 +242,10 @@ public class TransferService {
         });
 
         transfer.accept(destinationBranch.getId(), bed.getId(), Instant.now());
+        // V7 links (transfer_id, bed_id) to the accepted transfer's destination bed.
+        // Flush that parent update before inserting its reservation: Hibernate's
+        // insert ordering otherwise checks the composite FK against REQUESTED.
+        transfers.flush();
         reservations.save(new TransferBedReservation(transfer.getId(), bed.getId(), Instant.now()));
 
         // The destination hospital gains patient access exactly once (FR-015);

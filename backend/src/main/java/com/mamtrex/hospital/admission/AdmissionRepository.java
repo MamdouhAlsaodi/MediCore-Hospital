@@ -31,6 +31,10 @@ public interface AdmissionRepository extends JpaRepository<Admission, UUID> {
     /** Branch-scoped detail lookup: the same 404 for unknown, cross-branch, and legacy ids. */
     Optional<Admission> findByIdAndBranchId(UUID id, UUID branchId);
 
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("select a from Admission a where a.id = :id and a.branchId = :branchId")
+    Optional<Admission> findByIdAndBranchIdForUpdate(UUID id, UUID branchId);
+
     /** Branch-scoped existence check backing the delete command. */
     boolean existsByIdAndBranchId(UUID id, UUID branchId);
 

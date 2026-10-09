@@ -6,6 +6,7 @@ import com.mamtrex.hospital.organization.Branch;
 import com.mamtrex.hospital.organization.BranchRepository;
 import com.mamtrex.hospital.shared.InvalidStateTransitionException;
 import com.mamtrex.hospital.shared.NotFoundException;
+import com.mamtrex.hospital.transfer.TransferBedReservationRepository;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -38,11 +39,14 @@ public class BedService {
     private final BedRepository beds;
     private final BranchRepository branches;
     private final AuditService audit;
+    private final TransferBedReservationRepository reservations;
 
-    public BedService(BedRepository beds, BranchRepository branches, AuditService audit) {
+    public BedService(BedRepository beds, BranchRepository branches, AuditService audit,
+                      TransferBedReservationRepository reservations) {
         this.beds = beds;
         this.branches = branches;
         this.audit = audit;
+        this.reservations = reservations;
     }
 
     public Bed create(String ward, String room, String bedNumber) {
@@ -72,20 +76,30 @@ public class BedService {
     }
 
     public Bed transitionStatus(UUID id, String targetStatus) {
-        Bed bed = get(id);
+        Bed bed = beds.findByIdAndBranchIdForUpdate(id, actingBranchId())
+                .orElseThrow(() -> new NotFoundException("Bed not found: " + id));
+        requireNotReserved(id);
         bed.changeOperationalStatus(targetStatus);
         audit.record("UPDATE", "Bed", id.toString(), "status: " + targetStatus);
         return bed;
     }
 
     public void delete(UUID id) {
-        Bed bed = get(id);
+        Bed bed = beds.findByIdAndBranchIdForUpdate(id, actingBranchId())
+                .orElseThrow(() -> new NotFoundException("Bed not found: " + id));
+        requireNotReserved(id);
         if (bed.isOccupied()) {
             throw new InvalidStateTransitionException(
                     "Bed is OCCUPIED: it cannot be deleted while an admission holds it");
         }
         beds.delete(bed);
         audit.record("DELETE", "Bed", id.toString(), "deleted");
+    }
+
+    private void requireNotReserved(UUID id) {
+        reservations.findActiveByBedIdForUpdate(id).ifPresent(reservation -> {
+            throw new InvalidStateTransitionException("Bed has an ACTIVE transfer reservation");
+        });
     }
 
     private UUID actingBranchId() {

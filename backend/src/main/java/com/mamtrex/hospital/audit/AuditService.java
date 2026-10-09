@@ -27,4 +27,12 @@ import com.mamtrex.hospital.auth.ActingContext;
   ActingContext context=authentication!=null&&authentication.getPrincipal() instanceof ActingContext c?c:null;
   String actor=authentication==null?"system":authentication.getName();
   repo.save(new AuditEvent(actor,action,type,id,details,context,CorrelationIdFilter.current()));}
+ /** Phase 5 US4 (FR-026): records one transfer lifecycle success event with the bounded transfer context (actor/assignment/hospital already derive from the acting context; source/destination hospitals and the transfer pointer are stamped here) in the CALLER's transaction — existing allowlists and call sites are unchanged. */
+ public void recordTransfer(String action,String type,String id,String details,java.util.UUID transferId,java.util.UUID sourceHospitalId,java.util.UUID destinationHospitalId){
+  var authentication=SecurityContextHolder.getContext().getAuthentication();
+  ActingContext context=authentication!=null&&authentication.getPrincipal() instanceof ActingContext c?c:null;
+  String actor=authentication==null?"system":authentication.getName();
+  AuditEvent event=new AuditEvent(actor,action,type,id,details,context,CorrelationIdFilter.current());
+  event.stampTransferContext(transferId,sourceHospitalId,destinationHospitalId);
+  repo.save(event);}
 }

@@ -104,7 +104,9 @@ public class OpenApiConfig {
                         new Tag().name("appointments").description("Booked appointment windows within the acting branch"),
                         new Tag().name("admissions").description("Admission lifecycle and atomic bed assignment"),
                         new Tag().name("dashboard").description("Command-center reads for the acting branch/organization"),
-                        new Tag().name("audit").description("Scope-aware audit evidence reads (ADMIN only)")))
+                        new Tag().name("audit").description("Scope-aware audit evidence reads (ADMIN only)"),
+                        new Tag().name("Transfers").description(
+                                "Inter-hospital transfer lifecycle (synthetic, non-clinical)")))
                 .components(new Components()
                         .addSecuritySchemes("bearerAuth", new SecurityScheme()
                                 .type(SecurityScheme.Type.HTTP)
@@ -143,7 +145,15 @@ public class OpenApiConfig {
                 Map.entry("/api/dashboard:get", "getBranchSummaryAlias"),
                 Map.entry("/api/dashboard/branch:get", "getBranchSummary"),
                 Map.entry("/api/dashboard/network:get", "getNetworkSummary"),
-                Map.entry("/api/audit:get", "listAuditEvents"));
+                Map.entry("/api/audit:get", "listAuditEvents"),
+                Map.entry("/api/transfers:post", "requestTransfer"),
+                Map.entry("/api/transfers:get", "listAuthorizedTransfers"),
+                Map.entry("/api/transfers/{id}:get", "getAuthorizedTransfer"),
+                Map.entry("/api/transfers/{id}/accept:post", "acceptTransfer"),
+                Map.entry("/api/transfers/{id}/reject:post", "rejectTransfer"),
+                Map.entry("/api/transfers/{id}/cancel:post", "cancelTransfer"),
+                Map.entry("/api/transfers/{id}/start-transit:post", "startTransferTransit"),
+                Map.entry("/api/transfers/{id}/complete:post", "completeTransfer"));
         // Operations where a status genuinely cannot occur, so the shared
         // rule must not overstate it:
         // - login is anonymous (permitAll) and owns its 401/429 contract;
@@ -191,6 +201,18 @@ public class OpenApiConfig {
                     }
                 });
             }));
+            // Springdoc 2.8 drops nullable record-component annotations for UUID/Instant
+            // in OpenAPI 3.1; express the actual nullability with JSON Schema type arrays.
+            var transferView = openApi.getComponents().getSchemas().get("TransferView");
+            if (transferView != null && transferView.getProperties() != null) {
+                for (String field : List.of("destinationBranchId", "destinationBedId", "acceptedAt",
+                        "transitStartedAt", "completedAt", "cancelledAt", "rejectedAt")) {
+                    var property = transferView.getProperties().get(field);
+                    if (property instanceof io.swagger.v3.oas.models.media.Schema<?> fieldSchema) {
+                        fieldSchema.setTypes(new java.util.LinkedHashSet<>(List.of("string", "null")));
+                    }
+                }
+            }
             // POST /api/auth/login is the one anonymous operation: an empty
             // security list documents that no bearer requirement applies.
             if (openApi.getPaths() != null && openApi.getPaths().get("/api/auth/login") != null

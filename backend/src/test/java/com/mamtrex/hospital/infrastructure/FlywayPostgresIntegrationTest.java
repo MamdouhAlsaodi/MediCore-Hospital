@@ -76,7 +76,7 @@ class FlywayPostgresIntegrationTest {
     void migratesEmptyDatabaseToCurrentVersion() throws Exception {
         var db = PostgresContainerSupport.newIsolatedDatabase();
         MigrateResult result = flywayFor(db).migrate();
-        assertEquals(6, result.migrationsExecuted, "V1..V6 must apply to an empty database");
+        assertEquals(7, result.migrationsExecuted, "V1..V7 must apply to an empty database");
         assertRequiredSchemaObjects(db);
     }
 
@@ -85,7 +85,7 @@ class FlywayPostgresIntegrationTest {
     void secondStartupAppliesZeroPendingMigrations() {
         var db = PostgresContainerSupport.newIsolatedDatabase();
         MigrateResult first = flywayFor(db).migrate();
-        assertEquals(6, first.migrationsExecuted);
+        assertEquals(7, first.migrationsExecuted);
         MigrateResult second = flywayFor(db).migrate();
         assertEquals(0, second.migrationsExecuted, "a restart must reapply nothing");
         assertEquals(0, flywayFor(db).info().pending().length, "no pending migrations may remain");

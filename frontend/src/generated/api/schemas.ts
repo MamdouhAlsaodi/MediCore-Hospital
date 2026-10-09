@@ -3,6 +3,12 @@
 // contract api/openapi/medicore-v1.yaml (MediCore Hospital API v1).
 // Regenerate with: scripts/phase4/generate-openapi.sh — never hand-edit.
 
+export interface AcceptTransferRequest {
+  "destinationBedId": string;
+  "destinationBranchId": string;
+  "expectedVersion": number;
+}
+
 export interface ActingContextView {
   "assignmentId": string;
   "branchId": string;
@@ -146,6 +152,13 @@ export interface CreatePatientRequest {
   "sex"?: string;
 }
 
+export interface CreateTransferRequest {
+  "destinationHospitalId": string;
+  "patientId": string;
+  "reasonCode": string;
+  "sourceAdmissionId": string;
+}
+
 export interface CurrentBed {
   "bedId": string;
   "bedNumber": string;
@@ -218,6 +231,31 @@ export interface Session {
   "roles": string[];
   "tokenType": string;
   "username": string;
+}
+
+export interface TransferView {
+  "acceptedAt": string | null;
+  "cancelledAt": string | null;
+  "completedAt": string | null;
+  "destinationBedId": string | null;
+  "destinationBranchId": string | null;
+  "destinationHospitalId": string;
+  "id": string;
+  "patientId": string;
+  "reasonCode": string;
+  "rejectedAt": string | null;
+  "requestedAt": string;
+  "sourceBranchId": string;
+  "sourceHospitalId": string;
+  "status": "REQUESTED" | "ACCEPTED" | "IN_TRANSIT" | "COMPLETED" | "REJECTED" | "CANCELLED";
+  "transferNumber": string;
+  "transitStartedAt": string | null;
+  "version": number;
+}
+
+export interface TransitionReasonRequest {
+  "expectedVersion": number;
+  "reasonCode": string;
 }
 
 export interface UpdateAdmissionStatusRequest {

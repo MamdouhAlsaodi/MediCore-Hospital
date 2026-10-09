@@ -20,6 +20,8 @@ public interface AdmissionBedAssignmentRepository extends JpaRepository<Admissio
     /** The admission's single live assignment; empty while it holds no bed. */
     Optional<AdmissionBedAssignment> findByAdmissionId(UUID admissionId);
 
+    boolean existsByBedId(UUID bedId);
+
     /** Batch form for list-response assembly; never exposed through any HTTP route. */
     List<AdmissionBedAssignment> findByAdmissionIdIn(Collection<UUID> admissionIds);
 }

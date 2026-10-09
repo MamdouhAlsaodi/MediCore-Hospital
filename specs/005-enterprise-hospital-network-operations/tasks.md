@@ -132,32 +132,32 @@
 
 **Independent test:** Full lifecycle and negative/race matrix on disposable PostgreSQL.
 
-- [ ] T078 [P] [US4] Add RED transfer status transition table tests in `backend/src/test/java/com/mamtrex/hospital/transfer/TransferRequestTest.java`
-- [ ] T079 [P] [US4] Add RED reservation ownership/lifecycle tests in `backend/src/test/java/com/mamtrex/hospital/transfer/TransferBedReservationTest.java`
-- [ ] T080 [P] [US4] Add RED idempotency replay/payload-conflict tests in `backend/src/test/java/com/mamtrex/hospital/idempotency/IdempotencyServiceTest.java`
-- [ ] T081 [US4] Add transfer/reservation/idempotency tables, checks, FKs, indexes, and partial unique reservation index in `backend/src/main/resources/db/migration/V7__transfer_reservation_idempotency.sql`
-- [ ] T082 [US4] Create `TransferStatus` state enum in `backend/src/main/java/com/mamtrex/hospital/transfer/TransferStatus.java`
-- [ ] T083 [US4] Create transfer aggregate with guarded transitions and optimistic version in `backend/src/main/java/com/mamtrex/hospital/transfer/TransferRequest.java`
-- [ ] T084 [US4] Create reservation aggregate with ACTIVE/CONSUMED/RELEASED invariants in `backend/src/main/java/com/mamtrex/hospital/transfer/TransferBedReservation.java`
-- [ ] T085 [US4] Create transfer and reservation repositories with scoped/locking queries in `backend/src/main/java/com/mamtrex/hospital/transfer/TransferRepository.java` and `TransferBedReservationRepository.java`
-- [ ] T086 [US4] Create idempotency entity/repository with normalized unique key in `backend/src/main/java/com/mamtrex/hospital/idempotency/IdempotencyRecord.java` and `IdempotencyRecordRepository.java`
-- [ ] T087 [US4] Implement bounded request fingerprint/replay/conflict semantics in `backend/src/main/java/com/mamtrex/hospital/idempotency/IdempotencyService.java`
-- [ ] T088 [P] [US4] Add RED source/destination/foreign-role matrix in `backend/src/test/java/com/mamtrex/hospital/transfer/TransferAuthorizationMatrixTest.java`
-- [ ] T089 [US4] Implement role/scope/source/destination authorization in `backend/src/main/java/com/mamtrex/hospital/transfer/TransferAuthorizationService.java`
-- [ ] T090 [P] [US4] Add RED request/list/get API tests in `backend/src/test/java/com/mamtrex/hospital/transfer/TransferWorkflowApiTest.java`
-- [ ] T091 [US4] Create strict request/response DTOs with bounded reason codes and versions in `backend/src/main/java/com/mamtrex/hospital/transfer/TransferDtos.java`
-- [ ] T092 [US4] Implement REQUESTED creation/list/get with server-derived source ownership in `backend/src/main/java/com/mamtrex/hospital/transfer/TransferService.java`
-- [ ] T093 [US4] Implement destination accept transaction: validate, reserve, grant access, transition, audit in `backend/src/main/java/com/mamtrex/hospital/transfer/TransferService.java`
-- [ ] T094 [US4] Implement reject and cancel transactions with exact reservation ownership release in `backend/src/main/java/com/mamtrex/hospital/transfer/TransferService.java`
-- [ ] T095 [US4] Implement start-transit transaction and source admission/bed handoff in `backend/src/main/java/com/mamtrex/hospital/transfer/TransferService.java`
-- [ ] T096 [US4] Implement completion transaction: destination admission, reservation consumption, bed occupation, final audit in `backend/src/main/java/com/mamtrex/hospital/transfer/TransferService.java`
-- [ ] T097 [US4] Map transfer routes and mandatory idempotency headers in `backend/src/main/java/com/mamtrex/hospital/transfer/TransferController.java`
-- [ ] T098 [US4] Add transfer route security boundaries in `backend/src/main/java/com/mamtrex/hospital/auth/SecurityConfig.java`
-- [ ] T099 [US4] Add repeated real PostgreSQL bed/transition/idempotency races in `backend/src/test/java/com/mamtrex/hospital/infrastructure/TransferConcurrencyIntegrationTest.java`
-- [ ] T100 [US4] Assert every loser has `409`, zero partial rows, and zero false success audits in `backend/src/test/java/com/mamtrex/hospital/infrastructure/TransferConcurrencyIntegrationTest.java`
-- [ ] T101 [US4] Add exact transfer paths/schemas/status/errors to OpenAPI annotations and `backend/src/test/java/com/mamtrex/hospital/contract/OpenApiContractTest.java`
-- [ ] T102 [US4] Regenerate OpenAPI/client twice and prove byte stability using `scripts/phase4/check-openapi-drift.sh`
-- [ ] T103 [US4] Run transfer unit/API/security/PostgreSQL concurrency/full backend gates from `backend/pom.xml` and record exact repeats/results in ignored `artifacts/phase5/execution-report.md`
+- [x] T078 [P] [US4] Add RED transfer status transition table tests in `backend/src/test/java/com/mamtrex/hospital/transfer/TransferRequestTest.java`
+- [x] T079 [P] [US4] Add RED reservation ownership/lifecycle tests in `backend/src/test/java/com/mamtrex/hospital/transfer/TransferBedReservationTest.java`
+- [x] T080 [P] [US4] Add RED idempotency replay/payload-conflict tests in `backend/src/test/java/com/mamtrex/hospital/idempotency/IdempotencyServiceTest.java`
+- [x] T081 [US4] Add transfer/reservation/idempotency tables, checks, FKs, indexes, and partial unique reservation index in `backend/src/main/resources/db/migration/V7__transfer_reservation_idempotency.sql`
+- [x] T082 [US4] Create `TransferStatus` state enum in `backend/src/main/java/com/mamtrex/hospital/transfer/TransferStatus.java`
+- [x] T083 [US4] Create transfer aggregate with guarded transitions and optimistic version in `backend/src/main/java/com/mamtrex/hospital/transfer/TransferRequest.java`
+- [x] T084 [US4] Create reservation aggregate with ACTIVE/CONSUMED/RELEASED invariants in `backend/src/main/java/com/mamtrex/hospital/transfer/TransferBedReservation.java`
+- [x] T085 [US4] Create transfer and reservation repositories with scoped/locking queries in `backend/src/main/java/com/mamtrex/hospital/transfer/TransferRepository.java` and `TransferBedReservationRepository.java`
+- [x] T086 [US4] Create idempotency entity/repository with normalized unique key in `backend/src/main/java/com/mamtrex/hospital/idempotency/IdempotencyRecord.java` and `IdempotencyRecordRepository.java`
+- [x] T087 [US4] Implement bounded request fingerprint/replay/conflict semantics in `backend/src/main/java/com/mamtrex/hospital/idempotency/IdempotencyService.java`
+- [x] T088 [P] [US4] Add RED source/destination/foreign-role matrix in `backend/src/test/java/com/mamtrex/hospital/transfer/TransferAuthorizationMatrixTest.java`
+- [x] T089 [US4] Implement role/scope/source/destination authorization in `backend/src/main/java/com/mamtrex/hospital/transfer/TransferAuthorizationService.java`
+- [x] T090 [P] [US4] Add RED request/list/get API tests in `backend/src/test/java/com/mamtrex/hospital/transfer/TransferWorkflowApiTest.java`
+- [x] T091 [US4] Create strict request/response DTOs with bounded reason codes and versions in `backend/src/main/java/com/mamtrex/hospital/transfer/TransferDtos.java`
+- [x] T092 [US4] Implement REQUESTED creation/list/get with server-derived source ownership in `backend/src/main/java/com/mamtrex/hospital/transfer/TransferService.java`
+- [x] T093 [US4] Implement destination accept transaction: validate, reserve, grant access, transition, audit in `backend/src/main/java/com/mamtrex/hospital/transfer/TransferService.java`
+- [x] T094 [US4] Implement reject and cancel transactions with exact reservation ownership release in `backend/src/main/java/com/mamtrex/hospital/transfer/TransferService.java`
+- [x] T095 [US4] Implement start-transit transaction and source admission/bed handoff in `backend/src/main/java/com/mamtrex/hospital/transfer/TransferService.java`
+- [x] T096 [US4] Implement completion transaction: destination admission, reservation consumption, bed occupation, final audit in `backend/src/main/java/com/mamtrex/hospital/transfer/TransferService.java`
+- [x] T097 [US4] Map transfer routes and mandatory idempotency headers in `backend/src/main/java/com/mamtrex/hospital/transfer/TransferController.java`
+- [x] T098 [US4] Add transfer route security boundaries in `backend/src/main/java/com/mamtrex/hospital/auth/SecurityConfig.java`
+- [x] T099 [US4] Add repeated real PostgreSQL bed/transition/idempotency races in `backend/src/test/java/com/mamtrex/hospital/infrastructure/TransferConcurrencyIntegrationTest.java`
+- [x] T100 [US4] Assert every loser has `409`, zero partial rows, and zero false success audits in `backend/src/test/java/com/mamtrex/hospital/infrastructure/TransferConcurrencyIntegrationTest.java`
+- [x] T101 [US4] Add exact transfer paths/schemas/status/errors to OpenAPI annotations and `backend/src/test/java/com/mamtrex/hospital/contract/OpenApiContractTest.java`
+- [x] T102 [US4] Regenerate OpenAPI/client twice and prove byte stability using `scripts/phase4/check-openapi-drift.sh`
+- [x] T103 [US4] Run transfer unit/API/security/PostgreSQL concurrency/full backend gates from `backend/pom.xml` and record exact repeats/results in ignored `artifacts/phase5/execution-report.md`
 
 **Checkpoint:** US4 is the independently demonstrable Phase 5 enterprise MVP.
 

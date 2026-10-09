@@ -12,6 +12,7 @@ import com.mamtrex.hospital.patient.PatientRepository;
 import com.mamtrex.hospital.shared.BaseEntity;
 import com.mamtrex.hospital.shared.InvalidStateTransitionException;
 import com.mamtrex.hospital.shared.NotFoundException;
+import com.mamtrex.hospital.transfer.TransferBedReservationRepository;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
@@ -73,16 +74,19 @@ public class AdmissionService {
     private final AdmissionBedAssignmentRepository assignments;
     private final BranchRepository branches;
     private final AuditService audit;
+    private final TransferBedReservationRepository reservations;
 
     public AdmissionService(AdmissionRepository admissions, PatientRepository patients,
                             BedRepository beds, AdmissionBedAssignmentRepository assignments,
-                            BranchRepository branches, AuditService audit) {
+                            BranchRepository branches, AuditService audit,
+                            TransferBedReservationRepository reservations) {
         this.admissions = admissions;
         this.patients = patients;
         this.beds = beds;
         this.assignments = assignments;
         this.branches = branches;
         this.audit = audit;
+        this.reservations = reservations;
     }
 
     public AdmissionDtos.AdmissionResponse create(AdmissionDtos.CreateAdmissionRequest r) {
@@ -223,8 +227,11 @@ public class AdmissionService {
 
     /** Resolves the target bed inside one branch and refuses every non-AVAILABLE state. */
     private Bed availableBedInBranch(UUID bedId, UUID branchId) {
-        Bed bed = beds.findByIdAndBranchId(bedId, branchId)
+        Bed bed = beds.findByIdAndBranchIdForUpdate(bedId, branchId)
                 .orElseThrow(() -> new NotFoundException("Bed not found: " + bedId));
+        reservations.findActiveByBedIdForUpdate(bedId).ifPresent(reservation -> {
+            throw new InvalidStateTransitionException("Bed has an ACTIVE transfer reservation");
+        });
         if (!Bed.STATUS_AVAILABLE.equals(bed.getOccupancyStatus())) {
             throw new InvalidStateTransitionException(
                     "Bed " + bedId + " is not AVAILABLE: it is " + bed.getOccupancyStatus());

@@ -9,6 +9,7 @@
 // expiry handling stay in exactly one place).
 
 import type {
+  AcceptTransferRequest,
   AdmissionResponse,
   AppointmentResponse,
   AssignBedRequest,
@@ -18,11 +19,14 @@ import type {
   CreateAdmissionRequest,
   CreateAppointmentRequest,
   CreatePatientRequest,
+  CreateTransferRequest,
   LoginRequest,
   NetworkHierarchy,
   NetworkSummary,
   PatientResponse,
   Session,
+  TransferView,
+  TransitionReasonRequest,
   UpdateAdmissionStatusRequest,
   UpdatePatientRequest,
 } from './schemas';
@@ -35,6 +39,7 @@ export interface HttpRequest {
   method: HttpMethod;
   path: string;
   body?: unknown;
+  headers?: Record<string, string>;
 }
 
 type QueryValue = string | number | boolean | undefined;
@@ -57,11 +62,29 @@ export function getBranchSummaryAlias(): HttpRequest {
 
 export type getBranchSummaryAliasResponse = BranchSummary;
 
+export function acceptTransfer(id: string, request: AcceptTransferRequest, idempotencyKey: string): HttpRequest {
+  return { method: 'POST', path: `/api/transfers/${encodeURIComponent(id)}/accept`, body: request, headers: { "Idempotency-Key": idempotencyKey } };
+}
+
+export type acceptTransferResponse = TransferView;
+
 export function assignAdmissionBed(id: string, request: AssignBedRequest): HttpRequest {
   return { method: 'PUT', path: `/api/admissions/${encodeURIComponent(id)}/bed`, body: request };
 }
 
 export type assignAdmissionBedResponse = AdmissionResponse;
+
+export function cancelTransfer(id: string, request: TransitionReasonRequest, idempotencyKey: string): HttpRequest {
+  return { method: 'POST', path: `/api/transfers/${encodeURIComponent(id)}/cancel`, body: request, headers: { "Idempotency-Key": idempotencyKey } };
+}
+
+export type cancelTransferResponse = TransferView;
+
+export function completeTransfer(id: string, idempotencyKey: string): HttpRequest {
+  return { method: 'POST', path: `/api/transfers/${encodeURIComponent(id)}/complete`, headers: { "Idempotency-Key": idempotencyKey } };
+}
+
+export type completeTransferResponse = TransferView;
 
 export function createAdmission(request: CreateAdmissionRequest): HttpRequest {
   return { method: 'POST', path: "/api/admissions", body: request };
@@ -117,6 +140,12 @@ export function getAuthorizedNetworkHierarchy(): HttpRequest {
 
 export type getAuthorizedNetworkHierarchyResponse = NetworkHierarchy;
 
+export function getAuthorizedTransfer(id: string): HttpRequest {
+  return { method: 'GET', path: `/api/transfers/${encodeURIComponent(id)}` };
+}
+
+export type getAuthorizedTransferResponse = TransferView;
+
 export function getBranchSummary(): HttpRequest {
   return { method: 'GET', path: "/api/dashboard/branch" };
 }
@@ -160,6 +189,16 @@ export type listAuditEventsQueryParams = {
   "resourceType"?: string;
 };
 
+export function listAuthorizedTransfers(query?: listAuthorizedTransfersQueryParams): HttpRequest {
+  return { method: 'GET', path: appendQuery("/api/transfers", query) };
+}
+
+export type listAuthorizedTransfersResponse = TransferView[];
+
+export type listAuthorizedTransfersQueryParams = {
+  "status"?: "REQUESTED" | "ACCEPTED" | "IN_TRANSIT" | "COMPLETED" | "REJECTED" | "CANCELLED";
+};
+
 export function listPatients(query?: listPatientsQueryParams): HttpRequest {
   return { method: 'GET', path: appendQuery("/api/patients", query) };
 }
@@ -175,6 +214,24 @@ export function login(request: LoginRequest): HttpRequest {
 }
 
 export type loginResponse = Session;
+
+export function rejectTransfer(id: string, request: TransitionReasonRequest, idempotencyKey: string): HttpRequest {
+  return { method: 'POST', path: `/api/transfers/${encodeURIComponent(id)}/reject`, body: request, headers: { "Idempotency-Key": idempotencyKey } };
+}
+
+export type rejectTransferResponse = TransferView;
+
+export function requestTransfer(request: CreateTransferRequest, idempotencyKey: string): HttpRequest {
+  return { method: 'POST', path: "/api/transfers", body: request, headers: { "Idempotency-Key": idempotencyKey } };
+}
+
+export type requestTransferResponse = TransferView;
+
+export function startTransferTransit(id: string, idempotencyKey: string): HttpRequest {
+  return { method: 'POST', path: `/api/transfers/${encodeURIComponent(id)}/start-transit`, headers: { "Idempotency-Key": idempotencyKey } };
+}
+
+export type startTransferTransitResponse = TransferView;
 
 export function switchActingContext(request: ContextSwitchRequest): HttpRequest {
   return { method: 'POST', path: "/api/auth/context", body: request };

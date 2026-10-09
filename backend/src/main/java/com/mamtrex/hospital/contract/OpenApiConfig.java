@@ -209,7 +209,7 @@ public class OpenApiConfig {
                         "transitStartedAt", "completedAt", "cancelledAt", "rejectedAt")) {
                     var property = transferView.getProperties().get(field);
                     if (property instanceof io.swagger.v3.oas.models.media.Schema<?> fieldSchema) {
-                        fieldSchema.setTypes(java.util.Set.of("string", "null"));
+                        fieldSchema.setTypes(new java.util.LinkedHashSet<>(List.of("string", "null")));
                     }
                 }
             }

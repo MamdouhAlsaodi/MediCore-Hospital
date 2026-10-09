@@ -386,13 +386,20 @@ public class TransferService {
         authorization.requireDestinationRole(actor);
         authorization.requireDestinationSide(actor, transfer.getDestinationHospitalId());
 
+        // All bed-consuming paths lock bed -> reservation. Taking the reservation
+        // first would invert BedService's order and deadlock with a concurrent
+        // bed status change or delete.
+        if (transfer.getDestinationBedId() == null || transfer.getDestinationBranchId() == null) {
+            throw new InvalidStateTransitionException("An accepted transfer with a destination bed is required");
+        }
+        Bed bed = beds.findByIdAndBranchIdForUpdate(transfer.getDestinationBedId(),
+                transfer.getDestinationBranchId())
+                .orElseThrow(() -> new InvalidStateTransitionException("Reserved bed is no longer in the destination branch"));
         TransferBedReservation reservation = reservations.findByTransferIdForUpdate(transfer.getId())
                 .filter(res -> res.getStatus() == ReservationStatus.ACTIVE)
                 .orElseThrow(() -> new InvalidStateTransitionException(
                         "An accepted transfer with an active reservation is required for completion"));
 
-        Bed bed = beds.findByIdAndBranchIdForUpdate(reservation.getBedId(), transfer.getDestinationBranchId())
-                .orElseThrow(() -> new InvalidStateTransitionException("Reserved bed is no longer in the destination branch"));
         if (!reservation.getBedId().equals(transfer.getDestinationBedId())
                 || !Bed.STATUS_AVAILABLE.equals(bed.getOccupancyStatus())
                 || bedAssignments.existsByBedId(bed.getId())) {

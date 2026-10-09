@@ -298,6 +298,37 @@ class TransferConcurrencyIntegrationTest {
         }
     }
 
+    /** A competing bed-status command must not deadlock or bypass an active reservation. */
+    @Test
+    void completionAndBedStatusRacePreserveTheReservationAndLockOrder() throws Exception {
+        for (int round = 1; round <= RACE_ITERATIONS; round++) {
+            UUID bedId = freshBed(300 + round);
+            UUID transfer = createTransfer("race-status-" + round);
+            assertEquals(200, accept(dstDoctorA, transfer, bedId, "race-status-accept-" + round)
+                    .getStatusCode().value());
+            assertEquals(200, post(srcDoctor, "/api/transfers/" + transfer + "/start-transit",
+                    "race-status-transit-" + round, Map.of(), false).getStatusCode().value());
+            String key = "race-status-complete-" + round;
+            var results = raceResponses(
+                    () -> post(dstDoctorA, "/api/transfers/" + transfer + "/complete", key,
+                            Map.of(), false),
+                    () -> {
+                        HttpHeaders headers = new HttpHeaders();
+                        headers.setBearerAuth(dstDoctorB);
+                        headers.setContentType(MediaType.APPLICATION_JSON);
+                        return rest.exchange("/api/beds/" + bedId + "/status", HttpMethod.PUT,
+                                new HttpEntity<>(Map.of("status", "MAINTENANCE"), headers), MAP);
+                    });
+            assertEquals(200, results.get(0).getStatusCode().value(),
+                    "completion must win without a deadlock or rollback");
+            assertEquals(409, results.get(1).getStatusCode().value(),
+                    "bed status change must not bypass an active transfer reservation");
+            assertEquals("COMPLETED", statusOf(transfer));
+            assertEquals(ReservationStatus.CONSUMED,
+                    reservations.findByTransferId(transfer).orElseThrow().getStatus());
+        }
+    }
+
     // ------------------------------------------------------------- helpers
 
     private UUID transferPatient(UUID transferId) {

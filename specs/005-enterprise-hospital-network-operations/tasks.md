@@ -188,17 +188,17 @@
 
 **Independent test:** Three hospitals with unique values; totals and UI rows match authorized source exactly.
 
-- [ ] T116 [P] [US6] Add RED hospital/network DTO contract tests in `backend/src/test/java/com/mamtrex/hospital/reporting/NetworkOperationsDashboardApiTest.java`
-- [ ] T117 [P] [US6] Add RED exact-sum and inactive/legacy exclusion tests in `backend/src/test/java/com/mamtrex/hospital/reporting/NetworkOperationsDashboardApiTest.java`
-- [ ] T118 [US6] Extend dashboard DTOs with hospital summaries and bounded transfer/capacity metrics in `backend/src/main/java/com/mamtrex/hospital/reporting/DashboardDtos.java`
-- [ ] T119 [US6] Extract hospital/network aggregation from broad existing service into `backend/src/main/java/com/mamtrex/hospital/reporting/NetworkOperationsDashboardService.java`
-- [ ] T120 [US6] Keep branch summary compatibility while mapping hospital/network endpoints in `backend/src/main/java/com/mamtrex/hospital/reporting/DashboardController.java`
-- [ ] T121 [US6] Add bounded query-count assertions independent of hospital/branch card count in `backend/src/test/java/com/mamtrex/hospital/reporting/NetworkOperationsDashboardApiTest.java`
-- [ ] T122 [US6] Extend dashboard OpenAPI/client and `frontend/src/features/dashboard/dashboardApi.js`
-- [ ] T123 [P] [US6] Add RED hospital/network render and drill-down tests in `frontend/src/DashboardPage.test.jsx`
-- [ ] T124 [US6] Implement hospital/network summary component in `frontend/src/features/dashboard/HospitalNetworkSummary.jsx`
-- [ ] T125 [US6] Integrate scoped drill-down and context-tagged state in `frontend/src/DashboardPage.jsx`
-- [ ] T126 [US6] Run dashboard API/query-count/full backend gates from `backend/pom.xml` and responsive frontend gates from `frontend/package.json`
+- [x] T116 [P] [US6] Add RED hospital/network DTO contract tests in `backend/src/test/java/com/mamtrex/hospital/reporting/NetworkOperationsDashboardApiTest.java`
+- [x] T117 [P] [US6] Add RED exact-sum and inactive/legacy exclusion tests in `backend/src/test/java/com/mamtrex/hospital/reporting/NetworkOperationsDashboardApiTest.java`
+- [x] T118 [US6] Extend dashboard DTOs with hospital summaries and bounded transfer/capacity metrics in `backend/src/main/java/com/mamtrex/hospital/reporting/DashboardDtos.java`
+- [x] T119 [US6] Extract hospital/network aggregation from broad existing service into `backend/src/main/java/com/mamtrex/hospital/reporting/NetworkOperationsDashboardService.java`
+- [x] T120 [US6] Keep branch summary compatibility while mapping hospital/network endpoints in `backend/src/main/java/com/mamtrex/hospital/reporting/DashboardController.java`
+- [x] T121 [US6] Add bounded query-count assertions independent of hospital/branch card count in `backend/src/test/java/com/mamtrex/hospital/reporting/NetworkOperationsDashboardApiTest.java`
+- [x] T122 [US6] Extend dashboard OpenAPI/client and `frontend/src/features/dashboard/dashboardApi.js`
+- [x] T123 [P] [US6] Add RED hospital/network render and drill-down tests in `frontend/src/DashboardPage.test.jsx`
+- [x] T124 [US6] Implement hospital/network summary component in `frontend/src/features/dashboard/HospitalNetworkSummary.jsx`
+- [x] T125 [US6] Integrate scoped drill-down and context-tagged state in `frontend/src/DashboardPage.jsx`
+- [x] T126 [US6] Run dashboard API/query-count/full backend gates from `backend/pom.xml` and responsive frontend gates from `frontend/package.json`
 
 **Checkpoint:** US6 proves exact operational aggregation and scoped visibility.
 

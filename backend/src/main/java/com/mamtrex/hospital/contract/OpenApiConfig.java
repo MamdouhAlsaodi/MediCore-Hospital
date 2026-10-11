@@ -144,6 +144,7 @@ public class OpenApiConfig {
                 Map.entry("/api/admissions/{id}/status:put", "dischargeAdmission"),
                 Map.entry("/api/dashboard:get", "getBranchSummaryAlias"),
                 Map.entry("/api/dashboard/branch:get", "getBranchSummary"),
+                Map.entry("/api/dashboard/hospital:get", "getActingHospitalDashboard"),
                 Map.entry("/api/dashboard/network:get", "getNetworkSummary"),
                 Map.entry("/api/audit:get", "listAuditEvents"),
                 Map.entry("/api/transfers:post", "requestTransfer"),

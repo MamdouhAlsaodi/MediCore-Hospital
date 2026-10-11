@@ -33,6 +33,23 @@ public interface TransferRepository extends JpaRepository<TransferRequest, UUID>
             "select t from TransferRequest t where t.id = :id and t.organizationId = :organizationId")
     Optional<TransferRequest> findByIdAndOrganizationIdForUpdate(UUID id, UUID organizationId);
 
+    /** Active transfer work is attributed to the validated destination branch only. */
+    @org.springframework.data.jpa.repository.Query("select t.destinationBranchId as branchId, count(t) as total "
+            + "from TransferRequest t join Branch b on b.id = t.destinationBranchId "
+            + "where t.organizationId = :organizationId "
+            + "and b.id in :branchIds and b.active = true "
+            + "and b.hospital.active = true and b.hospital.organization.id = :organizationId "
+            + "and t.destinationHospitalId = b.hospital.id "
+            + "and t.status in (com.mamtrex.hospital.transfer.TransferStatus.ACCEPTED, "
+            + "com.mamtrex.hospital.transfer.TransferStatus.IN_TRANSIT) "
+            + "group by t.destinationBranchId")
+    List<BranchMetric> countActiveByDestinationBranch(UUID organizationId, java.util.Collection<UUID> branchIds);
+
+    interface BranchMetric {
+        UUID getBranchId();
+        long getTotal();
+    }
+
     /** Synthetic display id must be unique inside the organization. */
     boolean existsByOrganizationIdAndTransferNumber(UUID organizationId, String transferNumber);
 

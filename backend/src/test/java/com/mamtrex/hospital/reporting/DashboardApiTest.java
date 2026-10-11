@@ -101,7 +101,8 @@ class DashboardApiTest {
             "openAdmissions", "activeEmergencyVisits",
             "bedsAvailable", "bedsOccupied", "bedsMaintenance", "bedsOutOfService",
             "todayAppointments",
-            "invoicesDraft", "invoicesIssued", "invoicesPaid", "invoicesVoid");
+            "invoicesDraft", "invoicesIssued", "invoicesPaid", "invoicesVoid",
+            "bedsReservedForTransfer", "appointmentsScheduled", "activeTransfers");
 
     /** Exact Task 10 network-summary key contract, in JSON declaration order. */
     private static final List<String> NETWORK_KEY_ORDER = List.of(
@@ -111,7 +112,8 @@ class DashboardApiTest {
             "bedsAvailable", "bedsOccupied", "bedsMaintenance", "bedsOutOfService",
             "todayAppointments",
             "invoicesDraft", "invoicesIssued", "invoicesPaid", "invoicesVoid",
-            "branches");
+            "bedsReservedForTransfer", "appointmentsScheduled", "activeTransfers",
+            "branches", "hospitals");
 
     private static final String ADMIN_USER = "dashboard-admin";
     private static final String BILLING_USER = "dashboard-billing";
@@ -401,7 +403,7 @@ class DashboardApiTest {
             assertEquals(BRANCH_KEY_ORDER, new ArrayList<>(branch.keySet()),
                     "every per-branch summary must carry the exact typed branch keys");
         }
-        for (String key : NETWORK_KEY_ORDER.subList(2, NETWORK_KEY_ORDER.size() - 1)) {
+        for (String key : NETWORK_KEY_ORDER.subList(2, NETWORK_KEY_ORDER.size() - 2)) {
             assertEquals(sumBranches(branchesBefore, key), count(before, key),
                     "the organization total '" + key + "' must equal the sum over the branch summaries");
         }

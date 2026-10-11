@@ -132,7 +132,9 @@ const INVOICES_PAGE = [
 ];
 
 // AuditEvent contract over GET /api/audit (ADMIN-only): evidence fields plus
-// internal metadata the screen must never render.
+// internal metadata the screen must never render. The Phase 5 US7 keys
+// (hospitalId/transferId/source/destination) are part of the extended
+// contract; the strict adapter parse requires the core evidence keys.
 const AUDIT_EVENTS = [
   {
     id: '88888888-8888-4888-8888-888888888888',
@@ -145,6 +147,18 @@ const AUDIT_EVENTS = [
     resourceId: '77777777-7777-4777-8777-777777777777',
     details: 'created',
     occurredAt: '2026-03-02T10:00:00Z',
+    assignmentId: null,
+    role: 'ADMIN',
+    scope: 'ORGANIZATION',
+    organizationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    branchId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    departmentId: null,
+    correlationId: 'appshell-audit-01',
+    branchAttribution: null,
+    hospitalId: null,
+    transferId: null,
+    sourceHospitalId: null,
+    destinationHospitalId: null,
   },
 ];
 

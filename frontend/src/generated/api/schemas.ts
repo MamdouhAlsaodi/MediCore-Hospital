@@ -78,7 +78,9 @@ export interface AuditEventView {
   "branchId": string;
   "correlationId": string;
   "departmentId": string;
+  "destinationHospitalId": string;
   "details": string;
+  "hospitalId": string;
   "id": string;
   "occurredAt": string;
   "organizationId": string;
@@ -86,6 +88,8 @@ export interface AuditEventView {
   "resourceType": string;
   "role": string;
   "scope": string;
+  "sourceHospitalId": string;
+  "transferId": string;
 }
 
 export interface BranchSummary {

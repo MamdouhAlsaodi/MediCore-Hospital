@@ -59,11 +59,15 @@ class MetricsBoundaryIntegrationTest {
     private static final String TOKEN_CANARY = "CANARY-BEARER-TOKEN-k3Xw9QvLpW7";
     private static final String PASSWORD_CANARY = "CANARY-LOGIN-PASSWORD-8sKd2MfJhR4z";
     private static final String PATH_ID_CANARY = "CANARY-PATH-ID-9qWx4JcVnT2b";
+    /** Phase 5 US7 (T135) identifier canaries: hospital/transfer/patient. */
+    private static final String HOSPITAL_ID_CANARY = "CANARY-HOSPITAL-ID-4kFj7rTmWq2";
+    private static final String TRANSFER_ID_CANARY = "CANARY-TRANSFER-ID-6vXn9pZcBd8";
+    private static final String PATIENT_ID_CANARY = "CANARY-PATIENT-ID-2sGh5mLwYr7";
 
     /** The only route-template label values the exercised traffic may produce. */
     private static final Set<String> ALLOWED_URI_LABELS = Set.of(
             "UNKNOWN", "root", "/api/auth/login", "/api/patients", "/api/patients/{id}",
-            "/actuator/prometheus");
+            "/api/audit", "/api/transfers", "/api/transfers/{id}", "/actuator/prometheus");
 
     /** The only label keys the bounded request metric may carry — exactly Spring Boot 3.5's designed server-request label vocabulary (all low-cardinality). */
     private static final Set<String> ALLOWED_REQUEST_LABEL_KEYS = Set.of(
@@ -153,6 +157,71 @@ class MetricsBoundaryIntegrationTest {
         for (String canary : List.of(TOKEN_CANARY, PASSWORD_CANARY, PATH_ID_CANARY)) {
             assertFalse(body.contains(canary), () -> "sensitive canary leaked into metrics output");
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Phase 5 US7 (T135) — the metric-label boundary for the Phase 5
+    // identifiers. Hospital, patient, transfer, assignment, and correlation
+    // identifiers submitted to the live HTTP surface must never become
+    // metric labels: the request metric's label keys stay exactly the
+    // designed low-cardinality set, no hospital/transfer-shaped key may
+    // appear anywhere in the scrape, and no submitted id value may appear
+    // as a label value on any sample.
+    // ------------------------------------------------------------------
+
+    @Test
+    void phase5IdentifiersNeverBecomeMetricLabels() throws Exception {
+        String token = loginAsAdmin();
+        HttpHeaders authenticated = new HttpHeaders();
+        authenticated.setBearerAuth(token);
+        // Real traffic carrying hostile Phase-5-shaped identifiers: a hospital
+        // id canary as a correlation header, a transfer-id canary as a search
+        // term, and a patient-id canary as a path value.
+        HttpHeaders hospitalCanary = authedGet(token);
+        hospitalCanary.set("X-Correlation-Id", HOSPITAL_ID_CANARY);
+        assertEquals(HttpStatus.OK, exchange("/api/patients", HttpMethod.GET, hospitalCanary, null).getStatusCode());
+        HttpHeaders transferCanary = authedGet(token);
+        // A hostile status enum value is refused as the typed 400 — the refusal
+        // itself traverses the whole boundary and observation pipeline.
+        assertEquals(HttpStatus.BAD_REQUEST,
+                exchange("/api/transfers?status=" + TRANSFER_ID_CANARY, HttpMethod.GET, transferCanary, null)
+                        .getStatusCode());
+        assertEquals(HttpStatus.BAD_REQUEST,
+                exchange("/api/patients/" + PATIENT_ID_CANARY, HttpMethod.GET, authenticated, null).getStatusCode());
+
+        ResponseEntity<String> scrape = exchange("/actuator/prometheus", HttpMethod.GET, authenticated, null);
+        assertEquals(HttpStatus.OK, scrape.getStatusCode());
+        String body = scrape.getBody();
+
+        // The request metric's label keys stay exactly the designed bounded set —
+        // no hospital/transfer/patient/assignment-shaped key anywhere.
+        for (String line : body.split("\\R")) {
+            if (line.startsWith("http_server_requests_seconds_count{")) {
+                Matcher keyMatcher = SAMPLE_LABEL_KEY.matcher(line);
+                while (keyMatcher.find()) {
+                    assertTrue(ALLOWED_REQUEST_LABEL_KEYS.contains(keyMatcher.group(1)),
+                            () -> "a Phase 5 identifier became a metric label key: " + keyMatcher.group(1));
+                }
+            }
+        }
+        // No hospital/transfer-shaped label key may appear on any sample family.
+        for (String forbiddenKey : List.of("hospital_id", "hospitalId", "transfer_id", "transferId",
+                "patient_id", "patientId", "assignment_id", "assignmentId",
+                "source_hospital_id", "destination_hospital_id", "correlation_id")) {
+            assertFalse(body.contains(forbiddenKey + "=\""),
+                    () -> "a hospital/transfer/patient/assignment-shaped label key appeared in metrics: "
+                            + forbiddenKey);
+        }
+        // No submitted identifier value may appear anywhere in the scrape.
+        for (String canary : List.of(HOSPITAL_ID_CANARY, TRANSFER_ID_CANARY, PATIENT_ID_CANARY)) {
+            assertFalse(body.contains(canary), () -> "identifier canary leaked into metrics output: " + canary);
+        }
+    }
+
+    private HttpHeaders authedGet(String token) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(token);
+        return headers;
     }
 
     private String loginAsAdmin() throws Exception {

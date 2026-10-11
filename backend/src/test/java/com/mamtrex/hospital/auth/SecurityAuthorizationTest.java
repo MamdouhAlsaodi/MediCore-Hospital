@@ -174,7 +174,8 @@ class SecurityAuthorizationTest {
     private static final Set<String> AUDIT_DTO_KEYS = Set.of(
             "id", "actor", "action", "resourceType", "resourceId", "details", "occurredAt",
             "assignmentId", "role", "scope", "organizationId", "branchId", "departmentId",
-            "correlationId", "branchAttribution");
+            "correlationId", "branchAttribution",
+            "hospitalId", "transferId", "sourceHospitalId", "destinationHospitalId");
 
     /** Task 11 correlation id header and its bounded safe shape (1-64 chars, safe evidence alphabet). */
     private static final String CORRELATION_HEADER = "X-Correlation-Id";

@@ -154,7 +154,8 @@ class CareOperationsApiTest {
     private static final Set<String> AUDIT_DTO_KEYS = Set.of(
             "id", "actor", "action", "resourceType", "resourceId", "details", "occurredAt",
             "assignmentId", "role", "scope", "organizationId", "branchId", "departmentId",
-            "correlationId", "branchAttribution");
+            "correlationId", "branchAttribution",
+            "hospitalId", "transferId", "sourceHospitalId", "destinationHospitalId");
 
     /** Task 11 correlation ids are bounded and use only safe evidence characters. */
     private static final Pattern CORRELATION_SHAPE = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]{0,63}");

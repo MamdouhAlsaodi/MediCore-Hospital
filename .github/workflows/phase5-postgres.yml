@@ -9,6 +9,8 @@ on:
       - 'backend/src/main/java/com/mamtrex/hospital/patient/**'
       - 'backend/src/main/java/com/mamtrex/hospital/transfer/**'
       - 'backend/src/main/java/com/mamtrex/hospital/reporting/**'
+      - 'backend/src/main/java/com/mamtrex/hospital/audit/**'
+      - 'backend/src/test/java/com/mamtrex/hospital/audit/**'
       - 'backend/src/main/java/com/mamtrex/hospital/bed/**'
       - 'backend/src/main/java/com/mamtrex/hospital/appointment/**'
       - 'backend/src/main/java/com/mamtrex/hospital/auth/**'
@@ -41,7 +43,7 @@ jobs:
       - name: PostgreSQL-backed integration suites (V7 migration, transfer races, MRN races, Flyway, profile, db-loss)
         run: |
           cd backend
-          mvn -B test -Dapi.version=1.44 -Dtest='FlywayPostgresIntegrationTest,Phase5MigrationIntegrationTest,PostgresConcurrencyIntegrationTest,PostgresProfileContextIntegrationTest,LivenessReadinessDbLossIntegrationTest,NetworkPatientConcurrencyIntegrationTest,TransferConcurrencyIntegrationTest,TransferV7IntegrityIntegrationTest,FacilityCapacityApiTest,NetworkOperationsDashboardApiTest,OpenApiContractTest'
+          mvn -B test -Dapi.version=1.44 -Dtest='FlywayPostgresIntegrationTest,Phase5MigrationIntegrationTest,PostgresConcurrencyIntegrationTest,PostgresProfileContextIntegrationTest,LivenessReadinessDbLossIntegrationTest,NetworkPatientConcurrencyIntegrationTest,TransferConcurrencyIntegrationTest,TransferV7IntegrityIntegrationTest,FacilityCapacityApiTest,NetworkOperationsDashboardApiTest,NetworkAuditIsolationApiTest,OpenApiContractTest'
       - name: Served OpenAPI and generated-client byte drift (disposable Docker backend)
         run: scripts/phase4/check-openapi-drift.sh
       - name: Summarize

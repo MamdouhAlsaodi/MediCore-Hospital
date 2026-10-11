@@ -61,6 +61,13 @@ class HttpSecurityBoundaryMatrixTest {
     @Autowired
     TestRestTemplate rest;
 
+    // T133 fixture seams: the HOSPITAL-scoped ADMIN is provisioned against
+    // the same synthetic demo hierarchy (never a real directory).
+    @Autowired com.mamtrex.hospital.auth.UserAccountRepository accounts;
+    @Autowired com.mamtrex.hospital.organization.BranchRepository branches;
+    @Autowired com.mamtrex.hospital.auth.ActingAssignmentRepository assignments;
+    @Autowired org.springframework.transaction.support.TransactionTemplate transactionTemplate;
+
     @DynamicPropertySource
     static void runtimeSecrets(DynamicPropertyRegistry registry) {
         registry.add("hospital.jwt.secret", TestRuntimeSecrets::jwtSecret);
@@ -256,5 +263,104 @@ class HttpSecurityBoundaryMatrixTest {
         String echoed = res.getHeaders().getFirst(AUDIT_HEADER);
         assertNotNull(echoed, "even rejected responses echo the bounded correlation boundary");
         assertTrue(CORRELATION_SHAPE.matcher(echoed).matches(), "the echoed id stays inside the safe shape");
+    }
+
+    // ------------------------------------------------------------------
+    // Phase 5 US7 (T133) — hospital/network scope and role-route
+    // combinations. The demo cohort's admin is ORGANIZATION-scoped, so the
+    // HOSPITAL-scoped actor is provisioned here as a dedicated synthetic
+    // ADMIN assignment on the demo hospital. The matrix proves: the
+    // ADMIN-only routes (audit read, context switch, organization view)
+    // refuse the operational roles at the route boundary regardless of
+    // scope; the transfer routes stay open to every operational role
+    // server-side (the service owns the per-command narrowing); and the
+    // scope itself never widens a route — a HOSPITAL-scoped ADMIN receives
+    // exactly the same route verdicts as the ORGANIZATION-scoped one, with
+    // the visible slice narrowed inside the handler (proven by the audit
+    // slice assertions above and the US7 isolation suite).
+    // ------------------------------------------------------------------
+
+    @Test
+    void hospitalAndNetworkScopeAdminsMeetIdenticalRouteBoundaries() {
+        String networkAdmin = login(ADMIN);
+        String hospitalAdmin = loginHospitalScopedAdmin();
+
+        // Route verdicts are a ROLE decision at the HTTP boundary; scope only
+        // narrows the slice inside the handler. The deliberate exceptions are
+        // the network-total routes (dashboard/network, capacity/network),
+        // which refuse the HOSPITAL scope server-side with the generic 403 —
+        // the documented fail-narrow choice (FR-024), never a leak.
+        record Route(String method, String path, int networkStatus, int hospitalStatus) {}
+        List<Route> routes = List.of(
+                new Route("GET", "/api/audit", HttpStatus.OK.value(), HttpStatus.OK.value()),
+                new Route("GET", "/api/organization", HttpStatus.OK.value(), HttpStatus.OK.value()),
+                new Route("GET", "/api/network/hierarchy", HttpStatus.OK.value(), HttpStatus.OK.value()),
+                new Route("GET", "/api/transfers", HttpStatus.OK.value(), HttpStatus.OK.value()),
+                new Route("GET", "/api/patients", HttpStatus.OK.value(), HttpStatus.OK.value()),
+                new Route("GET", "/api/dashboard/network", HttpStatus.OK.value(), HttpStatus.FORBIDDEN.value()),
+                new Route("GET", "/api/capacity/network", HttpStatus.OK.value(), HttpStatus.FORBIDDEN.value()));
+
+        for (Route route : routes) {
+            assertEquals(route.networkStatus(),
+                    exchange(route.method(), route.path, networkAdmin, null).getStatusCode().value(),
+                    route.method() + " " + route.path + " must behave identically for the network ADMIN");
+            assertEquals(route.hospitalStatus(),
+                    exchange(route.method(), route.path, hospitalAdmin, null).getStatusCode().value(),
+                    route.method() + " " + route.path + " must give the hospital ADMIN its documented verdict — "
+                            + "the scope narrows the slice server-side, never widens a route");
+        }
+        // The hospital ADMIN's audit read is the hospital-wide slice: it stays a
+        // strict subset of the network read and never carries the legacy rows.
+        List<Map<String, Object>> networkSlice = auditEvents(networkAdmin);
+        List<Map<String, Object>> hospitalSlice = auditEvents(hospitalAdmin);
+        assertFalse(hospitalSlice.isEmpty(), "the hospital slice carries the demo hospital's own evidence");
+        assertTrue(hospitalSlice.size() <= networkSlice.size(),
+                "the hospital slice can never exceed the network slice");
+        assertFalse(hospitalSlice.stream().anyMatch(e ->
+                        "legacy/unassigned".equals(String.valueOf(e.get("branchAttribution")))),
+                "legacy rows stay an organization-scope slice");
+    }
+
+    @Test
+    void operationalRolesStayOffAdminRoutesAcrossScopes() {
+        String nurse = login(NURSE);
+        // The review nurse is BRANCH-scoped; a HOSPITAL-scoped operational actor
+        // would meet the identical route refusals — the boundary is ROLE, not scope.
+        assertEquals(HttpStatus.FORBIDDEN, exchange("GET", "/api/audit", nurse, null).getStatusCode(),
+                "the audit read is ADMIN-only at the route boundary");
+        assertEquals(HttpStatus.FORBIDDEN, exchange("GET", "/api/organization", nurse, null).getStatusCode(),
+                "the organization view is ADMIN-only at the route boundary");
+        assertEquals(HttpStatus.FORBIDDEN, exchange("GET", "/api/dashboard/network", nurse, null).getStatusCode(),
+                "the network command center is ADMIN-only at the route boundary");
+        assertEquals(HttpStatus.FORBIDDEN, exchange("POST", "/api/auth/context", nurse,
+                Map.of("assignmentId", UUID.randomUUID().toString())).getStatusCode(),
+                "the context switch is ADMIN-only at the route boundary");
+        // Transfer routes stay reachable for the operational role; the server-side
+        // service matrix owns every per-command narrowing (T089).
+        assertEquals(HttpStatus.OK, exchange("GET", "/api/transfers", nurse, null).getStatusCode(),
+                "the transfer list stays available to the operational role");
+    }
+
+    /** A dedicated synthetic ADMIN whose acting assignment is HOSPITAL-scoped on the demo hospital. */
+    private String loginHospitalScopedAdmin() {
+        var encoder = new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder();
+        String username = "hospital-scope-matrix-" + UUID.randomUUID();
+        accounts.save(new com.mamtrex.hospital.auth.UserAccount(username,
+                encoder.encode(TestRuntimeSecrets.accountPassword()), java.util.Set.of(com.mamtrex.hospital.auth.Role.ADMIN)));
+        var account = accounts.findByUsername(username).orElseThrow();
+        // The HOSPITAL factory derives the facility through the branch's lazy
+        // relationship, so the assignment is created inside a short transaction
+        // against a freshly managed branch (the test thread has no open session).
+        var created = transactionTemplate.execute(tx -> {
+            var branch = branches.findAllByOrderByCodeAscIdAsc().stream()
+                    .filter(b -> b.isActive())
+                    .findFirst()
+                    .orElseThrow(() -> new AssertionError("the demo cohort must own one active branch"));
+            return assignments.save(com.mamtrex.hospital.auth.ActingAssignment.hospital(
+                    account, branch.getOrganization(), com.mamtrex.hospital.auth.Role.ADMIN,
+                    branch.getHospital()));
+        });
+        org.junit.jupiter.api.Assertions.assertNotNull(created);
+        return login(username);
     }
 }

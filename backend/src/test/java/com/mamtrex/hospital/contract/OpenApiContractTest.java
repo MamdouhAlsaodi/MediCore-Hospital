@@ -287,8 +287,10 @@ class OpenApiContractTest {
         Map<String, Object> auditView = schema(schemas, "AuditEventView");
         Map<String, Object> auditProps = (Map<String, Object>) auditView.get("properties");
         assertTrue(auditProps.keySet().containsAll(
-                        Set.of("id", "actor", "action", "resourceType", "resourceId", "occurredAt", "correlationId")),
-                "AuditEventView must expose the allowlisted evidence fields");
+                        Set.of("id", "actor", "action", "resourceType", "resourceId", "occurredAt", "correlationId",
+                                "hospitalId", "transferId", "sourceHospitalId", "destinationHospitalId")),
+                "AuditEventView must expose the allowlisted evidence fields including the "
+                        + "bounded Phase 5 hospital/transfer context");
 
         Map<String, Object> branchSummary = schema(schemas, "BranchSummary");
         Map<String, Object> branchProps = (Map<String, Object>) branchSummary.get("properties");

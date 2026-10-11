@@ -14,22 +14,31 @@ import java.util.*;
 import java.util.stream.Stream;
 
 /**
- * The scope-aware, DTO-only audit read (docs/plan3.md Task 11). The route
- * stays ADMIN-only in SecurityConfig; within ADMIN the acting context decides
- * the visible slice server-side — an ORGANIZATION-scoped ADMIN inspects the
- * whole organization plus context-less rows marked {@code legacy/unassigned}
- * (ownership is never guessed), a BRANCH-scoped ADMIN only its own branch's
- * rows, and a DEPARTMENT-scoped ADMIN only its department's rows — so no
- * client filter can ever widen a view.
+ * The scope-aware, DTO-only audit read (docs/plan3.md Task 11; Phase 5 US7
+ * T131). The route stays ADMIN-only in SecurityConfig; within ADMIN the
+ * acting context decides the visible slice server-side — an
+ * ORGANIZATION-scoped ADMIN inspects the whole organization plus
+ * context-less rows marked {@code legacy/unassigned} (ownership is never
+ * guessed), a HOSPITAL-scoped ADMIN inspects its acting hospital's
+ * hospital-wide evidence (every branch row joined through the hospital
+ * attribution, bounded by that one facility — never a sibling hospital, a
+ * foreign network, or the legacy rows), a BRANCH-scoped ADMIN only its own
+ * branch's rows, and a DEPARTMENT-scoped ADMIN only its department's rows —
+ * so no client filter can ever widen a view. The hospital slice derives
+ * exclusively from the reloaded acting context's {@code hospitalId}; no
+ * request parameter names a hospital, so client-supplied hospital/transfer
+ * identifiers are simply ignored.
  *
- * <p>The four request filters (branch, resource type, actor, correlation id)
+ * <p>The request filters (branch, resource type, actor, correlation id)
  * apply conjunctively inside the scope slice: for scoped ADMINs a foreign
- * branch filter therefore answers the empty set, never a widened list, and a
- * malformed branch id fails typed deserialization as the shared 400. The
+ * branch filter therefore answers the empty set, never a widened list, and
+ * a malformed branch id fails typed deserialization as the shared 400. The
  * response is a strict allowlist DTO — the evidence fields, the acting
- * context, the bounded correlation id, and the legacy mark — never the JPA
- * entity and none of its persistence metadata. Reads record no audit
- * events.</p>
+ * context, the bounded correlation id, the Phase 5 hospital attribution and
+ * bounded transfer context (transferId/source/destination — present only on
+ * transfer lifecycle rows), and the legacy mark — never the JPA entity and
+ * none of its persistence metadata. No patient payload (MRN, name, clinical
+ * field) exists anywhere in a row. Reads record no audit events.</p>
  */
 @RestController @RequestMapping("/api/audit") public class AuditController {
  private static final String LEGACY_UNASSIGNED = "legacy/unassigned";
@@ -39,7 +48,8 @@ import java.util.stream.Stream;
  /** Strict allowlist of one audit evidence row; never the entity. */
  public record AuditEventView(UUID id,String actor,String action,String resourceType,String resourceId,
   String details,Instant occurredAt,UUID assignmentId,String role,String scope,
-  UUID organizationId,UUID branchId,UUID departmentId,String correlationId,String branchAttribution){}
+  UUID organizationId,UUID branchId,UUID departmentId,String correlationId,String branchAttribution,
+  UUID hospitalId,UUID transferId,UUID sourceHospitalId,UUID destinationHospitalId){}
 
  @GetMapping @ApiResponses({
   @ApiResponse(responseCode = "200", description = "The scope-visible audit evidence rows",
@@ -55,15 +65,15 @@ import java.util.stream.Stream;
   @RequestParam(required=false) String resourceType,@RequestParam(required=false) String actor,
   @RequestParam(required=false) String correlationId){
   ActingContext context=currentContext();
-  // Phase 5: HOSPITAL scope slices by its acting branch for now — the
-  // narrower, fail-narrow choice; the hospital-wide evidence slice is the
-  // explicit US7 task (T130/T131) and is deliberately not guessed here.
+  // Phase 5 US7 (T130/T131): the HOSPITAL slice is hospital-wide through the
+  // hospital attribution (hospital_id, indexed), never widened past the
+  // acting facility; the other scopes keep their exact slices.
   Stream<AuditEvent> scoped=switch(context.scope()){
    case ORGANIZATION -> Stream.concat(
      repo.findByOrganizationIdOrderByOccurredAtDesc(context.organizationId()).stream(),
      repo.findByAssignmentIdIsNullAndOrganizationIdIsNullAndBranchIdIsNullAndDepartmentIdIsNullOrderByOccurredAtDesc().stream())
     .sorted(Comparator.comparing(AuditEvent::getOccurredAt).reversed());
-   case HOSPITAL -> repo.findByBranchIdOrderByOccurredAtDesc(context.branchId()).stream();
+   case HOSPITAL -> repo.findByHospitalIdOrderByOccurredAtDesc(context.hospitalId()).stream();
    case BRANCH -> repo.findByBranchIdOrderByOccurredAtDesc(context.branchId()).stream();
    case DEPARTMENT -> repo.findByDepartmentIdOrderByOccurredAtDesc(context.departmentId()).stream();
   };
@@ -86,7 +96,8 @@ import java.util.stream.Stream;
    e.getDetails(),e.getOccurredAt(),e.getAssignmentId(),
    e.getRole()==null?null:e.getRole().name(),e.getScope()==null?null:e.getScope().name(),
    e.getOrganizationId(),e.getBranchId(),e.getDepartmentId(),e.getCorrelationId(),
-   isContextless(e)?LEGACY_UNASSIGNED:null);
+   isContextless(e)?LEGACY_UNASSIGNED:null,
+   e.getHospitalId(),e.getTransferId(),e.getSourceHospitalId(),e.getDestinationHospitalId());
  }
 
  private static boolean isContextless(AuditEvent event){

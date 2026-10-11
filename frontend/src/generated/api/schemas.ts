@@ -119,6 +119,14 @@ export interface BranchView {
   "timeZone": string;
 }
 
+export interface CapacitySummary {
+  "appointmentsScheduled": number;
+  "bedsAvailable": number;
+  "bedsOccupied": number;
+  "bedsReservedForTransfer": number;
+  "branchId": string;
+}
+
 export interface ContextSwitchRequest {
   "assignmentId": string;
   "branchId"?: string;
@@ -164,6 +172,15 @@ export interface CurrentBed {
   "bedNumber": string;
   "room": string;
   "ward": string;
+}
+
+export interface HospitalCapacitySummary {
+  "appointmentsScheduled": number;
+  "bedsAvailable": number;
+  "bedsOccupied": number;
+  "bedsReservedForTransfer": number;
+  "branches": CapacitySummary[];
+  "hospitalId": string;
 }
 
 export interface HospitalView {

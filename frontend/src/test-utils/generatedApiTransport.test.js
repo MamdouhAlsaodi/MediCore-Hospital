@@ -15,6 +15,8 @@ import {
 import { fetchAppointments, createAppointment } from '../features/appointments/appointmentApi.js';
 import { fetchPatients, createPatient, updatePatient } from '../features/patients/patientApi.js';
 import { fetchBranchSummary, fetchNetworkSummary } from '../features/dashboard/dashboardApi.js';
+import { fetchBranchCapacity, fetchHospitalCapacity, fetchNetworkCapacity } from '../features/dashboard/capacityApi.js';
+import { getActingBranchCapacity, getActingHospitalCapacity, getAuthorizedNetworkCapacity } from '../generated/api/index';
 import { switchContext } from '../features/branches/actingContextApi.js';
 import { fetchNetworkHierarchy } from '../features/network/networkApi.js';
 import { getAuthorizedNetworkHierarchy } from '../generated/api/index';
@@ -213,6 +215,30 @@ describe('generated-contract transport (T072)', () => {
     const all = calls();
     expect(all[0].path).toBe('/api/dashboard');
     expect(all[1].path).toBe('/api/dashboard/network');
+  });
+
+  // ------------------------------------------------------------------
+  // Phase 5 US5 capacity — descriptors and real adapters share transport.
+  // ------------------------------------------------------------------
+  it('capacity adapters use the generated branch, hospital and network reads', async () => {
+    const branch = { branchId: 'branch-1', bedsAvailable: 1, bedsReservedForTransfer: 0,
+      bedsOccupied: 2, appointmentsScheduled: 3 };
+    const hospital = { hospitalId: 'hospital-1', ...Object.fromEntries(
+      Object.entries(branch).filter(([key]) => key !== 'branchId')), branches: [branch] };
+    stubFetch((path) => jsonResponse(path.endsWith('/branch') ? branch
+      : path.endsWith('/hospital') ? hospital : [hospital]));
+    expect(getActingBranchCapacity()).toEqual({ method: 'GET', path: '/api/capacity/branch' });
+    expect(getActingHospitalCapacity()).toEqual({ method: 'GET', path: '/api/capacity/hospital' });
+    expect(getAuthorizedNetworkCapacity()).toEqual({ method: 'GET', path: '/api/capacity/network' });
+    await fetchBranchCapacity({ token: 'synthetic-token' });
+    await fetchHospitalCapacity({ token: 'synthetic-token' });
+    await fetchNetworkCapacity({ token: 'synthetic-token' });
+    expect(calls().map(({ path, options, body }) => [path, options.method, options.headers.Authorization, body]))
+      .toEqual([
+        ['/api/capacity/branch', 'GET', 'Bearer synthetic-token', undefined],
+        ['/api/capacity/hospital', 'GET', 'Bearer synthetic-token', undefined],
+        ['/api/capacity/network', 'GET', 'Bearer synthetic-token', undefined],
+      ]);
   });
 
   // ------------------------------------------------------------------

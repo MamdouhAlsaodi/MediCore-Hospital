@@ -42,6 +42,13 @@ public interface BedRepository extends JpaRepository<Bed, java.util.UUID> {
             + "where b.branch.id in :branchIds group by b.branch.id, b.occupancyStatus")
     List<BranchStatusCount> countByBranchIdInGroupedByStatus(@Param("branchIds") Collection<UUID> branchIds);
 
+    @Query("select b.branch.id as branchId, b.occupancyStatus as status, count(b) as total from Bed b "
+            + "where b.branch.id in :branchIds and b.branch.active = true "
+            + "and b.branch.hospital.active = true and b.branch.hospital.organization.id = :organizationId "
+            + "group by b.branch.id, b.occupancyStatus")
+    List<BranchStatusCount> countCapacityByBranch(@Param("organizationId") UUID organizationId,
+            @Param("branchIds") Collection<UUID> branchIds);
+
     /** One grouped (branch, status) count tuple of the query above. */
     interface BranchStatusCount {
         java.util.UUID getBranchId();

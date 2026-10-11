@@ -2,8 +2,8 @@ package com.mamtrex.hospital.appointment;
 
 import com.mamtrex.hospital.audit.AuditService;
 import com.mamtrex.hospital.auth.ActingContext;
+import com.mamtrex.hospital.auth.BranchAccessService;
 import com.mamtrex.hospital.organization.Branch;
-import com.mamtrex.hospital.organization.BranchRepository;
 import com.mamtrex.hospital.organization.BranchTimeService;
 import com.mamtrex.hospital.patient.Patient;
 import com.mamtrex.hospital.patient.PatientRepository;
@@ -54,17 +54,17 @@ public class AppointmentService {
     private final PatientRepository patients;
     private final StaffMemberRepository professionals;
     private final StaffAvailabilityRepository availability;
-    private final BranchRepository branches;
+    private final BranchAccessService branchAccess;
     private final AuditService audit;
 
     public AppointmentService(AppointmentRepository appointments, PatientRepository patients,
                               StaffMemberRepository professionals, StaffAvailabilityRepository availability,
-                              BranchRepository branches, AuditService audit) {
+                              BranchAccessService branchAccess, AuditService audit) {
         this.appointments = appointments;
         this.patients = patients;
         this.professionals = professionals;
         this.availability = availability;
-        this.branches = branches;
+        this.branchAccess = branchAccess;
         this.audit = audit;
     }
 
@@ -138,8 +138,17 @@ public class AppointmentService {
     }
 
     private Branch actingBranch() {
-        return branches.findById(actingContext().branchId())
-                .orElseThrow(() -> new AccessDeniedException("The acting branch is not available"));
+        ActingContext context = actingContext();
+        Branch branch;
+        try {
+            branch = branchAccess.requireActiveBranchInOrganization(context.organizationId(), context.branchId());
+        } catch (BranchAccessService.RefusedException refused) {
+            throw new AccessDeniedException("The acting branch is not available");
+        }
+        if (!branch.getHospital().getId().equals(context.hospitalId())) {
+            throw new AccessDeniedException("The acting branch is not available");
+        }
+        return branch;
     }
 
     /**

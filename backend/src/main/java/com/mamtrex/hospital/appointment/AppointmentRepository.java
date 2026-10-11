@@ -56,6 +56,13 @@ public interface AppointmentRepository extends JpaRepository<Appointment, UUID> 
             + "where a.branch.id in :branchIds group by a.branch.id")
     List<BranchMetric> countByBranchIdInGrouped(@Param("branchIds") Collection<UUID> branchIds);
 
+    @Query("select a.branch.id as branchId, count(a) as total from Appointment a "
+            + "where a.branch.id in :branchIds and a.branch.active = true "
+            + "and a.branch.hospital.active = true and a.branch.hospital.organization.id = :organizationId "
+            + "and a.status in ('scheduled', 'confirmed') group by a.branch.id")
+    List<BranchMetric> countScheduledCapacityByBranch(@Param("organizationId") UUID organizationId,
+            @Param("branchIds") Collection<UUID> branchIds);
+
     /*
      * Phase 4 (FR-012): the today window is per branch and derived from
      * that branch's own IANA zone as exact half-open instants.

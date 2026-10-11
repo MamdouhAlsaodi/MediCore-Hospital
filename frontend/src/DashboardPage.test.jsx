@@ -118,6 +118,21 @@ function renderDashboard(session, { onSessionExpired = vi.fn(), onNavigate = vi.
 }
 
 describe('DashboardPage', () => {
+  it('mounts the acting hospital capacity section on the dashboard for an organization admin', async () => {
+    const session = sessionFor('ADMIN', 'ORGANIZATION', EAST_BRANCH_ID);
+    session.actingContext.hospitalId = 'hospital-east';
+    const fetcher = vi.fn((path) => path === '/api/capacity/hospital'
+      ? Promise.resolve(jsonResponse({ hospitalId: 'hospital-east', bedsAvailable: 4,
+        bedsReservedForTransfer: 1, bedsOccupied: 2, appointmentsScheduled: 3,
+        branches: [{ branchId: EAST_BRANCH_ID, bedsAvailable: 4,
+          bedsReservedForTransfer: 1, bedsOccupied: 2, appointmentsScheduled: 3 }] }))
+      : stubBackend()(path));
+    vi.stubGlobal('fetch', fetcher);
+    render(<DashboardPage session={session} onSessionExpired={vi.fn()} onNavigate={vi.fn()} />);
+    expect(await screen.findByRole('region', { name: 'Hospital capacity' })).toBeInTheDocument();
+    expect(fetcher).toHaveBeenCalledWith('/api/capacity/hospital', expect.anything());
+  });
+
   it('loads the branch summary through the transport adapter and shows a loading state first', async () => {
     let resolveBranch;
     const fetchMock = vi.fn((path) => {

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { ApiError } from './api.js';
-import { actingContextKey } from './auth.js';
+import { actingContextIdentity, actingContextKey } from './auth.js';
+import HospitalCapacitySummary from './features/dashboard/HospitalCapacitySummary.jsx';
 import { permittedDestinations } from './navigation.js';
 import { fetchBranchSummary, fetchNetworkSummary } from './features/dashboard/dashboardApi.js';
 
@@ -245,6 +246,8 @@ export default function DashboardPage({ session, onSessionExpired, onNavigate })
   // ORGANIZATION context; UI role data is a display gate, never authority.
   const canSeeNetwork = session.actingContext?.role === 'ADMIN'
     && session.actingContext?.scope === 'ORGANIZATION';
+  const canSeeHospitalCapacity = ['HOSPITAL', 'ORGANIZATION'].includes(session.actingContext?.scope)
+    && Boolean(actingContextIdentity(session)?.resolvedHospitalId);
   const [network, setNetwork] = useState({ contextKey, status: 'loading', loadError: '', summary: null });
 
   useEffect(() => {
@@ -310,6 +313,9 @@ export default function DashboardPage({ session, onSessionExpired, onNavigate })
 
       {branchView.status === 'ready' && (
         <BranchSummary summary={branchView.summary} drillDowns={actions} onNavigate={onNavigate} />
+      )}
+      {canSeeHospitalCapacity && (
+        <HospitalCapacitySummary session={session} onSessionExpired={onSessionExpired} />
       )}
 
       {networkView.status === 'loading' && (

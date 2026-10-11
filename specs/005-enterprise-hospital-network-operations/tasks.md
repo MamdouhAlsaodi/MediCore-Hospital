@@ -167,18 +167,18 @@
 
 **Independent test:** Aggregation sums plus repeated reservation/appointment conflict races.
 
-- [ ] T104 [P] [US5] Add RED capacity DTO and sum-invariant tests in `backend/src/test/java/com/mamtrex/hospital/reporting/FacilityCapacityApiTest.java`
-- [ ] T105 [P] [US5] Add RED foreign-hospital capacity refusal tests in `backend/src/test/java/com/mamtrex/hospital/reporting/FacilityCapacityApiTest.java`
-- [ ] T106 [US5] Add grouped transfer-reservation counts in `backend/src/main/java/com/mamtrex/hospital/transfer/TransferBedReservationRepository.java`
-- [ ] T107 [US5] Add hospital-aware grouped bed/appointment queries in `backend/src/main/java/com/mamtrex/hospital/bed/BedRepository.java` and `appointment/AppointmentRepository.java`
-- [ ] T108 [US5] Implement branch/hospital/network capacity aggregation from explicit authorized branch sets in `backend/src/main/java/com/mamtrex/hospital/reporting/FacilityCapacityService.java`
-- [ ] T109 [US5] Add `/api/capacity/branch|hospital|network` mappings in `backend/src/main/java/com/mamtrex/hospital/reporting/FacilityCapacityController.java`
-- [ ] T110 [US5] Preserve half-open scheduling semantics and validate hospital ancestry in `backend/src/main/java/com/mamtrex/hospital/appointment/AppointmentService.java`
-- [ ] T111 [US5] Extend PostgreSQL appointment/bed/reservation race coverage in `backend/src/test/java/com/mamtrex/hospital/infrastructure/PostgresConcurrencyIntegrationTest.java`
-- [ ] T112 [US5] Add capacity OpenAPI/generated-client contracts and transport tests in `backend/src/test/java/com/mamtrex/hospital/contract/OpenApiContractTest.java` and `frontend/src/test-utils/generatedApiTransport.test.js`
-- [ ] T113 [P] [US5] Create capacity adapter in `frontend/src/features/dashboard/capacityApi.js`
-- [ ] T114 [US5] Render bounded hospital capacity states in `frontend/src/features/dashboard/HospitalCapacitySummary.jsx`
-- [ ] T115 [US5] Run exact aggregation, query-count, concurrency, and backend regressions from `backend/pom.xml`, then frontend gates from `frontend/package.json`
+- [x] T104 [P] [US5] Add RED capacity DTO and sum-invariant tests in `backend/src/test/java/com/mamtrex/hospital/reporting/FacilityCapacityApiTest.java`
+- [x] T105 [P] [US5] Add RED foreign-hospital capacity refusal tests in `backend/src/test/java/com/mamtrex/hospital/reporting/FacilityCapacityApiTest.java`
+- [x] T106 [US5] Add grouped transfer-reservation counts in `backend/src/main/java/com/mamtrex/hospital/transfer/TransferBedReservationRepository.java`
+- [x] T107 [US5] Add hospital-aware grouped bed/appointment queries in `backend/src/main/java/com/mamtrex/hospital/bed/BedRepository.java` and `appointment/AppointmentRepository.java`
+- [x] T108 [US5] Implement branch/hospital/network capacity aggregation from explicit authorized branch sets in `backend/src/main/java/com/mamtrex/hospital/reporting/FacilityCapacityService.java`
+- [x] T109 [US5] Add `/api/capacity/branch|hospital|network` mappings in `backend/src/main/java/com/mamtrex/hospital/reporting/FacilityCapacityController.java`
+- [x] T110 [US5] Preserve half-open scheduling semantics and validate hospital ancestry in `backend/src/main/java/com/mamtrex/hospital/appointment/AppointmentService.java`
+- [x] T111 [US5] Extend PostgreSQL appointment/bed/reservation race coverage in `backend/src/test/java/com/mamtrex/hospital/infrastructure/PostgresConcurrencyIntegrationTest.java`
+- [x] T112 [US5] Add capacity OpenAPI/generated-client contracts and transport tests in `backend/src/test/java/com/mamtrex/hospital/contract/OpenApiContractTest.java` and `frontend/src/test-utils/generatedApiTransport.test.js`
+- [x] T113 [P] [US5] Create capacity adapter in `frontend/src/features/dashboard/capacityApi.js`
+- [x] T114 [US5] Render bounded hospital capacity states in `frontend/src/features/dashboard/HospitalCapacitySummary.jsx`
+- [x] T115 [US5] Run exact aggregation, query-count, concurrency, and backend regressions from `backend/pom.xml`, then frontend gates from `frontend/package.json`
 
 **Checkpoint:** US5 proves facility-aware capacity without persisted aggregate drift.
 

@@ -1278,6 +1278,44 @@ paths:
                     example: authentication required
                 required:
                 - error
+  /api/dashboard/hospital:
+    get:
+      tags:
+      - dashboard-controller
+      operationId: getActingHospitalDashboard
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/HospitalSummary"
+        "401":
+          description: "Missing, invalid, or expired bearer token; the acting session\
+            \ is gone. The body is one generic non-enumerating error field."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
+        "403":
+          description: The authenticated acting context is not permitted to use this
+            operation. The body is one generic non-enumerating error field.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: authentication required
+                required:
+                - error
   /api/dashboard/branch:
     get:
       tags:
@@ -2224,6 +2262,88 @@ components:
         invoicesVoid:
           type: integer
           format: int64
+        bedsReservedForTransfer:
+          type: integer
+          format: int64
+        appointmentsScheduled:
+          type: integer
+          format: int64
+        activeTransfers:
+          type: integer
+          format: int64
+    HospitalSummary:
+      type: object
+      properties:
+        hospitalId:
+          type: string
+          format: uuid
+        hospitalCode:
+          type: string
+        hospitalName:
+          type: string
+        regionLabel:
+          type: string
+        patients:
+          type: integer
+          format: int64
+        appointments:
+          type: integer
+          format: int64
+        admissions:
+          type: integer
+          format: int64
+        emergencyVisits:
+          type: integer
+          format: int64
+        invoices:
+          type: integer
+          format: int64
+        openAdmissions:
+          type: integer
+          format: int64
+        activeEmergencyVisits:
+          type: integer
+          format: int64
+        bedsAvailable:
+          type: integer
+          format: int64
+        bedsOccupied:
+          type: integer
+          format: int64
+        bedsMaintenance:
+          type: integer
+          format: int64
+        bedsOutOfService:
+          type: integer
+          format: int64
+        todayAppointments:
+          type: integer
+          format: int64
+        invoicesDraft:
+          type: integer
+          format: int64
+        invoicesIssued:
+          type: integer
+          format: int64
+        invoicesPaid:
+          type: integer
+          format: int64
+        invoicesVoid:
+          type: integer
+          format: int64
+        bedsReservedForTransfer:
+          type: integer
+          format: int64
+        appointmentsScheduled:
+          type: integer
+          format: int64
+        activeTransfers:
+          type: integer
+          format: int64
+        branches:
+          type: array
+          items:
+            $ref: "#/components/schemas/BranchSummary"
     NetworkSummary:
       type: object
       properties:
@@ -2280,10 +2400,23 @@ components:
         invoicesVoid:
           type: integer
           format: int64
+        bedsReservedForTransfer:
+          type: integer
+          format: int64
+        appointmentsScheduled:
+          type: integer
+          format: int64
+        activeTransfers:
+          type: integer
+          format: int64
         branches:
           type: array
           items:
             $ref: "#/components/schemas/BranchSummary"
+        hospitals:
+          type: array
+          items:
+            $ref: "#/components/schemas/HospitalSummary"
     CapacitySummary:
       type: object
       properties:

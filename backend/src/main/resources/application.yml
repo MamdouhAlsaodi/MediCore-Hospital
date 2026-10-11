@@ -86,6 +86,7 @@ springdoc:
     - /api/admissions/{id}/status
     - /api/dashboard
     - /api/dashboard/branch
+    - /api/dashboard/hospital
     - /api/dashboard/network
     - /api/capacity/branch
     - /api/capacity/hospital

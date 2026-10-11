@@ -5,6 +5,7 @@ import { apiFetch, ApiError } from '../../api.js';
 // exactly the typed branch summary); the generated client marks that
 // operation deprecated so new callers can see the explicit branch path.
 import {
+  getActingHospitalDashboard as getActingHospitalDashboardHttpRequest,
   getBranchSummaryAlias as getBranchSummaryAliasHttpRequest,
   getNetworkSummary as getNetworkSummaryHttpRequest,
 } from '../../generated/api/index';
@@ -39,6 +40,7 @@ const BRANCH_METRIC_KEYS = [
   'todayAppointments',
   'invoicesDraft', 'invoicesIssued', 'invoicesPaid', 'invoicesVoid',
 ];
+const HIERARCHY_METRIC_KEYS = [...BRANCH_METRIC_KEYS, 'bedsReservedForTransfer', 'appointmentsScheduled', 'activeTransfers'];
 
 function isNonEmptyString(value) {
   return typeof value === 'string' && value.length > 0;
@@ -71,9 +73,8 @@ export async function fetchBranchSummary({ token, onUnauthorized } = {}) {
     .then((payload) => parseBranchSummary(payload));
 }
 
-function parseBranchSummaryStrict(payload) {
-  const malformed = () => new ApiError(500, 'The server returned an unexpected network response.');
-  if (!payload || typeof payload !== 'object') throw malformed();
+function parseBranchSummaryStrict(payload, malformed = () => new ApiError(500, 'The server returned an unexpected network response.')) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw malformed();
   if (!isNonEmptyString(payload.branchId) || !isNonEmptyString(payload.branchCode)
       || !isNonEmptyString(payload.branchName)) throw malformed();
   const summary = { branchId: payload.branchId, branchCode: payload.branchCode, branchName: payload.branchName };
@@ -81,7 +82,42 @@ function parseBranchSummaryStrict(payload) {
     if (!isNonNegativeCount(payload[key])) throw malformed();
     summary[key] = payload[key];
   }
+  for (const key of ['bedsReservedForTransfer', 'appointmentsScheduled', 'activeTransfers']) {
+    if (payload[key] !== undefined) {
+      if (!isNonNegativeCount(payload[key])) throw malformed();
+      summary[key] = payload[key];
+    }
+  }
   return summary;
+}
+
+function parseHospital(payload, malformed) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)
+      || !isNonEmptyString(payload.hospitalId) || !isNonEmptyString(payload.hospitalCode)
+      || !isNonEmptyString(payload.hospitalName) || !Array.isArray(payload.branches)) throw malformed();
+  const branches = payload.branches.map((branch) => parseBranchSummaryStrict(branch, malformed));
+  if (new Set(branches.map((branch) => branch.branchId)).size !== branches.length) throw malformed();
+  const hospital = {
+    hospitalId: payload.hospitalId, hospitalCode: payload.hospitalCode,
+    hospitalName: payload.hospitalName, branches,
+  };
+  for (const key of HIERARCHY_METRIC_KEYS) {
+    if (!isNonNegativeCount(payload[key])) throw malformed();
+    hospital[key] = payload[key];
+  }
+  return hospital;
+}
+
+export function parseHospitalSummary(payload) {
+  return parseHospital(payload, () => new ApiError(500, 'The server returned an unexpected hospital response.'));
+}
+
+export async function fetchHospitalSummary({ token, onUnauthorized } = {}) {
+  // The route comes from the regenerated OpenAPI client; a missing operation
+  // is a build/contract error, never an invented path.
+  const request = getActingHospitalDashboardHttpRequest();
+  return apiFetch(request.path, { method: request.method, token, onUnauthorized })
+    .then(parseHospitalSummary);
 }
 
 // Strict allowlist of the network summary: organization identity, every
@@ -102,6 +138,15 @@ export function parseNetworkSummary(payload) {
   for (const key of BRANCH_METRIC_KEYS) {
     if (!isNonNegativeCount(payload[key])) throw malformed();
     network[key] = payload[key];
+  }
+  if (payload.hospitals !== undefined) {
+    if (!Array.isArray(payload.hospitals)) throw malformed();
+    network.hospitals = payload.hospitals.map((hospital) => parseHospital(hospital, malformed));
+    if (new Set(network.hospitals.map((hospital) => hospital.hospitalId)).size !== network.hospitals.length) throw malformed();
+    for (const key of ['bedsReservedForTransfer', 'appointmentsScheduled', 'activeTransfers']) {
+      if (!isNonNegativeCount(payload[key])) throw malformed();
+      network[key] = payload[key];
+    }
   }
   return network;
 }

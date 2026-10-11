@@ -137,7 +137,8 @@ class CareOperationsApiTest {
             "openAdmissions", "activeEmergencyVisits",
             "bedsAvailable", "bedsOccupied", "bedsMaintenance", "bedsOutOfService",
             "todayAppointments",
-            "invoicesDraft", "invoicesIssued", "invoicesPaid", "invoicesVoid");
+            "invoicesDraft", "invoicesIssued", "invoicesPaid", "invoicesVoid",
+            "bedsReservedForTransfer", "appointmentsScheduled", "activeTransfers");
 
     /** The three branch-identity keys of the typed summary; every other key is a numeric count. */
     private static final Set<String> BRANCH_IDENTITY_KEYS = Set.of("branchId", "branchCode", "branchName");

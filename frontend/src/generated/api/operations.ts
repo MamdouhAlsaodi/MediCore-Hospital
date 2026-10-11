@@ -22,6 +22,7 @@ import type {
   CreatePatientRequest,
   CreateTransferRequest,
   HospitalCapacitySummary,
+  HospitalSummary,
   LoginRequest,
   NetworkHierarchy,
   NetworkSummary,
@@ -135,6 +136,12 @@ export function getActingHospitalCapacity(): HttpRequest {
 }
 
 export type getActingHospitalCapacityResponse = HospitalCapacitySummary;
+
+export function getActingHospitalDashboard(): HttpRequest {
+  return { method: 'GET', path: "/api/dashboard/hospital" };
+}
+
+export type getActingHospitalDashboardResponse = HospitalSummary;
 
 export function getAdmission(id: string): HttpRequest {
   return { method: 'GET', path: `/api/admissions/${encodeURIComponent(id)}` };

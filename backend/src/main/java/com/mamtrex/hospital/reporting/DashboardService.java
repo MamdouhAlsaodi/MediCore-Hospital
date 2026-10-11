@@ -3,8 +3,6 @@ package com.mamtrex.hospital.reporting;
 import com.mamtrex.hospital.admission.AdmissionRepository;
 import com.mamtrex.hospital.appointment.AppointmentRepository;
 import com.mamtrex.hospital.auth.ActingContext;
-import com.mamtrex.hospital.auth.AssignmentScope;
-import com.mamtrex.hospital.auth.Role;
 import com.mamtrex.hospital.billing.InvoiceRepository;
 import com.mamtrex.hospital.bed.Bed;
 import com.mamtrex.hospital.bed.BedRepository;
@@ -14,6 +12,7 @@ import com.mamtrex.hospital.organization.BranchRepository;
 import com.mamtrex.hospital.organization.HospitalOrganization;
 import com.mamtrex.hospital.organization.HospitalOrganizationRepository;
 import com.mamtrex.hospital.patient.PatientRepository;
+import jakarta.persistence.EntityManager;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.access.AccessDeniedException;
@@ -32,26 +31,12 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * Aggregation owner for the branch and network command centers
- * (docs/plan3.md Task 10, §4.7). Every summary is derived server-side from
- * grouped repository counts restricted to an explicit branch-id set — the
- * acting branch for the branch view, and exactly the organization's active
- * branches for the network view — so no path ever performs a whole-table
- * read, and the query count is bounded by the number of tables, not by the
- * number of cards or branches.
- *
- * <p>Scope is never client input: the branch view reads the branch bound to
- * the verified {@link ActingContext} (rebuilt by the JWT filter from server
- * state on every request), and the network view additionally requires that
- * context to be an enabled ADMIN assignment with ORGANIZATION scope —
- * enabled because a context only exists when the filter rebuilt it from an
- * enabled assignment, and refused with the ordinary denial otherwise. The
- * organization totals are exactly the sum over the returned per-branch
- * summaries; legacy null-ownership rows are invisible, mirroring every
- * other branch-scoped read of this phase. Order is deterministic: branches
- * appear in the repository's code order, and the DTO record declaration
- * fixes the JSON key order. Counts/latency are observed in Task 13, not
- * advertised here. Reads record no audit events.</p>
+ * Branch-level grouped metric reader shared by branch, hospital, and network
+ * command centers. The dedicated {@link NetworkOperationsDashboardService}
+ * owns hospital/network authority and hierarchy; this service folds one
+ * explicit server-selected branch set without per-branch SQL statements.
+ * Branch-local today windows are grouped into one query by distinct window.
+ * All reads are synthetic operational counts, not clinical interpretation.
  */
 @Service
 public class DashboardService {
@@ -78,12 +63,19 @@ public class DashboardService {
     private final BranchRepository branches;
     private final HospitalOrganizationRepository organizations;
     private final Clock clock;
+    private final EntityManager entityManager;
+    private final com.mamtrex.hospital.transfer.TransferBedReservationRepository reservations;
+    private final com.mamtrex.hospital.transfer.TransferRepository transfers;
+    private final org.springframework.beans.factory.ObjectProvider<NetworkOperationsDashboardService> networkOperations;
 
     public DashboardService(PatientRepository patients, AppointmentRepository appointments,
                             AdmissionRepository admissions, EmergencyVisitRepository emergencyVisits,
                             InvoiceRepository invoices, BedRepository beds,
                             BranchRepository branches, HospitalOrganizationRepository organizations,
-                            Clock clock) {
+                            Clock clock, EntityManager entityManager,
+                            com.mamtrex.hospital.transfer.TransferBedReservationRepository reservations,
+                            com.mamtrex.hospital.transfer.TransferRepository transfers,
+                            org.springframework.beans.factory.ObjectProvider<NetworkOperationsDashboardService> networkOperations) {
         this.patients = patients;
         this.appointments = appointments;
         this.admissions = admissions;
@@ -93,6 +85,10 @@ public class DashboardService {
         this.branches = branches;
         this.organizations = organizations;
         this.clock = clock;
+        this.entityManager = entityManager;
+        this.reservations = reservations;
+        this.transfers = transfers;
+        this.networkOperations = networkOperations;
     }
 
     /**
@@ -119,44 +115,17 @@ public class DashboardService {
         return toSummary(branch, accumulate(List.of(branch)));
     }
 
-    /**
-     * Typed organization comparison for an enabled organization-scoped ADMIN
-     * context: every active branch of the organization in deterministic code
-     * order (all-zero summaries included) plus totals equal to the sum over
-     * those branches. Any other context receives the ordinary denial.
-     */
-    @Transactional(readOnly = true)
+    /** Retained service API for existing callers; aggregation lives in the dedicated owner. */
+    @Deprecated
     public DashboardDtos.NetworkSummary networkSummary() {
-        ActingContext context = currentContext();
-        requireOrganizationAdmin(context);
-        HospitalOrganization organization = organizations.findById(context.organizationId())
-                .orElseThrow(() -> new AccessDeniedException("The acting organization is not available"));
-        List<Branch> activeBranches =
-                branches.findByOrganizationIdAndActiveTrueOrderByCodeAsc(organization.getId());
-        // One fold over the whole authorized branch set — the query count is
-        // bounded by the number of tables, never by the number of branches.
-        Acc acc = accumulate(activeBranches);
-        List<DashboardDtos.BranchSummary> summaries = activeBranches.stream()
-                .map(branch -> toSummary(branch, acc))
-                .toList();
-        return new DashboardDtos.NetworkSummary(organization.getId(), organization.getName(),
-                summaries.stream().mapToLong(DashboardDtos.BranchSummary::patients).sum(),
-                summaries.stream().mapToLong(DashboardDtos.BranchSummary::appointments).sum(),
-                summaries.stream().mapToLong(DashboardDtos.BranchSummary::admissions).sum(),
-                summaries.stream().mapToLong(DashboardDtos.BranchSummary::emergencyVisits).sum(),
-                summaries.stream().mapToLong(DashboardDtos.BranchSummary::invoices).sum(),
-                summaries.stream().mapToLong(DashboardDtos.BranchSummary::openAdmissions).sum(),
-                summaries.stream().mapToLong(DashboardDtos.BranchSummary::activeEmergencyVisits).sum(),
-                summaries.stream().mapToLong(DashboardDtos.BranchSummary::bedsAvailable).sum(),
-                summaries.stream().mapToLong(DashboardDtos.BranchSummary::bedsOccupied).sum(),
-                summaries.stream().mapToLong(DashboardDtos.BranchSummary::bedsMaintenance).sum(),
-                summaries.stream().mapToLong(DashboardDtos.BranchSummary::bedsOutOfService).sum(),
-                summaries.stream().mapToLong(DashboardDtos.BranchSummary::todayAppointments).sum(),
-                summaries.stream().mapToLong(DashboardDtos.BranchSummary::invoicesDraft).sum(),
-                summaries.stream().mapToLong(DashboardDtos.BranchSummary::invoicesIssued).sum(),
-                summaries.stream().mapToLong(DashboardDtos.BranchSummary::invoicesPaid).sum(),
-                summaries.stream().mapToLong(DashboardDtos.BranchSummary::invoicesVoid).sum(),
-                summaries);
+        return networkOperations.getObject().networkSummary();
+    }
+
+    /** One batched fold shared with the hospital/network aggregation owner. */
+    List<DashboardDtos.BranchSummary> summaries(List<Branch> selected) {
+        if (selected.isEmpty()) return List.of();
+        Acc acc = accumulate(selected);
+        return selected.stream().map(branch -> toSummary(branch, acc)).toList();
     }
 
     private static List<UUID> branchIds(List<Branch> activeBranches) {
@@ -199,14 +168,6 @@ public class DashboardService {
         return counts;
     }
 
-    /** Only an enabled ADMIN context with ORGANIZATION scope may compare branches. */
-    private static void requireOrganizationAdmin(ActingContext context) {
-        if (context.role() != Role.ADMIN || context.scope() != AssignmentScope.ORGANIZATION) {
-            throw new AccessDeniedException(
-                    "The network view is limited to organization-scoped administrators");
-        }
-    }
-
     /* Fail-closed seam: the JWT filter guarantees an ActingContext principal
      * and an existing active selected branch for every authorized request;
      * anything else is refused, never guessed. */
@@ -234,10 +195,16 @@ public class DashboardService {
         for (AppointmentRepository.BranchMetric metric : appointments.countByBranchIdInGrouped(branchIds)) {
             acc.of(metric.getBranchId()).appointments += metric.getTotal();
         }
-        for (Branch branch : branchList) {
-            Window today = todayWindow(branch);
-            acc.of(branch.getId()).todayAppointments += appointments.countByBranchIdAndScheduledAtRange(
-                    branch.getId(), today.start(), today.end());
+        countTodayAppointments(branchList, acc);
+        UUID organizationId = branchList.getFirst().getHospital().getOrganization().getId();
+        for (var row : reservations.countActiveCapacityByBranch(organizationId, branchIds)) {
+            acc.of(row.getBranchId()).bedsReservedForTransfer += row.getTotal();
+        }
+        for (var row : appointments.countScheduledCapacityByBranch(organizationId, branchIds)) {
+            acc.of(row.getBranchId()).appointmentsScheduled += row.getTotal();
+        }
+        for (var row : transfers.countActiveByDestinationBranch(organizationId, branchIds)) {
+            acc.of(row.getBranchId()).activeTransfers += row.getTotal();
         }
         for (AdmissionRepository.BranchStatusCount row : admissions.countByBranchIdInGroupedByStatus(branchIds)) {
             Acc.Branch value = acc.of(row.getBranchId());
@@ -279,6 +246,35 @@ public class DashboardService {
         return acc;
     }
 
+    /** Group branch-local day windows into one bounded grouped SQL statement. */
+    private void countTodayAppointments(List<Branch> selected, Acc acc) {
+        Map<Window, List<UUID>> windows = new LinkedHashMap<>();
+        for (Branch branch : selected) {
+            windows.computeIfAbsent(todayWindow(branch), ignored -> new java.util.ArrayList<>()).add(branch.getId());
+        }
+        StringBuilder predicate = new StringBuilder();
+        int index = 0;
+        for (Window ignored : windows.keySet()) {
+            if (index > 0) predicate.append(" or ");
+            predicate.append("(a.branch.id in :ids").append(index)
+                    .append(" and a.scheduledAt >= :start").append(index)
+                    .append(" and a.scheduledAt < :end").append(index).append(')');
+            index++;
+        }
+        var query = entityManager.createQuery("select a.branch.id, count(a) from Appointment a where "
+                + predicate + " group by a.branch.id", Object[].class);
+        index = 0;
+        for (var entry : windows.entrySet()) {
+            query.setParameter("ids" + index, entry.getValue());
+            query.setParameter("start" + index, entry.getKey().start());
+            query.setParameter("end" + index, entry.getKey().end());
+            index++;
+        }
+        for (Object[] row : query.getResultList()) {
+            acc.of((UUID) row[0]).todayAppointments = (Long) row[1];
+        }
+    }
+
     /**
      * Today's half-open [start, end) window for one branch, in that
      * branch's own IANA zone (FR-012), as exact instants derived from the
@@ -305,7 +301,8 @@ public class DashboardService {
                 value.openAdmissions, value.activeEmergencyVisits,
                 value.bedsAvailable, value.bedsOccupied, value.bedsMaintenance, value.bedsOutOfService,
                 value.todayAppointments,
-                value.invoicesDraft, value.invoicesIssued, value.invoicesPaid, value.invoicesVoid);
+                value.invoicesDraft, value.invoicesIssued, value.invoicesPaid, value.invoicesVoid,
+                value.bedsReservedForTransfer, value.appointmentsScheduled, value.activeTransfers);
     }
 
     /**
@@ -337,6 +334,9 @@ public class DashboardService {
             private long invoicesIssued;
             private long invoicesPaid;
             private long invoicesVoid;
+            private long bedsReservedForTransfer;
+            private long appointmentsScheduled;
+            private long activeTransfers;
         }
     }
 }

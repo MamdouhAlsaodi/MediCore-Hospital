@@ -9,6 +9,8 @@ import DashboardPage, { branchDisplayState, networkDisplayState } from './Dashbo
 // The transport goes through the shared adapter; the server stays the sole
 // authority over scope, values, and ordering.
 const ORG_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const EAST_HOSPITAL_ID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+const WEST_HOSPITAL_ID = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
 const EAST_BRANCH_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const WEST_BRANCH_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 
@@ -46,6 +48,33 @@ const NETWORK_SUMMARY = {
     BRANCH_SUMMARY,
     summaryFor(WEST_BRANCH_ID, 'WEST', 'West Clinic', {}),
   ],
+};
+
+const HOSPITAL_SUMMARY = {
+  ...NETWORK_SUMMARY,
+  hospitalId: EAST_HOSPITAL_ID,
+  hospitalCode: 'H-EAST',
+  hospitalName: 'East Hospital',
+  bedsReservedForTransfer: 2,
+  appointmentsScheduled: 3,
+  activeTransfers: 1,
+  branches: [BRANCH_SUMMARY],
+};
+const HIERARCHICAL_NETWORK = {
+  ...NETWORK_SUMMARY,
+  bedsReservedForTransfer: 2,
+  appointmentsScheduled: 3,
+  activeTransfers: 1,
+  hospitals: [HOSPITAL_SUMMARY, {
+    ...HOSPITAL_SUMMARY,
+    hospitalId: WEST_HOSPITAL_ID,
+    hospitalCode: 'H-WEST',
+    hospitalName: 'West Hospital',
+    patients: 0,
+    bedsReservedForTransfer: 0,
+    activeTransfers: 0,
+    branches: [NETWORK_SUMMARY.branches[1]],
+  }],
 };
 
 // Complete server-issued session shape (docs/plan3.md Task 3) with one
@@ -118,6 +147,76 @@ function renderDashboard(session, { onSessionExpired = vi.fn(), onNavigate = vi.
 }
 
 describe('DashboardPage', () => {
+  it('renders the acting hospital operational totals and drills into only its returned branches', async () => {
+    const user = userEvent.setup();
+    const session = sessionFor('ADMIN', 'HOSPITAL', EAST_BRANCH_ID);
+    session.actingContext.hospitalId = EAST_HOSPITAL_ID;
+    session.assignments[0].hospitalId = EAST_HOSPITAL_ID;
+    const fetcher = vi.fn((path) => {
+      if (path === '/api/dashboard/hospital') return Promise.resolve(jsonResponse(HOSPITAL_SUMMARY));
+      if (path === '/api/dashboard') return Promise.resolve(jsonResponse(BRANCH_SUMMARY));
+      if (path === '/api/capacity/hospital') return Promise.resolve(jsonResponse({
+        hospitalId: EAST_HOSPITAL_ID, bedsAvailable: 4, bedsOccupied: 2,
+        bedsReservedForTransfer: 2, appointmentsScheduled: 3, branches: [],
+      }));
+      return Promise.resolve(jsonResponse({}, 404));
+    });
+    vi.stubGlobal('fetch', fetcher);
+    render(<DashboardPage session={session} onSessionExpired={vi.fn()} onNavigate={vi.fn()} />);
+    const hospital = await screen.findByRole('region', { name: 'Hospital command center' });
+    expect(within(hospital).getByText('H-EAST — East Hospital')).toBeInTheDocument();
+    expect(within(hospital).getByText(/Beds reserved for transfer 2 · Appointments scheduled 3 · Active transfers 1/)).toBeInTheDocument();
+    await user.click(within(hospital).getByRole('button', { name: 'Show branches for East Hospital' }));
+    expect(within(hospital).getByText(/EAST — East Clinic/)).toBeInTheDocument();
+    expect(within(hospital).queryByText(/WEST — West Clinic/)).not.toBeInTheDocument();
+    expect(fetcher).toHaveBeenCalledWith('/api/dashboard/hospital', expect.objectContaining({ method: 'GET' }));
+    expect(fetcher.mock.calls.some(([path]) => path === '/api/dashboard/network')).toBe(false);
+  });
+
+  it('renders server-provided hospital hierarchy alongside the legacy network comparison', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('fetch', stubBackend({ network: HIERARCHICAL_NETWORK }));
+    render(<DashboardPage session={ORG_ADMIN_SESSION} onSessionExpired={vi.fn()} onNavigate={vi.fn()} />);
+    const network = await screen.findByRole('region', { name: 'Network comparison' });
+    expect(within(network).getByText('EAST — East Clinic')).toBeInTheDocument();
+    const hospitals = screen.getByRole('region', { name: 'Network hospitals' });
+    expect(within(hospitals).getByText('H-EAST — East Hospital')).toBeInTheDocument();
+    expect(within(hospitals).getByText('H-WEST — West Hospital')).toBeInTheDocument();
+    expect(within(hospitals).getByText('Beds reserved for transfer 2 · Appointments scheduled 3 · Active transfers 1')).toBeInTheDocument();
+    await user.click(within(hospitals).getByRole('button', { name: 'Show branches for West Hospital' }));
+    expect(within(hospitals).getByText(/WEST — West Clinic/)).toBeInTheDocument();
+    expect(within(hospitals).queryByText(/EAST — East Clinic/)).not.toBeInTheDocument();
+  });
+
+  it('hides a previously loaded hospital immediately on acting hospital change', async () => {
+    const first = sessionFor('ADMIN', 'HOSPITAL', EAST_BRANCH_ID);
+    first.actingContext.hospitalId = EAST_HOSPITAL_ID;
+    first.assignments[0].hospitalId = EAST_HOSPITAL_ID;
+    const second = sessionFor('ADMIN', 'HOSPITAL', WEST_BRANCH_ID);
+    second.actingContext.hospitalId = WEST_HOSPITAL_ID;
+    second.assignments[0].hospitalId = WEST_HOSPITAL_ID;
+    let resolveSecond;
+    const fetcher = vi.fn((path) => {
+      if (path === '/api/dashboard/hospital') {
+        if (fetcher.mock.calls.filter(([p]) => p === path).length > 1) {
+          return new Promise((resolve) => { resolveSecond = resolve; });
+        }
+        return Promise.resolve(jsonResponse(HOSPITAL_SUMMARY));
+      }
+      if (path === '/api/dashboard') return Promise.resolve(jsonResponse(BRANCH_SUMMARY));
+      return Promise.resolve(jsonResponse({}, 403));
+    });
+    vi.stubGlobal('fetch', fetcher);
+    const view = render(<DashboardPage session={first} onSessionExpired={vi.fn()} onNavigate={vi.fn()} />);
+    expect(await screen.findByText('H-EAST — East Hospital')).toBeInTheDocument();
+    view.rerender(<DashboardPage session={second} onSessionExpired={vi.fn()} onNavigate={vi.fn()} />);
+    expect(screen.queryByText('H-EAST — East Hospital')).not.toBeInTheDocument();
+    expect(screen.getByText('Loading hospital command center…')).toBeInTheDocument();
+    await waitFor(() => expect(resolveSecond).toBeTypeOf('function'));
+    resolveSecond(jsonResponse({ ...HOSPITAL_SUMMARY, hospitalId: WEST_HOSPITAL_ID,
+      hospitalCode: 'H-WEST', hospitalName: 'West Hospital', branches: [NETWORK_SUMMARY.branches[1]] }));
+    expect(await screen.findByText('H-WEST — West Hospital')).toBeInTheDocument();
+  });
   it('mounts the acting hospital capacity section on the dashboard for an organization admin', async () => {
     const session = sessionFor('ADMIN', 'ORGANIZATION', EAST_BRANCH_ID);
     session.actingContext.hospitalId = 'hospital-east';
@@ -235,6 +334,7 @@ describe('DashboardPage', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/dashboard', expect.anything()));
     const networkCalls = fetchMock.mock.calls.filter(([path]) => path === '/api/dashboard/network');
     expect(networkCalls).toHaveLength(0);
+    expect(fetchMock.mock.calls.filter(([path]) => path === '/api/dashboard/hospital')).toHaveLength(0);
     expect(screen.queryByRole('region', { name: 'Network comparison' })).not.toBeInTheDocument();
   });
 

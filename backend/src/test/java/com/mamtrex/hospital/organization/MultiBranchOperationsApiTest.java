@@ -131,7 +131,8 @@ class MultiBranchOperationsApiTest {
             "openAdmissions", "activeEmergencyVisits",
             "bedsAvailable", "bedsOccupied", "bedsMaintenance", "bedsOutOfService",
             "todayAppointments",
-            "invoicesDraft", "invoicesIssued", "invoicesPaid", "invoicesVoid");
+            "invoicesDraft", "invoicesIssued", "invoicesPaid", "invoicesVoid",
+            "bedsReservedForTransfer", "appointmentsScheduled", "activeTransfers");
 
     /** Exact Task 10 typed network-summary key contract, in JSON declaration order. */
     private static final List<String> NETWORK_SUMMARY_KEY_ORDER = List.of(
@@ -141,7 +142,8 @@ class MultiBranchOperationsApiTest {
             "bedsAvailable", "bedsOccupied", "bedsMaintenance", "bedsOutOfService",
             "todayAppointments",
             "invoicesDraft", "invoicesIssued", "invoicesPaid", "invoicesVoid",
-            "branches");
+            "bedsReservedForTransfer", "appointmentsScheduled", "activeTransfers",
+            "branches", "hospitals");
 
     private static final ParameterizedTypeReference<Map<String, Object>> MAP =
             new ParameterizedTypeReference<Map<String, Object>>() {};

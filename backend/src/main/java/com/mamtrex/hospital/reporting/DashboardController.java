@@ -20,15 +20,23 @@ import org.springframework.web.bind.annotation.RestController;
 public class DashboardController {
 
     private final DashboardService dashboardService;
+    private final NetworkOperationsDashboardService networkOperations;
 
-    public DashboardController(DashboardService dashboardService) {
+    public DashboardController(DashboardService dashboardService, NetworkOperationsDashboardService networkOperations) {
         this.dashboardService = dashboardService;
+        this.networkOperations = networkOperations;
     }
 
     /** Typed summary of the acting branch derived from the verified acting context. */
     @GetMapping("/branch")
     public DashboardDtos.BranchSummary branch() {
         return dashboardService.branchSummary();
+    }
+
+    /** Acting hospital only: the selected hospital is revalidated server-side. */
+    @GetMapping("/hospital")
+    public DashboardDtos.HospitalSummary hospital() {
+        return networkOperations.hospitalSummary();
     }
 
     /**
@@ -38,7 +46,7 @@ public class DashboardController {
      */
     @GetMapping("/network")
     public DashboardDtos.NetworkSummary network() {
-        return dashboardService.networkSummary();
+        return networkOperations.networkSummary();
     }
 
     /**

@@ -29,6 +29,16 @@ import java.util.UUID;
  * deterministic code order, including all-zero summaries for branches
  * without records. It is never client aggregation: the server computes and
  * orders everything.</p>
+ *
+ * <p>The added operational counters use fixed, non-clinical semantics:
+ * {@code bedsAvailable} is the legacy raw AVAILABLE bed-state bucket (not
+ * reservation-adjusted); {@code bedsReservedForTransfer} counts ACTIVE
+ * reservations attached to ACCEPTED/IN_TRANSIT transfers with matching
+ * destination hospital/branch/bed ancestry; {@code appointmentsScheduled}
+ * counts scheduled/confirmed rows without a date window; {@code activeTransfers}
+ * counts ACCEPTED/IN_TRANSIT requests attributed to their verified destination
+ * branch, excluding REQUESTED and terminal work. Parents sum returned active
+ * children only. No clinical interpretation follows.</p>
  */
 public final class DashboardDtos {
 
@@ -55,7 +65,21 @@ public final class DashboardDtos {
             long invoicesDraft,
             long invoicesIssued,
             long invoicesPaid,
-            long invoicesVoid) {
+            long invoicesVoid,
+            long bedsReservedForTransfer,
+            long appointmentsScheduled,
+            long activeTransfers) {
+    }
+
+    /** Hospital totals fold only the returned active branch rows; no clinical interpretation. */
+    public record HospitalSummary(
+            UUID hospitalId, String hospitalCode, String hospitalName, String regionLabel,
+            long patients, long appointments, long admissions, long emergencyVisits, long invoices,
+            long openAdmissions, long activeEmergencyVisits,
+            long bedsAvailable, long bedsOccupied, long bedsMaintenance, long bedsOutOfService,
+            long todayAppointments, long invoicesDraft, long invoicesIssued, long invoicesPaid, long invoicesVoid,
+            long bedsReservedForTransfer, long appointmentsScheduled, long activeTransfers,
+            List<BranchSummary> branches) {
     }
 
     /**
@@ -82,6 +106,10 @@ public final class DashboardDtos {
             long invoicesIssued,
             long invoicesPaid,
             long invoicesVoid,
-            List<BranchSummary> branches) {
+            long bedsReservedForTransfer,
+            long appointmentsScheduled,
+            long activeTransfers,
+            List<BranchSummary> branches,
+            List<HospitalSummary> hospitals) {
     }
 }

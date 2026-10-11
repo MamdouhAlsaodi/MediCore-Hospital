@@ -2,8 +2,9 @@ import React, { useEffect, useState } from 'react';
 import { ApiError } from './api.js';
 import { actingContextIdentity, actingContextKey } from './auth.js';
 import HospitalCapacitySummary from './features/dashboard/HospitalCapacitySummary.jsx';
+import HospitalNetworkSummary from './features/dashboard/HospitalNetworkSummary.jsx';
 import { permittedDestinations } from './navigation.js';
-import { fetchBranchSummary, fetchNetworkSummary } from './features/dashboard/dashboardApi.js';
+import { fetchBranchSummary, fetchHospitalSummary, fetchNetworkSummary } from './features/dashboard/dashboardApi.js';
 
 // Human-readable labels for the keys the Task 10 backend contract guarantees
 // (docs/plan3.md §4.7). Response values stay the single source of truth;
@@ -248,7 +249,32 @@ export default function DashboardPage({ session, onSessionExpired, onNavigate })
     && session.actingContext?.scope === 'ORGANIZATION';
   const canSeeHospitalCapacity = ['HOSPITAL', 'ORGANIZATION'].includes(session.actingContext?.scope)
     && Boolean(actingContextIdentity(session)?.resolvedHospitalId);
+  const hospitalId = actingContextIdentity(session)?.resolvedHospitalId;
+  const hospitalRequestKey = canSeeHospitalCapacity ? JSON.stringify([session.token, contextKey]) : null;
+  const [hospital, setHospital] = useState(null);
   const [network, setNetwork] = useState({ contextKey, status: 'loading', loadError: '', summary: null });
+
+  useEffect(() => {
+    if (!hospitalRequestKey) return undefined;
+    let active = true;
+    setHospital({ key: hospitalRequestKey, status: 'loading' });
+    fetchHospitalSummary({ token: session.token, onUnauthorized: onSessionExpired })
+      .then((summary) => {
+        if (!active) return;
+        if (summary.hospitalId !== hospitalId) {
+          setHospital({ key: hospitalRequestKey, status: 'error',
+            loadError: 'The server returned another hospital.' });
+        } else {
+          setHospital({ key: hospitalRequestKey, status: 'ready', summary });
+        }
+      })
+      .catch((error) => {
+        if (!active || (error instanceof ApiError && error.status === 401)) return;
+        setHospital({ key: hospitalRequestKey, status: 'error',
+          loadError: error instanceof ApiError ? error.message : 'The hospital command center could not be loaded.' });
+      });
+    return () => { active = false; };
+  }, [hospitalRequestKey, hospitalId, session.token, onSessionExpired]);
 
   useEffect(() => {
     let active = true;
@@ -300,6 +326,7 @@ export default function DashboardPage({ session, onSessionExpired, onNavigate })
 
   const branchView = branchDisplayState({ contextKey, loaded: branch });
   const networkView = networkDisplayState({ contextKey, enabled: canSeeNetwork, loaded: network });
+  const hospitalView = hospital?.key === hospitalRequestKey ? hospital : null;
   const reachable = new Set(permittedDestinations(session.roles).map((destination) => destination.id));
   const actions = drillDowns(reachable);
 
@@ -314,6 +341,14 @@ export default function DashboardPage({ session, onSessionExpired, onNavigate })
       {branchView.status === 'ready' && (
         <BranchSummary summary={branchView.summary} drillDowns={actions} onNavigate={onNavigate} />
       )}
+      {hospitalRequestKey && !hospitalView && (
+        <p role="status">Loading hospital command center…</p>
+      )}
+      {hospitalView?.status === 'loading' && <p role="status">Loading hospital command center…</p>}
+      {hospitalView?.status === 'error' && (
+        <p className="notice error" aria-live="polite">{hospitalView.loadError}</p>
+      )}
+      {hospitalView?.status === 'ready' && <HospitalNetworkSummary hospital={hospitalView.summary} />}
       {canSeeHospitalCapacity && (
         <HospitalCapacitySummary session={session} onSessionExpired={onSessionExpired} />
       )}
@@ -325,6 +360,7 @@ export default function DashboardPage({ session, onSessionExpired, onNavigate })
         <p className="notice error" aria-live="polite">{networkView.loadError}</p>
       )}
       {networkView.status === 'ready' && <NetworkSummary summary={networkView.summary} />}
+      {networkView.status === 'ready' && <HospitalNetworkSummary network={networkView.summary} />}
     </>
   );
 }

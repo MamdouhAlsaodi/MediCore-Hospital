@@ -90,12 +90,15 @@ export interface AuditEventView {
 
 export interface BranchSummary {
   "activeEmergencyVisits": number;
+  "activeTransfers": number;
   "admissions": number;
   "appointments": number;
+  "appointmentsScheduled": number;
   "bedsAvailable": number;
   "bedsMaintenance": number;
   "bedsOccupied": number;
   "bedsOutOfService": number;
+  "bedsReservedForTransfer": number;
   "branchCode": string;
   "branchId": string;
   "branchName": string;
@@ -183,6 +186,33 @@ export interface HospitalCapacitySummary {
   "hospitalId": string;
 }
 
+export interface HospitalSummary {
+  "activeEmergencyVisits": number;
+  "activeTransfers": number;
+  "admissions": number;
+  "appointments": number;
+  "appointmentsScheduled": number;
+  "bedsAvailable": number;
+  "bedsMaintenance": number;
+  "bedsOccupied": number;
+  "bedsOutOfService": number;
+  "bedsReservedForTransfer": number;
+  "branches": BranchSummary[];
+  "emergencyVisits": number;
+  "hospitalCode": string;
+  "hospitalId": string;
+  "hospitalName": string;
+  "invoices": number;
+  "invoicesDraft": number;
+  "invoicesIssued": number;
+  "invoicesPaid": number;
+  "invoicesVoid": number;
+  "openAdmissions": number;
+  "patients": number;
+  "regionLabel": string;
+  "todayAppointments": number;
+}
+
 export interface HospitalView {
   "active": boolean;
   "branches": BranchView[];
@@ -207,14 +237,18 @@ export interface NetworkHierarchy {
 
 export interface NetworkSummary {
   "activeEmergencyVisits": number;
+  "activeTransfers": number;
   "admissions": number;
   "appointments": number;
+  "appointmentsScheduled": number;
   "bedsAvailable": number;
   "bedsMaintenance": number;
   "bedsOccupied": number;
   "bedsOutOfService": number;
+  "bedsReservedForTransfer": number;
   "branches": BranchSummary[];
   "emergencyVisits": number;
+  "hospitals": HospitalSummary[];
   "invoices": number;
   "invoicesDraft": number;
   "invoicesIssued": number;

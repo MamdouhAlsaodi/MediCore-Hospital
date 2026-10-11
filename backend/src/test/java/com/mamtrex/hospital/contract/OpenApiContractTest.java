@@ -298,6 +298,27 @@ class OpenApiContractTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void servedOperationsDashboardContractAddsHospitalWithoutRemovingNetworkOrBranch() {
+        Map<String, Object> doc = servedDoc();
+        Map<String, Object> paths = (Map<String, Object>) doc.get("paths");
+        assertStatuses(op(paths, "/api/dashboard/hospital", "get"), 200, 401, 403);
+        assertEquals("getActingHospitalDashboard", op(paths, "/api/dashboard/hospital", "get").get("operationId"));
+        assertStatuses(op(paths, "/api/dashboard/network", "get"), 200, 401, 403);
+        assertStatuses(op(paths, "/api/dashboard/branch", "get"), 200, 401);
+        Map<String, Object> schemas = (Map<String, Object>) ((Map<String, Object>) doc.get("components")).get("schemas");
+        for (String name : List.of("BranchSummary", "HospitalSummary", "NetworkSummary")) {
+            Map<String, Object> summary = schema(schemas, name);
+            for (String metric : List.of("bedsReservedForTransfer", "appointmentsScheduled", "activeTransfers")) {
+                assertNotNull(prop(summary, metric), name + "." + metric);
+            }
+        }
+        assertNotNull(prop(schema(schemas, "NetworkSummary"), "hospitals"));
+        assertNotNull(prop(schema(schemas, "NetworkSummary"), "branches"));
+        assertNotNull(prop(schema(schemas, "HospitalSummary"), "branches"));
+    }
+
+    @Test
     void headerParameterMustMatchNameLocationAndRequirednessOnOneParameter() {
         Map<String, Object> operation = Map.of("parameters", List.of(
                 Map.of("name", "Idempotency-Key", "in", "query", "required", true),

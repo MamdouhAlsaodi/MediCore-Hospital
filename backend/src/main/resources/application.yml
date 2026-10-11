@@ -87,6 +87,9 @@ springdoc:
     - /api/dashboard
     - /api/dashboard/branch
     - /api/dashboard/network
+    - /api/capacity/branch
+    - /api/capacity/hospital
+    - /api/capacity/network
     - /api/audit
     - /api/network/hierarchy
     - /api/transfers

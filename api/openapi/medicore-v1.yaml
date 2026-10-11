@@ -1303,6 +1303,78 @@ paths:
                     example: authentication required
                 required:
                 - error
+  /api/capacity/network:
+    get:
+      tags:
+      - facility-capacity-controller
+      operationId: getAuthorizedNetworkCapacity
+      responses:
+        "200":
+          description: Capacity for the authorized network
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/HospitalCapacitySummary"
+        "401":
+          description: Authentication required
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/HospitalCapacitySummary"
+        "403":
+          description: Acting scope denied
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/HospitalCapacitySummary"
+  /api/capacity/hospital:
+    get:
+      tags:
+      - facility-capacity-controller
+      operationId: getActingHospitalCapacity
+      responses:
+        "200":
+          description: Capacity for active authorized branches of the acting hospital
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HospitalCapacitySummary"
+        "401":
+          description: Authentication required
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/HospitalCapacitySummary"
+        "403":
+          description: Acting scope denied
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/HospitalCapacitySummary"
+  /api/capacity/branch:
+    get:
+      tags:
+      - facility-capacity-controller
+      operationId: getActingBranchCapacity
+      responses:
+        "200":
+          description: Capacity for the acting branch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CapacitySummary"
+        "401":
+          description: Authentication required
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/CapacitySummary"
   /api/audit:
     get:
       tags:
@@ -2212,6 +2284,67 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/BranchSummary"
+    CapacitySummary:
+      type: object
+      properties:
+        branchId:
+          type: string
+          format: uuid
+        bedsAvailable:
+          type: integer
+          format: int64
+          minimum: 0
+        bedsReservedForTransfer:
+          type: integer
+          format: int64
+          minimum: 0
+        bedsOccupied:
+          type: integer
+          format: int64
+          minimum: 0
+        appointmentsScheduled:
+          type: integer
+          format: int64
+          minimum: 0
+      required:
+      - appointmentsScheduled
+      - bedsAvailable
+      - bedsOccupied
+      - bedsReservedForTransfer
+      - branchId
+    HospitalCapacitySummary:
+      type: object
+      properties:
+        hospitalId:
+          type: string
+          format: uuid
+        bedsAvailable:
+          type: integer
+          format: int64
+          minimum: 0
+        bedsReservedForTransfer:
+          type: integer
+          format: int64
+          minimum: 0
+        bedsOccupied:
+          type: integer
+          format: int64
+          minimum: 0
+        appointmentsScheduled:
+          type: integer
+          format: int64
+          minimum: 0
+        branches:
+          type: array
+          items:
+            $ref: "#/components/schemas/CapacitySummary"
+      required:
+      - appointmentsScheduled
+      - bedsAvailable
+      - bedsOccupied
+      - bedsReservedForTransfer
+      - branches
+      - hospitalId
     AuditEventView:
       type: object
       properties:

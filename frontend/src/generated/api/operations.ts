@@ -15,11 +15,13 @@ import type {
   AssignBedRequest,
   AuditEventView,
   BranchSummary,
+  CapacitySummary,
   ContextSwitchRequest,
   CreateAdmissionRequest,
   CreateAppointmentRequest,
   CreatePatientRequest,
   CreateTransferRequest,
+  HospitalCapacitySummary,
   LoginRequest,
   NetworkHierarchy,
   NetworkSummary,
@@ -122,6 +124,18 @@ export function dischargeAdmission(id: string, request: UpdateAdmissionStatusReq
 
 export type dischargeAdmissionResponse = AdmissionResponse;
 
+export function getActingBranchCapacity(): HttpRequest {
+  return { method: 'GET', path: "/api/capacity/branch" };
+}
+
+export type getActingBranchCapacityResponse = CapacitySummary;
+
+export function getActingHospitalCapacity(): HttpRequest {
+  return { method: 'GET', path: "/api/capacity/hospital" };
+}
+
+export type getActingHospitalCapacityResponse = HospitalCapacitySummary;
+
 export function getAdmission(id: string): HttpRequest {
   return { method: 'GET', path: `/api/admissions/${encodeURIComponent(id)}` };
 }
@@ -133,6 +147,12 @@ export function getAppointment(id: string): HttpRequest {
 }
 
 export type getAppointmentResponse = AppointmentResponse;
+
+export function getAuthorizedNetworkCapacity(): HttpRequest {
+  return { method: 'GET', path: "/api/capacity/network" };
+}
+
+export type getAuthorizedNetworkCapacityResponse = HospitalCapacitySummary[];
 
 export function getAuthorizedNetworkHierarchy(): HttpRequest {
   return { method: 'GET', path: "/api/network/hierarchy" };

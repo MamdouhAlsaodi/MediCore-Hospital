@@ -160,6 +160,8 @@ class TransferConcurrencyIntegrationTest {
     void concurrentAcceptsOfTheSameBedHaveExactlyOneWinner() throws Exception {
         for (int round = 1; round <= RACE_ITERATIONS; round++) {
             UUID bedId = freshBed(round);
+            long availableBefore = capacityMetric(dstDoctorA, "bedsAvailable");
+            long reservedBefore = capacityMetric(dstDoctorA, "bedsReservedForTransfer");
             final UUID transferA = createTransfer("race-acc-a-" + round);
             final UUID transferB = createTransfer("race-acc-b-" + round);
             final int roundTag = round;
@@ -189,7 +191,21 @@ class TransferConcurrencyIntegrationTest {
                     .filter(e -> Set.of(transferA, transferB).contains(e.getTransferId()))
                     .count();
             assertEquals(1, acceptAudits, "exactly one success audit may exist across both racers");
+            assertEquals(availableBefore - 1, capacityMetric(dstDoctorA, "bedsAvailable"),
+                    "the single ACTIVE reservation removes precisely one available bed");
+            assertEquals(reservedBefore + 1, capacityMetric(dstDoctorA, "bedsReservedForTransfer"),
+                    "the losing accept may not inflate transfer reservation capacity");
         }
+    }
+
+    private long capacityMetric(String token, String metric) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(token);
+        ResponseEntity<Map<String, Object>> response = rest.exchange("/api/capacity/branch", HttpMethod.GET,
+                new HttpEntity<>(headers), MAP);
+        assertEquals(200, response.getStatusCode().value());
+        assertEquals(destBranchId.toString(), response.getBody().get("branchId"));
+        return ((Number) response.getBody().get(metric)).longValue();
     }
 
     /** The same idempotency key racing itself produces ONE mutation and agreeing responses. */

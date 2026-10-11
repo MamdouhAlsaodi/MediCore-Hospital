@@ -74,6 +74,7 @@ export function parseActingSessionPayload(payload) {
   if (!isNonEmptyString(context.assignmentId) || !isNonEmptyString(context.role)
       || !isNonEmptyString(context.scope) || !isNonEmptyString(context.organizationId)
       || !isNonEmptyString(context.branchId)
+      || !isOptionalNonEmptyString(context.hospitalId)
       || !isOptionalNonEmptyString(context.departmentId)) throw malformed();
   const actingAssignment = payload.assignments.find((assignment) => assignment.id === context.assignmentId);
   if (!actingAssignment) throw malformed();
@@ -83,6 +84,8 @@ export function parseActingSessionPayload(payload) {
   if (!payload.roles.includes(context.role)) throw malformed();
   if (actingAssignment.role !== context.role || actingAssignment.scope !== context.scope
       || actingAssignment.organizationId !== context.organizationId
+      || (actingAssignment.scope !== 'ORGANIZATION' && actingAssignment.hospitalId
+        && context.hospitalId && actingAssignment.hospitalId !== context.hospitalId)
       || (actingAssignment.departmentId ?? null) !== (context.departmentId ?? null)
       || fixedBranchMismatch) throw malformed();
 
@@ -97,6 +100,7 @@ export function parseActingSessionPayload(payload) {
       role: context.role,
       scope: context.scope,
       organizationId: context.organizationId,
+      ...(context.hospitalId === undefined ? {} : { hospitalId: context.hospitalId }),
       branchId: context.branchId,
       departmentId: context.departmentId ?? null,
     },

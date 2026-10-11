@@ -135,6 +135,8 @@ class PostgresConcurrencyIntegrationTest {
             final int roundNo = round;
             UUID patientId = createPatient("RACE-A" + round);
             UUID bedId = createBed("R", String.valueOf(100 + round));
+            long availableBefore = capacityMetric("bedsAvailable");
+            long occupiedBefore = capacityMetric("bedsOccupied");
             long auditsBefore = auditEvents.count();
             long assignmentsBefore = bedAssignments.count();
 
@@ -161,16 +163,20 @@ class PostgresConcurrencyIntegrationTest {
                     "round " + roundNo + ": exactly one live assignment row may persist");
             assertEquals(auditsBefore + 1, auditEvents.count(),
                     "round " + roundNo + ": exactly one success audit event (no false winner event)");
+            assertEquals(availableBefore - 1, capacityMetric("bedsAvailable"));
+            assertEquals(occupiedBefore + 1, capacityMetric("bedsOccupied"));
         }
     }
 
     /** Overlapping appointment create race: one winner, one typed 409, no partial state. */
     @Test
     void concurrentOverlappingAppointmentCreatesHaveExactlyOneWinner() throws Exception {
+        long appointmentsBefore = appointments.count();
         for (int round = 1; round <= RACE_ITERATIONS; round++) {
             final int roundNo = round;
             UUID patientId = createPatient("RACE-P" + round);
             UUID professionalId = createProfessionalWithAvailability("RACE-PRO" + round);
+            long scheduledBefore = capacityMetric("appointmentsScheduled");
             long auditsBefore = auditEvents.count();
 
             AtomicInteger winner = new AtomicInteger();
@@ -186,9 +192,32 @@ class PostgresConcurrencyIntegrationTest {
             assertEquals(1, conflict.get(), "round " + roundNo + ": the loser must receive the typed 409");
             assertEquals(auditsBefore + 1, auditEvents.count(),
                     "round " + roundNo + ": exactly one success audit event");
-            assertEquals(round, appointments.count(),
+            assertEquals(appointmentsBefore + round, appointments.count(),
                     "round " + roundNo + ": no partial or duplicate appointment rows persist");
+            assertEquals(scheduledBefore + 1, capacityMetric("appointmentsScheduled"));
         }
+    }
+
+    @Test
+    void adjacentHalfOpenAppointmentsAreNotConflictsOnPostgres() {
+        UUID patientId = createPatient("RACE-ADJ");
+        UUID professionalId = createProfessionalWithAvailability("RACE-ADJ-PRO");
+        long before = capacityMetric("appointmentsScheduled");
+        assertEquals(200, post("/api/appointments", appointmentPayload(patientId, professionalId, "10:00"))
+                .getStatusCode().value());
+        assertEquals(200, post("/api/appointments", appointmentPayload(patientId, professionalId, "10:30"))
+                .getStatusCode().value());
+        assertEquals(before + 2, capacityMetric("appointmentsScheduled"));
+    }
+
+    private long capacityMetric(String key) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(token);
+        ResponseEntity<Map<String, Object>> response = rest.exchange("/api/capacity/branch", HttpMethod.GET,
+                new HttpEntity<>(headers), MAP);
+        assertEquals(200, response.getStatusCode().value());
+        assertEquals(branchId.toString(), response.getBody().get("branchId"));
+        return ((Number) response.getBody().get(key)).longValue();
     }
 
     // --------------------------------------------------------- helpers

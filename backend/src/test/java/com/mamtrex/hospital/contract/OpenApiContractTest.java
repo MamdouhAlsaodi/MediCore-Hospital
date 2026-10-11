@@ -318,6 +318,39 @@ class OpenApiContractTest {
     // ------------------------------------------------------------------
 
     @Test
+    @SuppressWarnings("unchecked")
+    void servedCapacityContractHasThreeScopedReadsAndFiveRequiredMetrics() {
+        Map<String, Object> doc = servedDoc();
+        Map<String, Object> paths = (Map<String, Object>) doc.get("paths");
+        assertStatuses(op(paths, "/api/capacity/branch", "get"), 200, 401);
+        assertStatuses(op(paths, "/api/capacity/hospital", "get"), 200, 401, 403);
+        assertStatuses(op(paths, "/api/capacity/network", "get"), 200, 401, 403);
+        Map<String, Object> schemas = (Map<String, Object>) ((Map<String, Object>) doc.get("components")).get("schemas");
+        assertRequired(schema(schemas, "CapacitySummary"), "branchId", "bedsAvailable",
+                "bedsReservedForTransfer", "bedsOccupied", "appointmentsScheduled");
+        assertRequired(schema(schemas, "HospitalCapacitySummary"), "hospitalId", "bedsAvailable",
+                "bedsReservedForTransfer", "bedsOccupied", "appointmentsScheduled", "branches");
+        for (String name : List.of("CapacitySummary", "HospitalCapacitySummary")) {
+            for (String metric : List.of("bedsAvailable", "bedsReservedForTransfer", "bedsOccupied", "appointmentsScheduled")) {
+                Map<String, Object> property = prop(schema(schemas, name), metric);
+                assertNotNull(property.get("minimum"), name + "." + metric + " must have minimum 0");
+                assertEquals(0, ((Number) property.get("minimum")).intValue(), name + "." + metric);
+            }
+        }
+        assertEquals("getActingBranchCapacity", op(paths, "/api/capacity/branch", "get").get("operationId"));
+        assertEquals("getActingHospitalCapacity", op(paths, "/api/capacity/hospital", "get").get("operationId"));
+        assertEquals("getAuthorizedNetworkCapacity", op(paths, "/api/capacity/network", "get").get("operationId"));
+        Map<String, Object> networkResponse = (Map<String, Object>) ((Map<String, Object>)
+                op(paths, "/api/capacity/network", "get").get("responses")).get("200");
+        Map<String, Object> content = (Map<String, Object>) networkResponse.get("content");
+        Map<String, Object> responseSchema = (Map<String, Object>)
+                ((Map<String, Object>) content.get("application/json")).get("schema");
+        assertEquals("array", responseSchema.get("type"), "network capacity must return an array");
+        assertTrue(String.valueOf(((Map<String, Object>) responseSchema.get("items")).get("$ref"))
+                .endsWith("/HospitalCapacitySummary"));
+    }
+
+    @Test
     void trackedArtifactMatchesTheServedContractByteForByte() throws Exception {
         byte[] served = fetchServedDocBytes();
         assertTrue(Files.exists(ARTIFACT),

@@ -175,7 +175,7 @@ public class SecurityConfig {
                             .hasAnyRole("ADMIN", "STAFF")
                         .requestMatchers("/api/documents/**")
                             .hasAnyRole("ADMIN", "DOCTOR", "NURSE", "STAFF")
-                        .requestMatchers("/api/notifications/**", "/api/dashboard/**").authenticated()
+                        .requestMatchers("/api/notifications/**", "/api/dashboard/**", "/api/capacity/**").authenticated()
                         .requestMatchers("/api/**").hasRole("ADMIN")
                         .anyRequest().authenticated())
                 .exceptionHandling(e -> e

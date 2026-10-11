@@ -164,7 +164,8 @@ public class OpenApiConfig {
         Map<String, Boolean> skip403 = Map.of(
                 "/api/auth/login:post", true,
                 "/api/dashboard:get", true,
-                "/api/dashboard/branch:get", true);
+                "/api/dashboard/branch:get", true,
+                "/api/capacity/branch:get", true);
 
         return openApi -> {
             Optional.ofNullable(openApi.getPaths()).ifPresent(paths -> paths.forEach((path, pathItem) -> {

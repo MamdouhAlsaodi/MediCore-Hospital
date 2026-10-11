@@ -300,6 +300,12 @@ function fullSession(role, extraAssignments = []) {
 function stubBackendApi(state = {}) {
   return vi.fn((path, options = {}) => {
     if (path === '/api/dashboard') return Promise.resolve(jsonResponse(DASHBOARD_STATS));
+    if (path === '/api/capacity/hospital') return Promise.resolve(jsonResponse({
+      hospitalId: HOSPITAL_ID, bedsAvailable: 2, bedsReservedForTransfer: 0,
+      bedsOccupied: 1, appointmentsScheduled: 3,
+      branches: [{ branchId: EAST_BRANCH_ID, bedsAvailable: 2,
+        bedsReservedForTransfer: 0, bedsOccupied: 1, appointmentsScheduled: 3 }],
+    }));
     if (path === '/api/patients') return Promise.resolve(jsonResponse(PATIENTS_PAGE));
     if (path === '/api/appointments') return Promise.resolve(jsonResponse(APPOINTMENTS_PAGE));
     if (path === '/api/admissions') return Promise.resolve(jsonResponse(ADMISSIONS_PAGE));

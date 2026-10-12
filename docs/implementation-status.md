@@ -1,6 +1,6 @@
 # Implementation Status
 
-MediCore is an educational, non-clinical training project — not certified medical software. This page states truthfully what the code does, what it does not do, and where the evidence lives (`docs/traceability.md`). Since Phase 3 it demonstrates **one synthetic organization with three synthetic branches**; that is a Training/Portfolio scope boundary, not SaaS multi-tenancy.
+MediCore is an educational, non-clinical training project — not certified medical software. This page preserves phase-by-phase evidence (`docs/traceability.md` and `docs/evidence/phase5-verification.md`). Phase 3 demonstrated **one synthetic organization with three branches**; Phase 5 extended that same organization into **multiple synthetic hospitals and branches**, not SaaS multi-tenancy. Read each historical stop gate in its own phase context; the newest status is at the end.
 
 ## Task status — docs/plan3.md roadmap (Tasks 1–15, multi-branch operations)
 
@@ -82,7 +82,9 @@ All gates were run from this clean checkout (baseline `e7c63a0`) on one workstat
 - **Time zones.** Contracts use ISO timestamps and server UTC; branch-local time zones and DST policy need a later owner decision.
 - One intermittent timeout in a frontend edit-view test was observed once during the Task 12 era (sandbox load flakiness); it did not recur in subsequent gate runs, including this revision's.
 
-## Explicitly NOT done
+## Historical Phase 3 exclusions (some addressed later by Phases 4–5)
+
+These bullets describe the Phase 3 stop gate **at that time**, not the current feature inventory. Phase 4 subsequently added synthetic threat-model, PostgreSQL/backup, container and observability rehearsals; the remaining real-data/clinical/production boundaries still apply. See the Phase 4 and Phase 5 sections below.
 
 - **Pilot and everything it gates:** no real hospital data, no jurisdiction/privacy review, no threat model, no backup/restore rehearsal, no observability or incident-response setup.
 - **PostgreSQL migration rehearsal and restore evidence** — the profile exists; the Pilot-phase evidence does not.
@@ -138,7 +140,7 @@ Phase 4 closes with the terminal canonical acceptance run and the FR-001..020 / 
 
 # Phase 5 — enterprise hospital network operations (accepted locally; synthetic only)
 
-**Verdict: canonical local PASS, limited to the synthetic Training/Portfolio scope.** The fresh run recorded in `docs/evidence/phase5-verification.md` completed all 15 acceptance checkpoints and exited 0. The planning-time `NOT RUN` table in `specs/005-enterprise-hospital-network-operations/traceability.md` and the earlier pre-canonical `PARTIAL` checkpoint in the evidence file are retained as historical snapshots; current per-ID mapping is in that traceability file.
+**Verdict: canonical local PASS, limited to the synthetic Training/Portfolio scope.** The fresh run recorded in `docs/evidence/phase5-verification.md` completed all 15 acceptance checkpoints and exited 0. The implementation was subsequently merged into `main` via PR #48; that merge does not authorize deployment or real-data use. The planning-time `NOT RUN` table in `specs/005-enterprise-hospital-network-operations/traceability.md` and the earlier pre-canonical `PARTIAL` checkpoint in the evidence file are retained as historical snapshots; current per-ID mapping is in that traceability file.
 
 ## Fresh canonical verification
 
@@ -154,4 +156,4 @@ The full FR-001..035 and SC-001..014 mapping identifies concrete source/test cov
 
 ## Limits and stop gate
 
-All evidence is local, synthetic, and non-clinical. It does not demonstrate production readiness, clinical safety/use, real-data migration, regulatory or security certification, SaaS tenancy, distributed concurrency, production capacity, or SLA/SLO performance. Three mobile duplicate E2E cases were intentionally skipped. No deployment, release, pilot, or real-data use is authorized. No commit or push was performed.
+The full Phase 5 acceptance evidence is local, synthetic, and non-clinical. PR #48 additionally passed a narrower GitHub PostgreSQL suite (52 tests) and OpenAPI drift check on its exact head; it did not run the full local browser/frontend/acceptance gate in CI. Neither proves production readiness, clinical safety/use, real-data migration, regulatory or security certification, SaaS tenancy, distributed concurrency, production capacity, or SLA/SLO performance. Three mobile duplicate E2E cases were intentionally skipped. No deployment, release, pilot, or real-data use is authorized.

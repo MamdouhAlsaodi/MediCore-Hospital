@@ -10,9 +10,9 @@ import {
 
 // Phase 4 container E2E — tagged context-switch discrimination (T081).
 //
-// After switching the acting context from Demo Main Branch to Demo North
-// Branch, no stale main-branch rows may paint: the server issues a
-// replacement context-bound token and every subsequent read is re-scoped.
+// After switching between branches of the same hospital, patient grants
+// remain hospital-wide while beds remain branch-owned. Then switching to an
+// unrelated hospital must remove every previously authorized patient row.
 // The screen is intentionally re-visited twice (immediately, and after a
 // full reload) so both the in-memory SPA state and any persisted client
 // state are discriminated.
@@ -62,8 +62,8 @@ test('context-switch discrimination leaves no stale branch rows @context', async
   await selectBranchByLabel(page, 'Demo North Branch');
   await expect(page.locator('.whoami-context')).toHaveText(NORTH_BRANCH_LINE);
 
-  // No stale main-branch rows may paint on the north-scoped patients screen —
-  // checked immediately after the switch.
+  // V6 patient visibility is hospital-wide: the main patient is still
+  // authorized in the north sibling branch, not a stale-context leak.
   await page
     .getByRole('navigation', { name: 'Screens permitted for your roles' })
     .getByRole('button', { name: 'Patients' })
@@ -71,12 +71,11 @@ test('context-switch discrimination leaves no stale branch rows @context', async
   const northPatients = page.getByRole('list', { name: 'Patient results' });
   await expect(northPatients).toBeVisible();
   await expect(northPatients).toContainText('Demo Patient Delta');
-  await expect(northPatients).not.toContainText('Demo Patient Alpha');
-  await expect(northPatients).not.toContainText(mainMarker);
-  await expect(northPatients).not.toContainText(`E2E-CTX-${tag}`);
+  await expect(northPatients).toContainText('Demo Patient Alpha');
+  await expect(northPatients).toContainText(mainMarker);
+  await expect(northPatients).toContainText(`E2E-CTX-${tag}`);
 
-  // …and again after a full reload: no persisted client state may resurrect
-  // main-branch rows under the north-scoped token.
+  // …and again after a full reload: valid same-hospital access persists.
   await page.reload();
   await expect(page.locator('.whoami-context')).toHaveText(NORTH_BRANCH_LINE);
   await page
@@ -86,8 +85,8 @@ test('context-switch discrimination leaves no stale branch rows @context', async
   const northPatientsReloaded = page.getByRole('list', { name: 'Patient results' });
   await expect(northPatientsReloaded).toBeVisible();
   await expect(northPatientsReloaded).toContainText('Demo Patient Delta');
-  await expect(northPatientsReloaded).not.toContainText('Demo Patient Alpha');
-  await expect(northPatientsReloaded).not.toContainText(mainMarker);
+  await expect(northPatientsReloaded).toContainText('Demo Patient Alpha');
+  await expect(northPatientsReloaded).toContainText(mainMarker);
 
   // Beds discriminate the same way, both directions.
   await page
@@ -99,13 +98,26 @@ test('context-switch discrimination leaves no stale branch rows @context', async
   await expect(northBeds).toContainText('Demo Ward N');
   await expect(northBeds).not.toContainText('Demo Ward A');
 
-  // A direct deep-link to a main-branch-only search term finds nothing.
+  // The same-hospital search finds the patient through the ACTIVE grant.
   await page
     .getByRole('navigation', { name: 'Screens permitted for your roles' })
     .getByRole('button', { name: 'Patients' })
     .click();
   await page.getByRole('searchbox', { name: 'Search patients' }).fill('Demo Patient Alpha');
   await page.getByRole('button', { name: 'Search' }).click();
+  await expect(page.getByRole('list', { name: 'Patient results' })).toContainText('Demo Patient Alpha');
+
+  // Now cross the real security boundary: Harborview has no grant to any
+  // legacy-hospital patient. Neither immediate state nor reload may leak it.
+  await selectBranchByLabel(page, 'Demo Harborview Pier Branch');
+  await expect(page.locator('.whoami-context')).toContainText('Demo Harborview Hospital');
+  await page.getByRole('navigation', { name: 'Screens permitted for your roles' })
+    .getByRole('button', { name: 'Patients' }).click();
+  await expect(page.getByRole('heading', { name: 'No patients found' })).toBeVisible();
+  await page.reload();
+  await expect(page.locator('.whoami-context')).toContainText('Demo Harborview Hospital');
+  await page.getByRole('navigation', { name: 'Screens permitted for your roles' })
+    .getByRole('button', { name: 'Patients' }).click();
   await expect(page.getByRole('heading', { name: 'No patients found' })).toBeVisible();
 
   guard.finish('context discrimination');

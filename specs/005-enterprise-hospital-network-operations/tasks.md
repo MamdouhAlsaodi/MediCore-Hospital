@@ -2,7 +2,7 @@
 
 **Input:** `spec.md`, `clarifications.md`, `research.md`, `data-model.md`, `plan.md`, `quickstart.md`, `contracts/phase5-api.yaml`
 
-**Authorization:** Planning artifact only. Every checkbox remains unchecked. Do not execute, delegate, install, migrate, commit, push, open a PR, merge, deploy, or release without a later explicit owner instruction.
+**Authorization:** Original planning-only restriction was superseded by the owner-authorized implementation. The verified local synthetic acceptance does not authorize commit, push, PR, merge, deployment, release, pilot, or real-data use without a separate owner instruction.
 
 **Tests:** Required. Every behavior task follows RED → GREEN → REFACTOR. PostgreSQL-real evidence is mandatory for migrations, constraints, locking, races, reservations, and idempotency.
 
@@ -107,22 +107,22 @@
 
 **Independent test:** A creates, B cannot discover, transfer grant enables B, C remains unable, duplicate race yields one row.
 
-- [ ] T062 [P] [US3] Add RED patient identity/access entity tests in `backend/src/test/java/com/mamtrex/hospital/patient/NetworkPatientIdentityApiTest.java`
-- [ ] T063 [P] [US3] Add RED Phase 4 patient backfill/malformed-owner migration tests in `backend/src/test/java/com/mamtrex/hospital/infrastructure/Phase5MigrationIntegrationTest.java`
-- [ ] T064 [US3] Add patient network ownership and access table/backfill/constraints in `backend/src/main/resources/db/migration/V6__network_patient_identity.sql`
-- [ ] T065 [US3] Modify `Patient` from branch authority to organization/network authority in `backend/src/main/java/com/mamtrex/hospital/patient/Patient.java`
-- [ ] T066 [US3] Create `PatientHospitalAccess` exactly per `data-model.md` in `backend/src/main/java/com/mamtrex/hospital/patient/PatientHospitalAccess.java`
-- [ ] T067 [US3] Create scoped access queries in `backend/src/main/java/com/mamtrex/hospital/patient/PatientHospitalAccessRepository.java`
-- [ ] T068 [US3] Replace patient repository branch filters with network identity plus hospital-access joins in `backend/src/main/java/com/mamtrex/hospital/patient/PatientRepository.java`
-- [ ] T069 [US3] Modify patient create to derive organization/hospital and create one local registration grant atomically in `backend/src/main/java/com/mamtrex/hospital/patient/PatientService.java`
-- [ ] T070 [US3] Modify patient search/read/update to require active hospital access in `backend/src/main/java/com/mamtrex/hospital/patient/PatientService.java`
-- [ ] T071 [US3] Add generic foreign hospital not-found/refusal behavior in `backend/src/main/java/com/mamtrex/hospital/patient/PatientController.java`
-- [ ] T072 [US3] Add real PostgreSQL duplicate MRN/access-grant races in `backend/src/test/java/com/mamtrex/hospital/infrastructure/NetworkPatientConcurrencyIntegrationTest.java`
-- [ ] T073 [US3] Update admission/appointment/emergency/invoice patient lookups to validate hospital access in their existing service classes under `backend/src/main/java/com/mamtrex/hospital/`
-- [ ] T074 [US3] Add cross-hospital regression matrix for dependent workflows in `backend/src/test/java/com/mamtrex/hospital/operations/CareOperationsApiTest.java`
-- [ ] T075 [US3] Update patient contract tests/OpenAPI/generated client in `backend/src/test/java/com/mamtrex/hospital/contract/OpenApiContractTest.java` and generated paths
-- [ ] T076 [P] [US3] Add frontend patient invisibility/access tests in `frontend/src/features/patients/PatientsPage.test.jsx`
-- [ ] T077 [US3] Run migration, patient concurrency, dependent workflow, and full backend gates from `backend/pom.xml`, then OpenAPI/frontend gates from `scripts/phase4/check-openapi-drift.sh` and `frontend/package.json`
+- [x] T062 [P] [US3] Add RED patient identity/access entity tests in `backend/src/test/java/com/mamtrex/hospital/patient/NetworkPatientIdentityApiTest.java`
+- [x] T063 [P] [US3] Add RED Phase 4 patient backfill/malformed-owner migration tests in `backend/src/test/java/com/mamtrex/hospital/infrastructure/Phase5MigrationIntegrationTest.java`
+- [x] T064 [US3] Add patient network ownership and access table/backfill/constraints in `backend/src/main/resources/db/migration/V6__network_patient_identity.sql`
+- [x] T065 [US3] Modify `Patient` from branch authority to organization/network authority in `backend/src/main/java/com/mamtrex/hospital/patient/Patient.java`
+- [x] T066 [US3] Create `PatientHospitalAccess` exactly per `data-model.md` in `backend/src/main/java/com/mamtrex/hospital/patient/PatientHospitalAccess.java`
+- [x] T067 [US3] Create scoped access queries in `backend/src/main/java/com/mamtrex/hospital/patient/PatientHospitalAccessRepository.java`
+- [x] T068 [US3] Replace patient repository branch filters with network identity plus hospital-access joins in `backend/src/main/java/com/mamtrex/hospital/patient/PatientRepository.java`
+- [x] T069 [US3] Modify patient create to derive organization/hospital and create one local registration grant atomically in `backend/src/main/java/com/mamtrex/hospital/patient/PatientService.java`
+- [x] T070 [US3] Modify patient search/read/update to require active hospital access in `backend/src/main/java/com/mamtrex/hospital/patient/PatientService.java`
+- [x] T071 [US3] Add generic foreign hospital not-found/refusal behavior in `backend/src/main/java/com/mamtrex/hospital/patient/PatientController.java`
+- [x] T072 [US3] Add real PostgreSQL duplicate MRN/access-grant races in `backend/src/test/java/com/mamtrex/hospital/infrastructure/NetworkPatientConcurrencyIntegrationTest.java`
+- [x] T073 [US3] Update admission/appointment/emergency/invoice patient lookups to validate hospital access in their existing service classes under `backend/src/main/java/com/mamtrex/hospital/`
+- [x] T074 [US3] Add cross-hospital regression matrix for dependent workflows in `backend/src/test/java/com/mamtrex/hospital/operations/CareOperationsApiTest.java`
+- [x] T075 [US3] Update patient contract tests/OpenAPI/generated client in `backend/src/test/java/com/mamtrex/hospital/contract/OpenApiContractTest.java` and generated paths
+- [x] T076 [P] [US3] Add frontend patient invisibility/access tests in `frontend/src/features/patients/PatientsPage.test.jsx`
+- [x] T077 [US3] Run migration, patient concurrency, dependent workflow, and full backend gates from `backend/pom.xml`, then OpenAPI/frontend gates from `scripts/phase4/check-openapi-drift.sh` and `frontend/package.json`
 
 **Checkpoint:** US3 proves one identity without cross-hospital discoverability.
 
@@ -229,43 +229,43 @@
 
 **Independent test:** Clean disposable stack executes all Phase 5 scenarios and cleans up fully.
 
-- [ ] T139 [P] [US8] Add transfer navigation authorization tests in `frontend/src/navigation.test.js`
-- [ ] T140 [US8] Add transfer destination metadata in `frontend/src/navigation.js` and route it in `frontend/src/AppShell.jsx`
-- [ ] T141 [P] [US8] Add RED transfer adapter contract tests in `frontend/src/features/transfers/transferApi.test.js`
-- [ ] T142 [US8] Implement generated-client-derived transfer adapter in `frontend/src/features/transfers/transferApi.js`
-- [ ] T143 [P] [US8] Add RED create/list/detail/transition UI tests in `frontend/src/features/transfers/TransfersPage.test.jsx`
-- [ ] T144 [US8] Implement accessible transfer request form in `frontend/src/features/transfers/TransferForm.jsx`
-- [ ] T145 [US8] Implement scoped transfer list/loading/error/empty/conflict states in `frontend/src/features/transfers/TransfersPage.jsx`
-- [ ] T146 [US8] Implement detail and permitted transition controls in `frontend/src/features/transfers/TransferDetail.jsx`
-- [ ] T147 [US8] Add mobile-responsive transfer/context/dashboard styling in `frontend/src/style.css`
-- [ ] T148 [P] [US8] Add desktop/mobile full journey in `e2e/phase5-network-journey.spec.js`
-- [ ] T149 [P] [US8] Add stale-context response discrimination journey in `e2e/phase5-context-discrimination.spec.js`
-- [ ] T150 [P] [US8] Add exact conflict/idempotency browser assertions in `e2e/phase5-transfer-concurrency.spec.js`
-- [ ] T151 [US8] Create clean Compose lifecycle/port ownership/credential export harness in `scripts/phase5/container-network-journey.sh`
-- [ ] T152 [US8] Run desktop/mobile browser journey through `scripts/phase5/container-network-journey.sh` with exact expected non-2xx counts and no persistent media artifacts
-- [ ] T153 [US8] Restart backend and prove migration idempotency plus durable synthetic transfer state in `scripts/phase5/container-network-journey.sh`
-- [ ] T154 [US8] Stop/restart PostgreSQL and prove truthful readiness/liveness plus same-process recovery in `scripts/phase5/container-network-journey.sh`
+- [x] T139 [P] [US8] Add transfer navigation authorization tests in `frontend/src/navigation.test.js`
+- [x] T140 [US8] Add transfer destination metadata in `frontend/src/navigation.js` and route it in `frontend/src/AppShell.jsx`
+- [x] T141 [P] [US8] Add RED transfer adapter contract tests in `frontend/src/features/transfers/transferApi.test.js`
+- [x] T142 [US8] Implement generated-client-derived transfer adapter in `frontend/src/features/transfers/transferApi.js`
+- [x] T143 [P] [US8] Add RED create/list/detail/transition UI tests in `frontend/src/features/transfers/TransfersPage.test.jsx`
+- [x] T144 [US8] Implement accessible transfer request form in `frontend/src/features/transfers/TransferForm.jsx`
+- [x] T145 [US8] Implement scoped transfer list/loading/error/empty/conflict states in `frontend/src/features/transfers/TransfersPage.jsx`
+- [x] T146 [US8] Implement detail and permitted transition controls in `frontend/src/features/transfers/TransferDetail.jsx`
+- [x] T147 [US8] Add mobile-responsive transfer/context/dashboard styling in `frontend/src/style.css`
+- [x] T148 [P] [US8] Add desktop/mobile full journey in `e2e/phase5-network-journey.spec.js`
+- [x] T149 [P] [US8] Add stale-context response discrimination journey in `e2e/phase5-context-discrimination.spec.js`
+- [x] T150 [P] [US8] Add exact conflict/idempotency browser assertions in `e2e/phase5-transfer-concurrency.spec.js`
+- [x] T151 [US8] Create clean Compose lifecycle/port ownership/credential export harness in `scripts/phase5/container-network-journey.sh`
+- [x] T152 [US8] Run desktop/mobile browser journey through `scripts/phase5/container-network-journey.sh` with exact expected non-2xx counts and no persistent media artifacts
+- [x] T153 [US8] Restart backend and prove migration idempotency plus durable synthetic transfer state in `scripts/phase5/container-network-journey.sh`
+- [x] T154 [US8] Stop/restart PostgreSQL and prove truthful readiness/liveness plus same-process recovery in `scripts/phase5/container-network-journey.sh`
 
 **Checkpoint:** US8 proves the complete portfolio journey from clean disposable state.
 
 ## Phase 11 — Polish, canonical acceptance, traceability, and formal stop
 
-- [ ] T155 Create guarded Phase 4-shaped PostgreSQL rehearsal in `scripts/phase5/migrate-phase4-shaped-postgres.sh`
-- [ ] T156 Create repeatable transfer race harness with no sleeps/suppression in `scripts/phase5/test-transfer-concurrency.sh`
-- [ ] T157 Create fail-fast canonical  Phase 5 acceptance stages in `scripts/phase5/acceptance.sh`
-- [ ] T158 Add capability-negative proof so missing Docker/PostgreSQL/JDK/Node exits `2 BLOCKED` in `scripts/phase5/acceptance.sh`
-- [ ] T159 Add cleanup proof for all Phase 5 containers/networks/volumes/databases/temp evidence in `scripts/phase5/acceptance.sh`
-- [ ] T160 Run public-artifact scan against exact tracked/untracked candidate paths with `scripts/phase5/check-public-artifacts.sh`
-- [ ] T161 [P] Update architecture/hierarchy/transfer boundaries in `docs/pdr.md` by additive Phase 5 section only
-- [ ] T162 [P] Update local review and migration instructions in `docs/runbook.md`
-- [ ] T163 [P] Update implementation truth and known limits in `docs/implementation-status.md`
-- [ ] T164 [P] Add Phase 5 architecture diagram and data-flow explanation in `docs/architecture/phase5-enterprise-network.md`
-- [ ] T165 [P] Add Phase 5 threat model for hierarchy, patient grants, transfer races, and idempotency in `docs/security/threat-model-phase5.md`
-- [ ] T166 Complete FR-001..035 and SC-001..014 mapping in `specs/005-enterprise-hospital-network-operations/traceability.md` and `docs/evidence/phase5-verification.md`
-- [ ] T167 Run `git diff --check`, changed-path allowlist, generated/runtime artifact rejection, and secret/claim scan before any publication decision
-- [ ] T168 Run `scripts/phase5/acceptance.sh` fresh and record every stage, exit code, exact test totals, and cleanup result
-- [ ] T169 Re-read every acceptance criterion against fresh evidence and assign terminal `PASS | PARTIAL | BLOCKED` in ignored `artifacts/phase5/execution-report.md`
-- [ ] T170 Finalize the honest terminal verdict in ignored `artifacts/phase5/execution-report.md` and stop with the worktree intact; do not commit, push, open PR, merge, deploy, release, or announce readiness without separate owner authorization
+- [x] T155 Create guarded Phase 4-shaped PostgreSQL rehearsal in `scripts/phase5/migrate-phase4-shaped-postgres.sh`
+- [x] T156 Create repeatable transfer race harness with no sleeps/suppression in `scripts/phase5/test-transfer-concurrency.sh`
+- [x] T157 Create fail-fast canonical  Phase 5 acceptance stages in `scripts/phase5/acceptance.sh`
+- [x] T158 Add capability-negative proof so missing Docker/PostgreSQL/JDK/Node exits `2 BLOCKED` in `scripts/phase5/acceptance.sh`
+- [x] T159 Add cleanup proof for all Phase 5 containers/networks/volumes/databases/temp evidence in `scripts/phase5/acceptance.sh`
+- [x] T160 Run public-artifact scan against exact tracked/untracked candidate paths with `scripts/phase5/check-public-artifacts.sh`
+- [x] T161 [P] Update architecture/hierarchy/transfer boundaries in `docs/pdr.md` by additive Phase 5 section only
+- [x] T162 [P] Update local review and migration instructions in `docs/runbook.md`
+- [x] T163 [P] Update implementation truth and known limits in `docs/implementation-status.md`
+- [x] T164 [P] Add Phase 5 architecture diagram and data-flow explanation in `docs/architecture/phase5-enterprise-network.md`
+- [x] T165 [P] Add Phase 5 threat model for hierarchy, patient grants, transfer races, and idempotency in `docs/security/threat-model-phase5.md`
+- [x] T166 Complete FR-001..035 and SC-001..014 mapping in `specs/005-enterprise-hospital-network-operations/traceability.md` and `docs/evidence/phase5-verification.md`
+- [x] T167 Run `git diff --check`, changed-path allowlist, generated/runtime artifact rejection, and secret/claim scan before any publication decision
+- [x] T168 Run `scripts/phase5/acceptance.sh` fresh and record every stage, exit code, exact test totals, and cleanup result
+- [x] T169 Re-read every acceptance criterion against fresh evidence and assign terminal `PASS | PARTIAL | BLOCKED` in ignored `artifacts/phase5/execution-report.md`
+- [x] T170 Finalize the honest terminal verdict in ignored `artifacts/phase5/execution-report.md` and stop with the worktree intact; do not commit, push, open PR, merge, deploy, release, or announce readiness without separate owner authorization
 
 ## Dependencies and execution order
 

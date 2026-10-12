@@ -33,7 +33,7 @@ versions="$(Q -c "select version || '|' || success::text from flyway_schema_hist
 count_of() { Q -c "select count(*) from $1"; }
 for t in branches departments patients staff_members beds appointments admissions \
          emergency_visits invoices staff_availability audit_events acting_assignments \
-         user_accounts hospital_organizations admission_bed_assignments; do
+         user_accounts hospital_organizations hospitals patient_hospital_access admission_bed_assignments; do
   echo "count $t = $(count_of "$t")"
 done
 

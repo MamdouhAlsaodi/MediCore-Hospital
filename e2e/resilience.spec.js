@@ -77,7 +77,12 @@ test('backend restart preserves synthetic state with zero pending migrations @re
   // Preserved synthetic state: the pre-restart patient survives the restart
   // on an exact 200, with identical durable fields.
   const northSession = await switchContextToBranch(request, session, 'DEMO-BR-002');
-  await apiGet(request, northSession, `/api/patients/${createdBody.id}`, 404);
+  // V6 makes visibility hospital-grant based: a sibling branch in the same
+  // hospital can read the same patient; an unrelated hospital still gets the
+  // generic 404. This is stronger than the retired branch-only assumption.
+  await apiGet(request, northSession, `/api/patients/${createdBody.id}`, 200);
+  const foreignSession = await switchContextToBranch(request, session, 'DEMO-BR-2201');
+  await apiGet(request, foreignSession, `/api/patients/${createdBody.id}`, 404);
   const reread = await apiGet(request, session, `/api/patients/${createdBody.id}`, 200);
   const rereadBody = await reread.json();
   expect(rereadBody.medicalRecordNumber, 'synthetic MRN must survive the restart').toBe(mrn);

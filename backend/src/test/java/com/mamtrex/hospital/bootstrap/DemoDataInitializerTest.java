@@ -29,6 +29,10 @@ import com.mamtrex.hospital.organization.HospitalFacilityRepository;
 import com.mamtrex.hospital.organization.HospitalOrganization;
 import com.mamtrex.hospital.organization.HospitalOrganizationRepository;
 import com.mamtrex.hospital.patient.Patient;
+import com.mamtrex.hospital.patient.PatientAccessSource;
+import com.mamtrex.hospital.patient.PatientAccessStatus;
+import com.mamtrex.hospital.patient.PatientHospitalAccess;
+import com.mamtrex.hospital.patient.PatientHospitalAccessRepository;
 import com.mamtrex.hospital.patient.PatientRepository;
 import com.mamtrex.hospital.reporting.DashboardDtos;
 import com.mamtrex.hospital.reporting.DashboardService;
@@ -43,6 +47,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -114,7 +119,7 @@ class DemoDataInitializerTest {
             "disposable-test-only-secret-demo-0123456789abcdef0123456789abcdef";
 
     /** Long disposable test-only value; never a real credential. */
-    static final String TEST_ACCOUNT_PASSWORD = "disposable-test-password-demo-01";
+    static final String TEST_ACCOUNT_PASSWORD = "example-test-password-demo-01";
 
     /** Stable demo business keys: one organization, three hospitals, seven synthetic branches. */
     private static final String DEMO_ORG_CODE = "DEMO-ORG-001";
@@ -183,6 +188,9 @@ class DemoDataInitializerTest {
 
     @Autowired
     PatientRepository patients;
+
+    @Autowired
+    PatientHospitalAccessRepository accessGrants;
 
     @Autowired
     StaffMemberRepository staff;
@@ -1069,8 +1077,51 @@ class DemoDataInitializerTest {
                         .map(Department::getCode).collect(Collectors.toSet()),
                 "the stable department keys must stay unchanged after a repeated seed");
         assertEquals(4, invoices.findAll().stream().map(Invoice::getInvoiceNumber)
-                        .filter(n -> n.startsWith("DEMO-INV-01")).count(),
+                .filter(n -> n.startsWith("DEMO-INV-01")).count(),
                 "the stable default-branch invoice numbers must stay unchanged after a repeated seed");
+    }
+
+    @Test
+    @Transactional
+    void seededPatientsHaveLocalHospitalAccessAndRerunsRestoreOnlyMissingGrants() {
+        for (Patient patient : demoPatients()) {
+            PatientHospitalAccess grant = accessGrants.findByPatientIdAndHospitalId(
+                    patient.getId(), patient.getBranch().getHospital().getId()).orElseThrow();
+            assertEquals(PatientAccessStatus.ACTIVE, grant.getStatus());
+            assertEquals(PatientAccessSource.LOCAL_REGISTRATION, grant.getSource());
+        }
+        Patient patient = patients.findByMedicalRecordNumber("DEMO-0001").orElseThrow();
+        UUID hospitalId = patient.getBranch().getHospital().getId();
+        PatientHospitalAccess grant = accessGrants.findByPatientIdAndHospitalId(patient.getId(), hospitalId)
+                .orElseThrow();
+        accessGrants.delete(grant);
+        accessGrants.flush();
+        long auditCount = auditEvents.count();
+
+        initializer.seedDemoCohort();
+        assertTrue(accessGrants.existsByPatientIdAndHospitalIdAndStatus(
+                patient.getId(), hospitalId, PatientAccessStatus.ACTIVE),
+                "a pre-US8 seeded patient with no grant should regain local visibility");
+        assertEquals(auditCount, auditEvents.count(), "repairing a missing grant is not a patient CREATE");
+        initializer.seedDemoCohort();
+        assertEquals(TOTAL_PATIENTS, accessGrants.count(), "a repeated seed must not duplicate grants");
+    }
+
+    @Test
+    @Transactional
+    void repeatedSeedNeverRestoresARevokedPatientGrant() {
+        Patient patient = patients.findByMedicalRecordNumber("DEMO-0002").orElseThrow();
+        UUID hospitalId = patient.getBranch().getHospital().getId();
+        PatientHospitalAccess grant = accessGrants.findByPatientIdAndHospitalId(patient.getId(), hospitalId)
+                .orElseThrow();
+        grant.revoke();
+        accessGrants.saveAndFlush(grant);
+
+        initializer.seedDemoCohort();
+        assertFalse(accessGrants.existsByPatientIdAndHospitalIdAndStatus(
+                patient.getId(), hospitalId, PatientAccessStatus.ACTIVE),
+                "bootstrap cannot reinstate an intentionally revoked grant");
+        assertEquals(TOTAL_PATIENTS, accessGrants.count());
     }
 
     private Map<String, Long> storeCounts() {

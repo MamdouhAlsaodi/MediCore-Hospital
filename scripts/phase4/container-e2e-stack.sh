@@ -175,7 +175,13 @@ case "$action" in
                 # Repository-local pinned runner only: --no makes npm exec
                 # fail instead of downloading a transient package. Forwarded
                 # test args are passed through exactly.
-                npm exec --no -- playwright test "${@:2}"
+                # Phase 4 baseline is pinned to its own original three specs;
+                # Phase 5 specs require the separate Phase 5 owned control plane
+                # and are tested by scripts/phase5/container-network-journey.sh.
+                # Additional caller Playwright flags are forwarded unchanged.
+                npm exec --no -- playwright test \
+                    e2e/journey.spec.js e2e/context-discrimination.spec.js \
+                    e2e/resilience.spec.js "${@:2}"
                 overall=$?
                 info "Playwright finished with status $overall"
             else

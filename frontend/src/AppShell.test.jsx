@@ -391,7 +391,7 @@ describe('AppShell', () => {
     // (server family rules on /api/admissions/**, /api/emergency-visits/**,
     // and /api/beds/**).
     expect(navigationItems()).toEqual(
-      ['Dashboard', 'Patients', 'Appointments', 'Admissions', 'Emergency Visits', 'Beds'],
+      ['Dashboard', 'Patients', 'Appointments', 'Admissions', 'Emergency Visits', 'Beds', 'Transfers'],
     );
     for (const unimplemented of ['Laboratory', 'Pharmacy']) {
       expect(screen.queryByRole('button', { name: unimplemented })).not.toBeInTheDocument();
@@ -622,7 +622,7 @@ describe('AppShell', () => {
     await waitForDashboardStats();
 
     expect(navigationItems()).toEqual(
-      ['Dashboard', 'Patients', 'Appointments', 'Admissions', 'Emergency Visits', 'Beds'],
+      ['Dashboard', 'Patients', 'Appointments', 'Admissions', 'Emergency Visits', 'Beds', 'Transfers'],
     );
     await user.click(screen.getByRole('button', { name: 'Beds' }));
 
@@ -655,7 +655,7 @@ describe('AppShell', () => {
     renderShell(['ADMIN']);
 
     expect(navigationItems()).toEqual(
-      ['Dashboard', 'Patients', 'Appointments', 'Admissions', 'Emergency Visits', 'Beds', 'Invoices', 'Audit'],
+      ['Dashboard', 'Patients', 'Appointments', 'Admissions', 'Emergency Visits', 'Beds', 'Invoices', 'Audit', 'Transfers'],
     );
     await waitForDashboardStats();
 
@@ -807,7 +807,7 @@ describe('AppShell', () => {
     const state = {
       contextStatus: 200,
       contextBody: {
-        accessToken: 'switched-context-token',
+        accessToken: 'example-switched-context-token',
         tokenType: 'Bearer',
         username: 'testuser',
         roles: ['ADMIN'],
@@ -872,7 +872,7 @@ describe('AppShell', () => {
     await screen.findAllByRole('list', { name: 'Patient results' });
     const patientCalls = fetchMock.mock.calls.filter(([path]) => path === '/api/patients');
     expect(patientCalls.length).toBeGreaterThan(patientsCallsBefore);
-    expect(patientCalls[patientCalls.length - 1][1].headers.Authorization).toBe('Bearer switched-context-token');
+    expect(patientCalls[patientCalls.length - 1][1].headers.Authorization).toBe('Bearer example-switched-context-token');
     // The switch request named the assignment, hospital, and chosen branch.
     const contextCall = fetchMock.mock.calls.find(([path]) => path === '/api/auth/context');
     expect(JSON.parse(contextCall[1].body)).toEqual({
@@ -881,7 +881,7 @@ describe('AppShell', () => {
       branchId: EAST_BRANCH_ID,
     });
     // Storage holds exactly the complete switched session.
-    expect(JSON.parse(sessionStorage.getItem('medicore.session')).token).toBe('switched-context-token');
+    expect(JSON.parse(sessionStorage.getItem('medicore.session')).token).toBe('example-switched-context-token');
     expect(onSessionExpired).not.toHaveBeenCalled();
   });
 
@@ -890,7 +890,7 @@ describe('AppShell', () => {
     const state = {
       contextStatus: 200,
       contextBody: {
-        accessToken: 'west-context-token',
+        accessToken: 'example-west-context-token',
         tokenType: 'Bearer',
         username: 'testuser',
         roles: ['ADMIN'],
@@ -949,7 +949,7 @@ describe('AppShell', () => {
       hospitalId: HOSPITAL_ID,
       branchId: WEST_BRANCH_ID,
     });
-    expect(JSON.parse(sessionStorage.getItem('medicore.session')).token).toBe('west-context-token');
+    expect(JSON.parse(sessionStorage.getItem('medicore.session')).token).toBe('example-west-context-token');
     expect(onSessionExpired).not.toHaveBeenCalled();
     // The East branch line is gone — no stale claim survives the switch.
     expect(screen.queryByText('Main Hospital Group — Demo Central Hospital — East Clinic')).not.toBeInTheDocument();
@@ -1035,7 +1035,7 @@ describe('AppShell', () => {
     const state = {
       contextStatus: 200,
       contextBody: {
-        accessToken: 'switched-context-token',
+        accessToken: 'example-switched-context-token',
         tokenType: 'Bearer',
         username: 'testuser',
         roles: ['BILLING'],
@@ -1114,7 +1114,7 @@ describe('AppShell', () => {
     }));
     // The new context issues its own read under its own token.
     await waitFor(() => expect(pendingHierarchy).toHaveLength(2));
-    expect(pendingHierarchy[1].token).toBe('Bearer switched-context-token');
+    expect(pendingHierarchy[1].token).toBe('Bearer example-switched-context-token');
     pendingHierarchy[1].resolve(jsonResponse({ ...HIERARCHY_VIEW, hospitals: [] }));
     await waitFor(() => expect(pendingHierarchy).toHaveLength(2));
     expect(screen.queryByText(STALE_HOSPITAL_NAME)).not.toBeInTheDocument();

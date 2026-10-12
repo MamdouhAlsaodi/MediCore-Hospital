@@ -274,12 +274,25 @@ class TransferWorkflowApiTest {
     @Test
     void destinationNurseCannotAcceptButSourceCannotEither() {
         String id = createAndGetId(srcDoctor, "key-roles-1");
+        long transferEventsBefore = transferAuditEventCount();
         assertEquals(403, raw(srcNurse, "/api/transfers/" + id + "/accept", "key-roles-2",
                 Map.of("destinationBranchId", destBranchId.toString(),
                         "destinationBedId", destBedId.toString(), "expectedVersion", 0)).getStatusCode().value());
         assertEquals(403, raw(dstNurse, "/api/transfers/" + id + "/accept", "key-roles-3",
                 Map.of("destinationBranchId", destBranchId.toString(),
                         "destinationBedId", destBedId.toString(), "expectedVersion", 0)).getStatusCode().value());
+        // Phase 5 US7 (T132, FR-027): denied role transitions record zero success
+        // audit events — only the original REQUEST row exists.
+        assertEquals(transferEventsBefore, transferAuditEventCount(),
+                "denied accepts must record zero success audit events");
+    }
+
+    /** Every transfer audit row the test database holds. */
+    private long transferAuditEventCount() {
+        return auditEvents.findAll().stream()
+                .filter(e -> e.getTransferId() != null)
+                .filter(e -> e.getAction() != null && e.getAction().startsWith("TRANSFER_"))
+                .count();
     }
 
     @Test
@@ -290,8 +303,13 @@ class TransferWorkflowApiTest {
         Map<String, Object> body = post(dstDoctor, "/api/transfers/" + id + "/reject", "key-reject-3",
                 Map.of("reasonCode", "BED_SHORTAGE", "expectedVersion", 0));
         assertEquals("REJECTED", body.get("status"));
+        long eventsAfterTerminalReject = transferAuditEventCount();
         assertEquals(409, raw(dstDoctor, "/api/transfers/" + id + "/reject", "key-reject-4",
                 Map.of("reasonCode", "BED_SHORTAGE", "expectedVersion", 1)).getStatusCode().value());
+        // Phase 5 US7 (T132, FR-027): the conflicted terminal-state attempt
+        // records zero success audit events — the accepted REJECT stays alone.
+        assertEquals(eventsAfterTerminalReject, transferAuditEventCount(),
+                "the conflicted reject must record zero additional audit events");
     }
 
     @Test

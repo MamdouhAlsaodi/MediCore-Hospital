@@ -258,6 +258,20 @@ class PatientJourneyApiTest {
         List<Map<String, Object>> impostors = impostorSearch.getBody();
         assertNotNull(impostors, "search response must carry a body");
         assertTrue(impostors.isEmpty(), "the failed duplicate create must not persist a second patient");
+
+        // Phase 5 US7 (T132, FR-027): the 409 conflict records zero success audit
+        // events — exactly one CREATE event for the original patient, none for
+        // the refused impostor.
+        ResponseEntity<List<Map<String, Object>>> audit = getList("/api/audit", login(ADMIN_USER));
+        assertEquals(HttpStatus.OK, audit.getStatusCode());
+        assertNotNull(audit.getBody());
+        List<Map<String, Object>> mrnEvents = audit.getBody().stream()
+                .filter(e -> "Patient".equals(e.get("resourceType")) && patientId.equals(e.get("resourceId")))
+                .toList();
+        assertEquals(1, mrnEvents.size(), "exactly the original create may be recorded");
+        assertTrue(audit.getBody().stream().noneMatch(e ->
+                        String.valueOf(e.get("details")).contains("Impostor " + suffix)),
+                "the conflicted duplicate create must record no audit event");
     }
 
     @Test
@@ -866,11 +880,33 @@ class PatientJourneyApiTest {
 
     @Test
     void staffRoleIsForbiddenFromPatientEndpoints() {
+        String adminToken = login(ADMIN_USER);
+        long patientEventsBefore = countPatientCreateEvents(adminToken);
         String token = login(DENIED);
         assertEquals(HttpStatus.FORBIDDEN, getStatus("/api/patients", token).getStatusCode());
         assertEquals(HttpStatus.FORBIDDEN, post("/api/patients", token, Map.of(
                 "medicalRecordNumber", "MRN-" + suffix + "-DENIED",
                 "fullName", "Denied Synthetic " + suffix)).getStatusCode());
+        // Phase 5 US7 (T132, FR-027): a denied mutation records zero success events.
+        assertEquals(patientEventsBefore, countPatientCreateEvents(adminToken),
+                "the denied patient create must record zero success audit events");
+        ResponseEntity<List<Map<String, Object>>> audit = getList("/api/audit", adminToken);
+        assertNotNull(audit.getBody());
+        assertFalse(audit.getBody().stream()
+                        .anyMatch(e -> String.valueOf(e.get("resourceId")).contains("-DENIED")
+                                || String.valueOf(e.get("details")).contains("-DENIED")),
+                "no audit event may reference a denied attempt");
+    }
+
+    /** Every Patient CREATE evidence row the acting scope can see. */
+    private long countPatientCreateEvents(String adminToken) {
+        ResponseEntity<List<Map<String, Object>>> audit = getList("/api/audit", adminToken);
+        assertEquals(HttpStatus.OK, audit.getStatusCode());
+        assertNotNull(audit.getBody());
+        return audit.getBody().stream()
+                .filter(e -> "Patient".equals(e.get("resourceType")))
+                .filter(e -> "CREATE".equals(e.get("action")))
+                .count();
     }
 
     @Test

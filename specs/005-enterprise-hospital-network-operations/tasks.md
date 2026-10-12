@@ -208,18 +208,18 @@
 
 **Independent test:** Full allowed/denied matrix with audit-context and telemetry leakage assertions.
 
-- [ ] T127 [P] [US7] Add RED hospital-aware audit read matrix in `backend/src/test/java/com/mamtrex/hospital/audit/NetworkAuditIsolationApiTest.java`
-- [ ] T128 [P] [US7] Add RED transfer audit field and forbidden-payload tests in `backend/src/test/java/com/mamtrex/hospital/audit/NetworkAuditIsolationApiTest.java`
-- [ ] T129 [US7] Extend audit recording API with structured hospital/transfer context in `backend/src/main/java/com/mamtrex/hospital/audit/AuditService.java`
-- [ ] T130 [US7] Add network/hospital/branch scoped audit repository queries in `backend/src/main/java/com/mamtrex/hospital/audit/AuditEventRepository.java`
-- [ ] T131 [US7] Extend audit DTO/controller allowlists without patient payloads in `backend/src/main/java/com/mamtrex/hospital/audit/AuditController.java`
-- [ ] T132 [US7] Add denied/conflicted zero-success-audit assertions across transfer/patient/context tests under `backend/src/test/java/com/mamtrex/hospital/`
-- [ ] T133 [US7] Add hospital/network role and route combinations to `backend/src/test/java/com/mamtrex/hospital/auth/HttpSecurityBoundaryMatrixTest.java`
-- [ ] T134 [US7] Add structured-log canaries for hospital/transfer operations in `backend/src/test/java/com/mamtrex/hospital/observability/StructuredLogSanitizationIntegrationTest.java`
-- [ ] T135 [US7] Assert no hospital/patient/transfer/assignment/correlation IDs become metric labels in `backend/src/test/java/com/mamtrex/hospital/observability/MetricsBoundaryIntegrationTest.java`
-- [ ] T136 [P] [US7] Extend audit UI filters/render isolation tests in `frontend/src/features/audit/AuditPage.test.jsx`
-- [ ] T137 [US7] Extend audit adapter/page with authorized hospital context in `frontend/src/features/audit/auditApi.js` and `AuditPage.jsx`
-- [ ] T138 [US7] Run security/audit/log/metrics/full backend gates from `backend/pom.xml` and frontend audit gates from `frontend/package.json`
+- [x] T127 [P] [US7] Add RED hospital-aware audit read matrix in `backend/src/test/java/com/mamtrex/hospital/audit/NetworkAuditIsolationApiTest.java`
+- [x] T128 [P] [US7] Add RED transfer audit field and forbidden-payload tests in `backend/src/test/java/com/mamtrex/hospital/audit/NetworkAuditIsolationApiTest.java`
+- [x] T129 [US7] Extend audit recording API with structured hospital/transfer context in `backend/src/main/java/com/mamtrex/hospital/audit/AuditService.java`
+- [x] T130 [US7] Add network/hospital/branch scoped audit repository queries in `backend/src/main/java/com/mamtrex/hospital/audit/AuditEventRepository.java`
+- [x] T131 [US7] Extend audit DTO/controller allowlists without patient payloads in `backend/src/main/java/com/mamtrex/hospital/audit/AuditController.java`
+- [x] T132 [US7] Add denied/conflicted zero-success-audit assertions across transfer/patient/context tests under `backend/src/test/java/com/mamtrex/hospital/`
+- [x] T133 [US7] Add hospital/network role and route combinations to `backend/src/test/java/com/mamtrex/hospital/auth/HttpSecurityBoundaryMatrixTest.java`
+- [x] T134 [US7] Add structured-log canaries for hospital/transfer operations in `backend/src/test/java/com/mamtrex/hospital/observability/StructuredLogSanitizationIntegrationTest.java`
+- [x] T135 [US7] Assert no hospital/patient/transfer/assignment/correlation IDs become metric labels in `backend/src/test/java/com/mamtrex/hospital/observability/MetricsBoundaryIntegrationTest.java`
+- [x] T136 [P] [US7] Extend audit UI filters/render isolation tests in `frontend/src/features/audit/AuditPage.test.jsx`
+- [x] T137 [US7] Extend audit adapter/page with authorized hospital context in `frontend/src/features/audit/auditApi.js` and `AuditPage.jsx`
+- [x] T138 [US7] Run security/audit/log/metrics/full backend gates from `backend/pom.xml` and frontend audit gates from `frontend/package.json`
 
 **Checkpoint:** US7 proves traceability without widening data or telemetry exposure.
 

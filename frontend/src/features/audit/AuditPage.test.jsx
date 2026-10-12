@@ -15,6 +15,9 @@ import AuditPage from './AuditPage.jsx';
 const ORG_ID = '11111111-1111-4111-8111-111111111111';
 const BRANCH_A_ID = '22222222-2222-4222-8222-222222222222';
 const BRANCH_B_ID = '33333333-3333-4333-8333-333333333333';
+const HOSPITAL_A_ID = '44444444-4444-4444-8444-444444444444';
+const HOSPITAL_X_ID = '55555555-5555-4555-8555-555555555555';
+const BRANCH_X_ID = '66666666-6666-4666-8666-666666666666';
 
 const NEWEST_EVENT = {
   id: '88888888-8888-4888-8888-888888888888',
@@ -79,6 +82,40 @@ const ORGANIZATION_VIEW = {
   ],
 };
 
+// The server-owned network hierarchy for the HOSPITAL-scope authorized
+// context filter (Phase 5 US7 T136/T137): branch options come only from the
+// acting hospital's returned slice — never a client-constructed list.
+const NETWORK_VIEW = {
+  organizationId: ORG_ID,
+  organizationCode: 'SYN-ORG',
+  organizationName: 'Synthetic Network',
+  hospitals: [
+    {
+      id: HOSPITAL_A_ID,
+      code: 'HOSP-A',
+      name: 'Hospital A',
+      regionLabel: 'Region A',
+      timeZone: 'UTC',
+      active: true,
+      branches: [
+        { id: BRANCH_A_ID, hospitalId: HOSPITAL_A_ID, code: 'BR-A', name: 'Branch A', timeZone: 'UTC', active: true },
+        { id: BRANCH_B_ID, hospitalId: HOSPITAL_A_ID, code: 'BR-B', name: 'Branch B', timeZone: 'UTC', active: true },
+      ],
+    },
+    {
+      id: HOSPITAL_X_ID,
+      code: 'HOSP-X',
+      name: 'Foreign Hospital X',
+      regionLabel: 'Region X',
+      timeZone: 'UTC',
+      active: true,
+      branches: [
+        { id: BRANCH_X_ID, hospitalId: HOSPITAL_X_ID, code: 'BR-X', name: 'Branch X', timeZone: 'UTC', active: true },
+      ],
+    },
+  ],
+};
+
 function jsonResponse(payload, status = 200) {
   return new Response(JSON.stringify(payload), {
     status,
@@ -97,6 +134,7 @@ function sessionFor(roles, scope = 'ORGANIZATION') {
       role: roles[0],
       scope,
       organizationId: ORG_ID,
+      hospitalId: scope === 'ORGANIZATION' ? undefined : HOSPITAL_A_ID,
       branchId: scope === 'ORGANIZATION' ? BRANCH_A_ID : 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
       departmentId: null,
     },
@@ -126,6 +164,9 @@ function stubAuditAndOrganization(fetchMock, payload, status = 200) {
     }
     if (path === '/api/organization') {
       return Promise.resolve(jsonResponse(ORGANIZATION_VIEW));
+    }
+    if (path === '/api/network/hierarchy') {
+      return Promise.resolve(jsonResponse(NETWORK_VIEW));
     }
     return Promise.resolve(jsonResponse({}, 404));
   });
@@ -454,5 +495,88 @@ describe('AuditPage', () => {
     expect(options.method).toBe('GET');
     expect(options.headers.Authorization).toBe('Bearer synthetic-token');
     expect(options.body).toBeUndefined();
+  });
+
+  // ------------------------------------------------------------------
+  // Phase 5 US7 (T136/T137): the authorized hospital context filter.
+  // ------------------------------------------------------------------
+
+  it('offers the hospital context filter to a HOSPITAL-scope session from the server-owned hierarchy slice', async () => {
+    stubAuditAndOrganization(fetchMock, [NEWEST_EVENT]);
+    renderAudit(['ADMIN'], 'HOSPITAL');
+    await auditCalls(fetchMock);
+
+    // The filter is offered exactly once, from the acting hospital's own
+    // returned branch slice — the foreign hospital's branch never renders.
+    const branchSelect = await screen.findByRole('combobox', { name: 'Branch' });
+    expect(within(branchSelect).getByRole('option', { name: 'All branches' })).toBeInTheDocument();
+    expect(within(branchSelect).getByRole('option', { name: 'Branch A' })).toBeInTheDocument();
+    expect(within(branchSelect).getByRole('option', { name: 'Branch B' })).toBeInTheDocument();
+    expect(within(branchSelect).queryByRole('option', { name: 'Branch X' })).not.toBeInTheDocument();
+    expect(within(branchSelect).queryByText('Foreign Hospital X')).not.toBeInTheDocument();
+
+    // The hierarchy read carries the session bearer token; no client-constructed
+    // hospital identifier is ever sent.
+    const hierarchyCalls = fetchMock.mock.calls.filter(([path]) => path === '/api/network/hierarchy');
+    expect(hierarchyCalls).toHaveLength(1);
+    expect(hierarchyCalls[0][1].headers.Authorization).toBe('Bearer synthetic-token');
+  });
+
+  it('sends the authorized hospital branch filter through the transport and clears back', async () => {
+    const user = userEvent.setup();
+    stubAuditAndOrganization(fetchMock, [NEWEST_EVENT]);
+    renderAudit(['ADMIN'], 'HOSPITAL');
+
+    await screen.findByRole('table', { name: 'Audit events' });
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Branch' }), BRANCH_B_ID);
+    await user.click(screen.getByRole('button', { name: 'Apply filters' }));
+
+    await waitFor(() => {
+      const calls = fetchMock.mock.calls.filter(([path]) => path.startsWith('/api/audit?'));
+      expect(calls).toHaveLength(1);
+    });
+    expect(fetchMock.mock.calls.filter(([path]) => path.startsWith('/api/audit?'))[0][0]).toBe(
+      '/api/audit?branchId=' + BRANCH_B_ID
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Clear' }));
+    await waitFor(() => {
+      const unfiltered = fetchMock.mock.calls.filter(([path]) => path === '/api/audit');
+      expect(unfiltered.length).toBeGreaterThanOrEqual(2);
+    });
+  });
+
+  it('renders transfer-context evidence cells from the extended contract while keeping raw pointers unrendered', async () => {
+    stubAudit(fetchMock, [
+      {
+        ...NEWEST_EVENT,
+        action: 'TRANSFER_REQUEST',
+        resourceType: 'TransferRequest',
+        hospitalId: HOSPITAL_A_ID,
+        transferId: 'tdededede-dede-4ede-8ede-edededededede'.slice(0, 36),
+        sourceHospitalId: HOSPITAL_A_ID,
+        destinationHospitalId: HOSPITAL_X_ID,
+      },
+    ]);
+    renderAudit(['ADMIN'], 'HOSPITAL');
+
+    const table = await screen.findByRole('table', { name: 'Audit events' });
+    const transferRow = within(table).getByRole('row', { name: /2026-03-02T10:00:00Z/ });
+    // The evidence label renders from the allowlisted fields; the raw transfer
+    // and hospital pointers themselves are never displayed (data minimization).
+    expect(within(transferRow).getByText('Transfer request')).toBeInTheDocument();
+    expect(within(transferRow).getByText('(This hospital → Another hospital)')).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent(HOSPITAL_A_ID);
+    expect(document.body).not.toHaveTextContent(HOSPITAL_X_ID);
+    expect(document.body).not.toHaveTextContent('tdededede');
+  });
+
+  it('never offers the branch filter to a DEPARTMENT-scope session', async () => {
+    stubAudit(fetchMock, [NEWEST_EVENT]);
+    renderAudit(['ADMIN'], 'DEPARTMENT');
+    await auditCalls(fetchMock);
+    expect(screen.queryByRole('combobox', { name: 'Branch' })).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.every(([path]) => !path.startsWith('/api/organization'))).toBe(true);
+    expect(fetchMock.mock.calls.every(([path]) => !path.startsWith('/api/network/hierarchy'))).toBe(true);
   });
 });

@@ -1,34 +1,49 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ApiError } from '../../api.js';
-import { fetchAuditEvents } from './auditApi.js';
+import { fetchAuditEvents, fetchHospitalBranchOptions } from './auditApi.js';
 import { fetchOrganizationView } from '../branches/actingContextApi.js';
 
-// Audit evidence screen (plan1.md Task 10; plan3.md Task 11): a strictly
-// read-only, data-minimized view of the mutation audit trail over
-// GET /api/audit (ADMIN-only in SecurityConfig; navigation hides the
-// destination from every other role and the server refuses direct reads
+// Audit evidence screen (plan1.md Task 10; plan3.md Task 11; Phase 5 US7
+// T137): a strictly read-only, data-minimized view of the mutation audit
+// trail over GET /api/audit (ADMIN-only in SecurityConfig; navigation hides
+// the destination from every other role and the server refuses direct reads
 // with 403).
 //
-// Task 11: the server decides the visible scope slice on every read — an
-// ORGANIZATION-scope acting context inspects the whole organization plus
-// rows marked legacy/unassigned (ownership never guessed), a BRANCH-scope
+// Task 11 + US7: the server decides the visible scope slice on every read —
+// an ORGANIZATION-scope acting context inspects the whole organization plus
+// rows marked legacy/unassigned (ownership never guessed), a HOSPITAL-scope
+// context the hospital-wide slice of its acting hospital, a BRANCH-scope
 // context only its own branch, a DEPARTMENT-scope context only its
 // department — so the four client filters (branch, entity type, actor,
 // correlation id) can only narrow a view, never widen one. Branch options
 // come only from the server-owned active-branch list (GET /api/organization)
-// and only for ORGANIZATION-scope sessions; every other scope is already
-// branch-bound server-side, so no branch filter is offered.
+// for ORGANIZATION-scope sessions and only from the server-owned acting
+// hospital's hierarchy slice (GET /api/network/hierarchy, filtered by the
+// acting context's hospitalId) for HOSPITAL-scope sessions; every other
+// scope is already branch-bound server-side, so no branch filter is offered.
 //
 // Each event renders only the evidence the contract provides — timestamp,
 // actor, acting role/scope, branch attribution (or the legacy/unassigned
-// mark), action, entity type, identifier, and the bounded correlation id —
-// as plain React text nodes (hostile-looking strings can only ever appear
-// as literal text). Raw details payloads, assignment/organization/department
-// pointers, persistence metadata, tokens, credentials, and request bodies
-// are deliberately not rendered. Events are sorted newest-first on the
-// client because ordering stays a server decision per response.
+// mark), hospital attribution label, action, entity type, identifier, and
+// the bounded correlation id — as plain React text nodes (hostile-looking
+// strings can only ever appear as literal text). Transfer lifecycle rows add
+// the bounded source → destination hospital direction, derived only from the
+// allowlisted hospitalId/label fields. Raw details payloads,
+// assignment/organization/department/hospital pointers, transfer pointers,
+// persistence metadata, tokens, credentials, and request bodies are
+// deliberately not rendered. Events are sorted newest-first on the client
+// because ordering stays a server decision per response.
 const LEGACY_ATTRIBUTION = 'legacy/unassigned';
 const NO_VALUE = '—';
+
+const TRANSFER_ACTION_LABELS = {
+  TRANSFER_REQUEST: 'Transfer request',
+  TRANSFER_ACCEPT: 'Transfer accept',
+  TRANSFER_START_TRANSIT: 'Transfer transit start',
+  TRANSFER_COMPLETE: 'Transfer complete',
+  TRANSFER_REJECT: 'Transfer rejection',
+  TRANSFER_CANCEL: 'Transfer cancellation',
+};
 
 export default function AuditPage({ session, onSessionExpired }) {
   const [events, setEvents] = useState([]);
@@ -41,9 +56,12 @@ export default function AuditPage({ session, onSessionExpired }) {
   const [filters, setFilters] = useState({ branchId: '', resourceType: '', actor: '', correlationId: '' });
   const [appliedFilters, setAppliedFilters] = useState({});
 
-  const isOrganizationScope = session.actingContext?.scope === 'ORGANIZATION';
+  const scope = session.actingContext?.scope;
+  const isOrganizationScope = scope === 'ORGANIZATION';
+  const isHospitalScope = scope === 'HOSPITAL';
   const [branchOptions, setBranchOptions] = useState([]);
   const [branchOptionsError, setBranchOptionsError] = useState(false);
+  const [hospitalLabels, setHospitalLabels] = useState(() => new Map());
 
   useEffect(() => {
     let active = true;
@@ -67,13 +85,21 @@ export default function AuditPage({ session, onSessionExpired }) {
   }, [session.token, onSessionExpired, appliedFilters]);
 
   useEffect(() => {
-    if (!isOrganizationScope) return;
+    if (!isOrganizationScope && !isHospitalScope) return;
     let active = true;
     setBranchOptionsError(false);
-    fetchOrganizationView({ token: session.token, onUnauthorized: onSessionExpired })
-      .then((view) => {
+    const options = isHospitalScope
+      ? fetchHospitalBranchOptions({
+          token: session.token,
+          hospitalId: session.actingContext?.hospitalId,
+          onUnauthorized: onSessionExpired,
+        })
+      : fetchOrganizationView({ token: session.token, onUnauthorized: onSessionExpired })
+          .then((view) => (Array.isArray(view?.activeBranches) ? view.activeBranches : []));
+    options
+      .then((loaded) => {
         if (!active) return;
-        setBranchOptions(Array.isArray(view?.activeBranches) ? view.activeBranches : []);
+        setBranchOptions(Array.isArray(loaded) ? loaded : []);
       })
       .catch((error) => {
         if (!active) return;
@@ -84,7 +110,7 @@ export default function AuditPage({ session, onSessionExpired }) {
         setBranchOptionsError(true);
       });
     return () => { active = false; };
-  }, [isOrganizationScope, session.token, onSessionExpired]);
+  }, [isOrganizationScope, isHospitalScope, session.token, onSessionExpired, session.actingContext?.hospitalId]);
 
   // The endpoint returns rows in unspecified repository order; the demo
   // contract is reverse-chronological, so the page sorts defensively by the
@@ -92,6 +118,9 @@ export default function AuditPage({ session, onSessionExpired }) {
   const orderedEvents = [...events].sort(
     (a, b) => (Date.parse(b?.occurredAt ?? '') || 0) - (Date.parse(a?.occurredAt ?? '') || 0)
   );
+
+  // The acting hospital's own display label, when the slice names it.
+  const actingHospitalId = session.actingContext?.hospitalId ?? null;
 
   const branchLabels = useMemo(
     () => new Map(branchOptions.map((branch) => [branch.id, branch.name])),
@@ -122,10 +151,32 @@ export default function AuditPage({ session, onSessionExpired }) {
     return branchLabels.get(event.branchId) ?? event.branchId;
   }
 
+  // The bounded transfer direction: label form only, from the server-owned
+  // hierarchy labels — raw hospital/transfer pointers never render.
+  function transferDirection(event) {
+    if (!event.transferId) return null;
+    const sourceLabel = hospitalLabelFor(event.sourceHospitalId);
+    const destinationLabel = hospitalLabelFor(event.destinationHospitalId);
+    if (sourceLabel === null && destinationLabel === null) return null;
+    return (sourceLabel ?? 'Unknown hospital') + ' → ' + (destinationLabel ?? 'Unknown hospital');
+  }
+
+  function hospitalLabelFor(hospitalId) {
+    if (!hospitalId) return null;
+    if (hospitalId === actingHospitalId && session.actingContext) {
+      // The acting hospital is the session's own context; its label is not
+      // carried in the evidence row, so the stable display form is the
+      // server's hierarchy name when loaded, else the bounded id form used
+      // by no other cell — the raw pointer itself is never shown.
+      return hospitalLabels.get(hospitalId) ?? 'This hospital';
+    }
+    return hospitalLabels.get(hospitalId) ?? 'Another hospital';
+  }
+
   return (
     <section className="audit-screen" aria-label="Audit screen">
       <form className="audit-filters" aria-label="Audit filters" onSubmit={applyFilters}>
-        {isOrganizationScope && (
+        {(isOrganizationScope || isHospitalScope) && (
           <label>
             Branch
             <select value={filters.branchId} onChange={setFilter('branchId')}>
@@ -152,7 +203,7 @@ export default function AuditPage({ session, onSessionExpired }) {
         <button type="button" onClick={clearFilters}>Clear</button>
       </form>
 
-      {isOrganizationScope && branchOptionsError && (
+      {(isOrganizationScope || isHospitalScope) && branchOptionsError && (
         <p className="notice" role="status">
           Branch filter options could not be loaded; showing every branch the server allows.
         </p>
@@ -191,19 +242,33 @@ export default function AuditPage({ session, onSessionExpired }) {
                 </tr>
               </thead>
               <tbody>
-                {orderedEvents.map((event) => (
-                  <tr key={event.id}>
-                    <td>{event.occurredAt || NO_VALUE}</td>
-                    <td>{event.actor || NO_VALUE}</td>
-                    <td>{event.role || NO_VALUE}</td>
-                    <td>{event.scope || NO_VALUE}</td>
-                    <td>{branchCell(event)}</td>
-                    <td>{event.action || NO_VALUE}</td>
-                    <td>{event.resourceType || NO_VALUE}</td>
-                    <td>{event.resourceId || NO_VALUE}</td>
-                    <td>{event.correlationId || NO_VALUE}</td>
-                  </tr>
-                ))}
+                {orderedEvents.map((event) => {
+                  const direction = transferDirection(event);
+                  return (
+                    <tr key={event.id}>
+                      <td>{event.occurredAt || NO_VALUE}</td>
+                      <td>{event.actor || NO_VALUE}</td>
+                      <td>{event.role || NO_VALUE}</td>
+                      <td>{event.scope || NO_VALUE}</td>
+                      <td>{branchCell(event)}</td>
+                      <td>
+                        {TRANSFER_ACTION_LABELS[event.action] ? (
+                          <>
+                            {TRANSFER_ACTION_LABELS[event.action]}
+                            {direction && (
+                              <span className="audit-transfer-direction"> ({direction})</span>
+                            )}
+                          </>
+                        ) : (
+                          event.action || NO_VALUE
+                        )}
+                      </td>
+                      <td>{event.resourceType || NO_VALUE}</td>
+                      <td>{event.resourceId || NO_VALUE}</td>
+                      <td>{event.correlationId || NO_VALUE}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

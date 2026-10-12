@@ -6,7 +6,7 @@ import {
   dischargeAdmission,
   fetchAdmissions,
 } from '../features/admissions/admissionApi.js';
-import { fetchAuditEvents } from '../features/audit/auditApi.js';
+import { fetchAuditEvents, fetchHospitalBranchOptions } from '../features/audit/auditApi.js';
 import {
   getBranchSummaryAlias,
   getNetworkSummary,
@@ -252,6 +252,70 @@ describe('generated-contract transport (T072)', () => {
     const [call] = calls();
     expect(call.path).toBe('/api/audit?resourceType=Patient&actor=admin');
     expect(call.options.method).toBe('GET');
+  });
+
+  it('audit adapter parses the extended US7 allowlist and refuses malformed rows', async () => {
+    const row = {
+      id: '88888888-8888-4888-8888-888888888888',
+      actor: 'admin',
+      action: 'TRANSFER_REQUEST',
+      resourceType: 'TransferRequest',
+      resourceId: '77777777-7777-4777-8777-777777777777',
+      details: 'transfer requested (BED_SHORTAGE)',
+      occurredAt: '2026-03-02T10:00:00Z',
+      assignmentId: null,
+      role: 'NURSE',
+      scope: 'BRANCH',
+      organizationId: '11111111-1111-4111-8111-111111111111',
+      branchId: '22222222-2222-4222-8222-222222222222',
+      departmentId: null,
+      correlationId: 'evidence.run-42',
+      branchAttribution: null,
+      hospitalId: '44444444-4444-4444-8444-444444444444',
+      transferId: '77777777-7777-4777-8777-777777777777',
+      sourceHospitalId: '44444444-4444-4444-8444-444444444444',
+      destinationHospitalId: '55555555-5555-4555-8555-555555555555',
+    };
+    stubFetch(() => jsonResponse([row]));
+    const events = await fetchAuditEvents({ token: 'tok' });
+    expect(events).toHaveLength(1);
+    expect(events[0].transferId).toBe('77777777-7777-4777-8777-777777777777');
+    expect(events[0].sourceHospitalId).toBe('44444444-4444-4444-8444-444444444444');
+    expect(events[0].destinationHospitalId).toBe('55555555-5555-4555-8555-555555555555');
+
+    // A row missing a required evidence key refuses the payload.
+    const broken = { ...row };
+    delete broken.occurredAt;
+    stubFetch(() => jsonResponse([broken]));
+    await expect(fetchAuditEvents({ token: 'tok' })).rejects.toMatchObject({ status: 500 });
+  });
+
+  it('audit adapter derives hospital branch options only from the acting hospital hierarchy slice', async () => {
+    stubFetch(() => jsonResponse({
+      organizationId: '11111111-1111-4111-8111-111111111111',
+      organizationCode: 'SYN',
+      organizationName: 'Synthetic',
+      hospitals: [
+        {
+          id: '44444444-4444-4444-8444-444444444444',
+          code: 'HOSP-A', name: 'Hospital A', regionLabel: 'R', timeZone: 'UTC', active: true,
+          branches: [
+            { id: '22222222-2222-4222-8222-222222222222', hospitalId: '44444444-4444-4444-8444-444444444444', code: 'BR-A', name: 'Branch A', timeZone: 'UTC', active: true },
+            { id: '66666666-6666-4666-8666-666666666666', hospitalId: '55555555-5555-4555-8555-555555555555', code: 'BR-X', name: 'Branch X', timeZone: 'UTC', active: true },
+          ],
+        },
+      ],
+    }));
+    const options = await fetchHospitalBranchOptions({
+      token: 'tok',
+      hospitalId: '44444444-4444-4444-8444-444444444444',
+    });
+    // Only branches whose server-owned hospitalId matches the acting hospital.
+    expect(options).toEqual([{ id: '22222222-2222-4222-8222-222222222222', name: 'Branch A' }]);
+    // A missing hospital id never issues a hierarchy request.
+    stubFetch(() => jsonResponse({ hospitals: [] }));
+    expect(await fetchHospitalBranchOptions({ token: 'tok', hospitalId: '' })).toEqual([]);
+    expect(calls().length).toBe(0);
   });
 
   // ------------------------------------------------------------------

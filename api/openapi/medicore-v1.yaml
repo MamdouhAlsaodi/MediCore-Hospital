@@ -2517,6 +2517,18 @@ components:
           type: string
         branchAttribution:
           type: string
+        hospitalId:
+          type: string
+          format: uuid
+        transferId:
+          type: string
+          format: uuid
+        sourceHospitalId:
+          type: string
+          format: uuid
+        destinationHospitalId:
+          type: string
+          format: uuid
   securitySchemes:
     bearerAuth:
       type: http

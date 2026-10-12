@@ -27,12 +27,22 @@ import com.mamtrex.hospital.auth.ActingContext;
   ActingContext context=authentication!=null&&authentication.getPrincipal() instanceof ActingContext c?c:null;
   String actor=authentication==null?"system":authentication.getName();
   repo.save(new AuditEvent(actor,action,type,id,details,context,CorrelationIdFilter.current()));}
- /** Phase 5 US4 (FR-026): records one transfer lifecycle success event with the bounded transfer context (actor/assignment/hospital already derive from the acting context; source/destination hospitals and the transfer pointer are stamped here) in the CALLER's transaction — existing allowlists and call sites are unchanged. */
+ /** Phase 5 US4/US7 (FR-026): records one transfer lifecycle success event with the bounded transfer context (actor/assignment/hospital already derive from the acting context; source/destination hospitals and the transfer pointer are stamped here) in the CALLER's transaction — existing allowlists and call sites are unchanged. The hospital attribution is the recording actor's own acting hospital; the source/destination pair stays the transfer's own bounded evidence. */
  public void recordTransfer(String action,String type,String id,String details,java.util.UUID transferId,java.util.UUID sourceHospitalId,java.util.UUID destinationHospitalId){
   var authentication=SecurityContextHolder.getContext().getAuthentication();
   ActingContext context=authentication!=null&&authentication.getPrincipal() instanceof ActingContext c?c:null;
   String actor=authentication==null?"system":authentication.getName();
   AuditEvent event=new AuditEvent(actor,action,type,id,details,context,CorrelationIdFilter.current());
   event.stampTransferContext(transferId,sourceHospitalId,destinationHospitalId);
+  repo.save(event);}
+ /** Phase 5 US7 (T129, FR-026): the explicit structured-context recording seam. Records one success event whose bounded hospital/transfer context is supplied by the CALLER (the owning service derives it from server state — never a request payload): the acting-hospital attribution when known, plus the bounded transfer pointer and source/destination hospital pair when the event describes a transfer lifecycle row. Null optional context stays null — nothing is ever guessed from a body, token, or stack trace. */
+ public void recordStructured(String action,String type,String id,String details,
+  java.util.UUID hospitalId,java.util.UUID transferId,java.util.UUID sourceHospitalId,java.util.UUID destinationHospitalId){
+  var authentication=SecurityContextHolder.getContext().getAuthentication();
+  ActingContext context=authentication!=null&&authentication.getPrincipal() instanceof ActingContext c?c:null;
+  String actor=authentication==null?"system":authentication.getName();
+  AuditEvent event=new AuditEvent(actor,action,type,id,details,context,CorrelationIdFilter.current());
+  if(transferId!=null||sourceHospitalId!=null||destinationHospitalId!=null){
+   event.stampTransferContext(transferId,sourceHospitalId,destinationHospitalId);}
   repo.save(event);}
 }

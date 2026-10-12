@@ -12,7 +12,7 @@
 | FR-014, FR-015, FR-016, FR-017, FR-018, FR-019, FR-020, FR-021 transfer/reservation/idempotency/concurrency | T078–T103 | V7 migration, lifecycle/API/security tests, PostgreSQL race evidence | NOT RUN |
 | FR-022, FR-023 capacity/scheduling | T104–T115 | capacity exact-sum tests and PostgreSQL conflict races | NOT RUN |
 | FR-024, FR-025 command center/non-clinical metrics | T116–T126 | dashboard exact-sum/query-count/API/UI tests | NOT RUN |
-| FR-026, FR-027, FR-028 audit/non-enumeration/no partial writes | T127–T138 | audit scope matrix, zero-success-audit assertions, telemetry scans | NOT RUN |
+| FR-026, FR-027, FR-028 audit/non-enumeration/no partial writes | T127–T138 | audit scope matrix, zero-success-audit assertions, telemetry scans | PASS (local; US7 phase — see docs/evidence/phase5-us7-development-log.md) |
 | FR-029 OpenAPI/generated client | T040–T042, T054, T075, T101–T102, T112, T122 | deterministic generation and drift checks | NOT RUN |
 | FR-030, FR-031 migrations/PostgreSQL-real proof | T014–T016, T028–T030, T063–T064, T072, T081, T099–T100, T155–T158 | empty and Phase 4-shaped migrations, Testcontainers races | NOT RUN |
 | FR-032 desktop/mobile browser evidence | T139–T154 | Playwright journeys and context discrimination | NOT RUN |

@@ -18,7 +18,8 @@ PORT="55434"
 DB_SRC="medicore_phase4_bk_src"
 DB_TGT="medicore_phase4_bk_tgt"
 DB_USER="medicore_phase4_agent"
-OUT_BASE="/tmp/medicore_phase4_backup"
+SCRATCH_DIR="$(mktemp -d "${TMPDIR:-$HOME/.cache}/medicore_phase4_backup.XXXXXX")" || exit 2
+OUT_BASE="$SCRATCH_DIR/medicore_phase4_backup"
 PASS_COUNT=0
 
 ok() { echo "ok: $1"; PASS_COUNT=$((PASS_COUNT+1)); }
@@ -26,7 +27,7 @@ deny() { echo "ok(refused): $1"; PASS_COUNT=$((PASS_COUNT+1)); }
 cleanup() {
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
   docker volume rm "$(docker volume ls -q --filter label=phase4-backup-restore 2>/dev/null)" >/dev/null 2>&1 || true
-  rm -f "$OUT_BASE".dump "$OUT_BASE".dump.sha256 /tmp/medicore_phase4_corrupt.dump /tmp/inv_source.txt /tmp/inv_target.txt /tmp/inv_source_again.txt
+  rm -rf "$SCRATCH_DIR"
 }
 trap cleanup EXIT
 
@@ -54,10 +55,17 @@ ok "migrations applied"
 if psql -h 127.0.0.1 -p "$PORT" -U "$DB_USER" -d "$DB_SRC" -v ON_ERROR_STOP=1 -q <<'SQL'
 insert into hospital_organizations (id, code, name, created_at, updated_at, version)
  values ('11111111-1111-1111-1111-111111111111','BK-ORG','Synthetic Backup Org',now(),now(),0);
-insert into branches (id, organization_id, code, name, location_label, active, created_at, updated_at, version)
- values ('22222222-2222-2222-2222-222222222222','11111111-1111-1111-1111-111111111111','BK-BR','Synthetic Backup Branch','Synthetic Backup Location',true,now(),now(),0);
-insert into patients (id, branch_id, medical_record_number, full_name, active, created_at, updated_at, version)
- values ('33333333-3333-3333-3333-333333333333','22222222-2222-2222-2222-222222222222','BK-MRN-0001','Synthetic Backup Patient',true,now(),now(),0);
+-- Shipped V5–V7 schema requires explicit hospital ownership, and V6
+-- requires a same-network patient owner/access grant. Do not weaken those
+-- constraints to preserve the older synthetic backup rehearsal.
+insert into hospitals (id, organization_id, code, name, region_label, time_zone, active, created_at, updated_at, version)
+ values ('44444444-4444-4444-4444-444444444444','11111111-1111-1111-1111-111111111111','BK-HOSP','Synthetic Backup Hospital','Synthetic Region','UTC',true,now(),now(),0);
+insert into branches (id, organization_id, hospital_id, code, name, location_label, active, created_at, updated_at, version)
+ values ('22222222-2222-2222-2222-222222222222','11111111-1111-1111-1111-111111111111','44444444-4444-4444-4444-444444444444','BK-BR','Synthetic Backup Branch','Synthetic Backup Location',true,now(),now(),0);
+insert into patients (id, branch_id, organization_id, medical_record_number, full_name, active, created_at, updated_at, version)
+ values ('33333333-3333-3333-3333-333333333333','22222222-2222-2222-2222-222222222222','11111111-1111-1111-1111-111111111111','BK-MRN-0001','Synthetic Backup Patient',true,now(),now(),0);
+insert into patient_hospital_access (id, patient_id, hospital_id, organization_id, status, source, created_at, updated_at, version)
+ values ('55555555-5555-5555-5555-555555555555','33333333-3333-3333-3333-333333333333','44444444-4444-4444-4444-444444444444','11111111-1111-1111-1111-111111111111','ACTIVE','LOCAL_REGISTRATION',now(),now(),0);
 SQL
 then ok "synthetic cohort seeded"
 else echo "FAIL: synthetic cohort seed"; exit 1
@@ -67,30 +75,30 @@ echo "== positive path =="
 "$HERE/backup-postgres.sh" 127.0.0.1 "$PORT" "$DB_SRC" "$DB_USER" "$OUT_BASE" || { echo "FAIL: backup"; exit 1; }
 [ -s "$OUT_BASE.dump" ] || { echo "FAIL: archive empty/missing"; exit 1; }
 ok "backup archive non-empty"
-( cd /tmp && sha256sum -c "$OUT_BASE.dump.sha256" >/dev/null ) && ok "checksum verified"
+( cd "$SCRATCH_DIR" && sha256sum -c "$OUT_BASE.dump.sha256" >/dev/null ) && ok "checksum verified"
 
 "$HERE/restore-postgres.sh" 127.0.0.1 "$PORT" "$OUT_BASE.dump" "$DB_TGT" "$DB_USER" || { echo "FAIL: restore"; exit 1; }
 ok "restore into fresh disposable target"
 
-"$HERE/verify-database-invariants.sh" 127.0.0.1 "$PORT" "$DB_SRC" "$DB_USER" > /tmp/inv_source.txt || { echo "FAIL: verify source"; exit 1; }
-"$HERE/verify-database-invariants.sh" 127.0.0.1 "$PORT" "$DB_TGT" "$DB_USER" > /tmp/inv_target.txt || { echo "FAIL: verify target"; exit 1; }
-if diff <(grep '^count ' /tmp/inv_source.txt) <(grep '^count ' /tmp/inv_target.txt) >/dev/null; then
+"$HERE/verify-database-invariants.sh" 127.0.0.1 "$PORT" "$DB_SRC" "$DB_USER" > "$SCRATCH_DIR/inv_source.txt" || { echo "FAIL: verify source"; exit 1; }
+"$HERE/verify-database-invariants.sh" 127.0.0.1 "$PORT" "$DB_TGT" "$DB_USER" > "$SCRATCH_DIR/inv_target.txt" || { echo "FAIL: verify target"; exit 1; }
+if diff <(grep '^count ' "$SCRATCH_DIR/inv_source.txt") <(grep '^count ' "$SCRATCH_DIR/inv_target.txt") >/dev/null; then
   ok "allowlisted counts identical source vs restored"
 else
-  echo "FAIL: invariant counts differ"; diff <(grep '^count ' /tmp/inv_source.txt) <(grep '^count ' /tmp/inv_target.txt); exit 1
+  echo "FAIL: invariant counts differ"; diff <(grep '^count ' "$SCRATCH_DIR/inv_source.txt") <(grep '^count ' "$SCRATCH_DIR/inv_target.txt"); exit 1
 fi
 
 echo "== negative probes (every one must refuse; source must stay unchanged) =="
-"$HERE/backup-postgres.sh" db.internal.example.com "$PORT" "$DB_SRC" "$DB_USER" /tmp/x 2>/dev/null && { echo "FAIL: unsafe host accepted"; exit 1; } || deny "unsafe host backup refused"
-( PGPASSWORD= "$HERE/backup-postgres.sh" 127.0.0.1 "$PORT" "$DB_SRC" "$DB_USER" /tmp/x 2>/dev/null ) && { echo "FAIL: missing PGPASSWORD accepted"; exit 1; } || deny "missing PGPASSWORD refused"
-"$HERE/restore-postgres.sh" 127.0.0.1 "$PORT" /tmp/does-not-exist.dump medicore_phase4_bk_neg "$DB_USER" 2>/dev/null && { echo "FAIL: missing archive accepted"; exit 1; } || deny "missing archive refused"
-head -c 4096 /dev/urandom > /tmp/medicore_phase4_corrupt.dump
-"$HERE/restore-postgres.sh" 127.0.0.1 "$PORT" /tmp/medicore_phase4_corrupt.dump medicore_phase4_bk_neg "$DB_USER" 2>/dev/null && { echo "FAIL: corrupt archive accepted"; exit 1; } || deny "corrupt archive refused"
+"$HERE/backup-postgres.sh" db.internal.example.com "$PORT" "$DB_SRC" "$DB_USER" "$SCRATCH_DIR/blocked" 2>/dev/null && { echo "FAIL: unsafe host accepted"; exit 1; } || deny "unsafe host backup refused"
+( PGPASSWORD= "$HERE/backup-postgres.sh" 127.0.0.1 "$PORT" "$DB_SRC" "$DB_USER" "$SCRATCH_DIR/blocked" 2>/dev/null ) && { echo "FAIL: missing PGPASSWORD accepted"; exit 1; } || deny "missing PGPASSWORD refused"
+"$HERE/restore-postgres.sh" 127.0.0.1 "$PORT" "$SCRATCH_DIR/does-not-exist.dump" medicore_phase4_bk_neg "$DB_USER" 2>/dev/null && { echo "FAIL: missing archive accepted"; exit 1; } || deny "missing archive refused"
+head -c 4096 /dev/urandom > "$SCRATCH_DIR/medicore_phase4_corrupt.dump"
+"$HERE/restore-postgres.sh" 127.0.0.1 "$PORT" "$SCRATCH_DIR/medicore_phase4_corrupt.dump" medicore_phase4_bk_neg "$DB_USER" 2>/dev/null && { echo "FAIL: corrupt archive accepted"; exit 1; } || deny "corrupt archive refused"
 RESTORE_SOURCE_DB="$DB_SRC" "$HERE/restore-postgres.sh" 127.0.0.1 "$PORT" "$OUT_BASE.dump" "$DB_SRC" "$DB_USER" 2>/dev/null && { echo "FAIL: target==source accepted"; exit 1; } || deny "target==source refused"
 "$HERE/restore-postgres.sh" 127.0.0.1 "$PORT" "$OUT_BASE.dump" postgres "$DB_USER" 2>/dev/null && { echo "FAIL: non-disposable name accepted"; exit 1; } || deny "non-disposable target name refused"
 "$HERE/restore-postgres.sh" 127.0.0.1 "$PORT" "$OUT_BASE.dump" "$DB_TGT" "$DB_USER" 2>/dev/null && { echo "FAIL: overwrite accepted"; exit 1; } || deny "existing-target overwrite refused"
-"$HERE/verify-database-invariants.sh" 127.0.0.1 "$PORT" "$DB_SRC" "$DB_USER" > /tmp/inv_source_again.txt || { echo "FAIL: verify source after negatives"; exit 1; }
-if diff <(grep '^count ' /tmp/inv_source.txt) <(grep '^count ' /tmp/inv_source_again.txt) >/dev/null; then
+"$HERE/verify-database-invariants.sh" 127.0.0.1 "$PORT" "$DB_SRC" "$DB_USER" > "$SCRATCH_DIR/inv_source_again.txt" || { echo "FAIL: verify source after negatives"; exit 1; }
+if diff <(grep '^count ' "$SCRATCH_DIR/inv_source.txt") <(grep '^count ' "$SCRATCH_DIR/inv_source_again.txt") >/dev/null; then
   ok "source unchanged after all negative probes"
 else
   echo "FAIL: source changed by negative probes"; exit 1

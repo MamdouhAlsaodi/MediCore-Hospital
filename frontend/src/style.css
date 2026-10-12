@@ -196,6 +196,7 @@ header span { color: var(--muted); }
 
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; margin: 28px 0; }
 .cards article, .panel { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 20px; }
+.cards article { min-width: 0; overflow-wrap: anywhere; }
 .cards small { display: block; color: var(--muted); text-transform: capitalize; }
 .cards strong { display: block; font-size: 28px; margin-top: 8px; }
 
@@ -204,7 +205,9 @@ header span { color: var(--muted); }
 .screen-boundary { margin-top: 28px; }
 
 @media (max-width: 760px) {
-  .app { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+  /* The hospital-aware context line is longer than the old branch label.
+     A min-content 1fr column can force viewport overflow before text wraps. */
+  .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; }
   aside {
     flex-direction: row;
     flex-wrap: wrap;
@@ -224,7 +227,7 @@ header span { color: var(--muted); }
   aside > p { display: none; }
   .whoami { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; margin: 0; min-width: 0; }
   .whoami-roles { font-size: 11px; }
-  .whoami-context { font-size: 11px; overflow-wrap: anywhere; }
+  .whoami-context { font-size: 11px; min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
   /* The selector joins the top bar as one full-width row under the identity. */
   .branch-selector { flex: 1 1 100%; min-width: 0; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin: 0; }
   .branch-selector select { width: 100%; min-width: 0; max-width: 100%; flex: 1 1 220px; padding: 6px 8px; }
@@ -247,6 +250,12 @@ header span { color: var(--muted); }
   .nav-link[aria-current='page'] { box-shadow: inset 0 -3px 0 var(--gold); }
 
   main { padding: 20px; }
+}
+
+@media (max-width: 560px) {
+  /* A two-column min-content card grid can exceed the narrow viewport even
+     when each individual metric appears short at desktop widths. */
+  .cards { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* Patients screen (Task 6) */
@@ -645,6 +654,120 @@ button.availability-retry:focus-visible {
      values wrap (overflow-wrap) and the wrap scrolls horizontally if needed. */
   .audit-table th,
   .audit-table td { padding: 8px; font-size: 13px; }
+}
+
+/* Transfers screen (Phase 5 US8, T147): list, request form, and detail panel
+   reusing the existing navy/gold identity — no new palette. Every action
+   button keeps a 44px-equivalent touch target and the table scrolls inside
+   its own wrap on narrow screens. */
+.transfers-actions { display: flex; justify-content: flex-start; margin-bottom: 14px; }
+.transfer-new {
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: 0;
+  cursor: pointer;
+  font-weight: 600;
+  background: var(--navy-2, #1d4ed8);
+  color: #fff;
+}
+.transfer-new:hover { background: var(--navy, #16337a); }
+.transfer-form { margin-top: 14px; }
+.transfer-form-grid {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  gap: 12px 16px;
+  align-items: center;
+  margin: 12px 0;
+}
+.transfer-form-grid label { font-size: 13px; color: var(--muted); }
+.transfer-form-grid select {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: inherit;
+  min-height: 44px;
+}
+.transfer-form-actions { display: flex; gap: 10px; }
+.transfer-save {
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: 0;
+  cursor: pointer;
+  font-weight: 600;
+  background: var(--gold, #b8860b);
+  color: #fff;
+}
+.transfer-save:disabled { opacity: 0.6; cursor: not-allowed; }
+.transfer-table-wrap { margin-top: 14px; overflow-x: auto; }
+.transfer-table {
+  width: 100%;
+  border-collapse: collapse;
+  border-radius: 12px;
+  font-size: 14px;
+}
+.transfer-table th,
+.transfer-table td {
+  text-align: left;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+.transfer-table thead th {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.transfer-table tbody tr:last-child td { border-bottom: 0; }
+.transfer-table button {
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.transfer-detail { margin-top: 14px; }
+.transfer-detail-line { margin: 6px 0; }
+.transfer-detail button {
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  margin-right: 8px;
+  margin-top: 6px;
+}
+.transfer-close { margin-top: 10px; }
+.transfer-accept-form {
+  display: grid;
+  grid-template-columns: 170px 1fr;
+  gap: 10px 14px;
+  align-items: center;
+  margin: 12px 0;
+}
+.transfer-accept-form label { font-size: 13px; color: var(--muted); }
+.transfer-accept-form select {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: inherit;
+  min-height: 44px;
+}
+.transfer-empty { margin-top: 14px; }
+
+@media (max-width: 560px) {
+  /* The transfer form collapses to one column with 44px targets, the action
+     rows stack, and the list scrolls horizontally inside its wrap. */
+  .transfer-form-grid { grid-template-columns: 1fr; gap: 0; }
+  .transfer-accept-form { grid-template-columns: 1fr; gap: 0; }
+  .transfer-form-actions { flex-direction: column; align-items: stretch; }
+  .transfer-table th,
+  .transfer-table td { padding: 8px; font-size: 13px; }
+  .transfer-detail button { width: 100%; margin-right: 0; }
 }
 
 /* Admissions screen (docs/plan2.md Task 2): list with status badges, the

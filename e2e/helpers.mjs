@@ -7,8 +7,8 @@ import { expect } from '@playwright/test';
 // assertions for every deliberate non-2xx, and a strict guard that fails the
 // run on any console/page error that was not explicitly allowed (T084).
 
-export const MAIN_BRANCH_LINE = 'Demo Synthetic Hospital — Demo Main Branch';
-export const NORTH_BRANCH_LINE = 'Demo Synthetic Hospital — Demo North Branch';
+export const MAIN_BRANCH_LINE = 'Demo Synthetic Hospital — Demo Legacy Hospital — Demo Main Branch';
+export const NORTH_BRANCH_LINE = 'Demo Synthetic Hospital — Demo Legacy Hospital — Demo North Branch';
 
 export function runTag() {
   return process.env.E2E_RUN_TAG ?? 'e2e';
@@ -86,22 +86,23 @@ export async function apiLogin(request, username, password) {
 
 // Switches the acting context through the real /api/auth/context endpoint and
 // returns the replacement session. Resolves the branch id from the server's
-// branch list by the branch CODE (e.g. DEMO-BR-002) — assignments carry no
-// branch labels at login (organization-scope admins get one assignment).
+// server-issued hierarchy by branch CODE (e.g. DEMO-BR-002). The legacy
+// /api/branches response omits hospitalId; context selection must not guess it.
 export async function switchContextToBranch(request, session, branchCode) {
-  const branchesResponse = await request.get(
-    `${process.env.REVIEW_API_ORIGIN}/api/branches`,
+  const hierarchyResponse = await request.get(
+    `${process.env.REVIEW_API_ORIGIN}/api/network/hierarchy`,
     { headers: bearer(session) }
   );
-  expect(branchesResponse.status(), 'GET /api/branches must be exactly 200').toBe(200);
-  const branches = await branchesResponse.json();
+  expect(hierarchyResponse.status(), 'GET /api/network/hierarchy must be exactly 200').toBe(200);
+  const hierarchy = await hierarchyResponse.json();
+  const branches = hierarchy.hospitals.flatMap((hospital) => hospital.branches);
   const branch = branches.find((candidate) => candidate.code === branchCode);
   expect(branch, `server must list branch ${branchCode}`).toBeTruthy();
   const assignment = session.assignments.find((candidate) => candidate.enabled);
   expect(assignment, 'server must have issued an enabled assignment').toBeTruthy();
   const response = await request.post(`${process.env.REVIEW_API_ORIGIN}/api/auth/context`, {
     headers: bearer(session),
-    data: { assignmentId: assignment.id, branchId: branch.id },
+    data: { assignmentId: assignment.id, hospitalId: branch.hospitalId, branchId: branch.id },
   });
   expect(response.status(), 'acting-context switch must succeed with exact status 200').toBe(200);
   return response.json();
@@ -160,11 +161,19 @@ export async function selectBranchByLabel(page, branchLabelText) {
 }
 
 export async function assertNoHorizontalOverflow(page, label) {
-  const overflow = await page.evaluate(() => ({
-    document: document.documentElement.scrollWidth - document.documentElement.clientWidth,
-    body: document.body.scrollWidth - document.body.clientWidth,
-  }));
-  expect(overflow.document, `${label}: horizontal page overflow`).toBeLessThanOrEqual(0);
+  const overflow = await page.evaluate(() => {
+    const width = document.documentElement.clientWidth;
+    return {
+      document: document.documentElement.scrollWidth - width,
+      body: document.body.scrollWidth - document.body.clientWidth,
+      // Geometry and tag/class only; never log visible clinical text/IDs.
+      outside: [...document.querySelectorAll('*')].map((el) => {
+        const rect = el.getBoundingClientRect();
+        return { node: `${el.tagName.toLowerCase()}.${String(el.className).slice(0, 60)}`, right: Math.round(rect.right), width: Math.round(rect.width) };
+      }).filter((item) => item.right > width + 1).slice(0, 12),
+    };
+  });
+  expect(overflow.document, `${label}: horizontal page overflow ${JSON.stringify(overflow.outside)}`).toBeLessThanOrEqual(0);
   expect(overflow.body, `${label}: horizontal body overflow`).toBeLessThanOrEqual(0);
 }
 

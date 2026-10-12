@@ -113,6 +113,22 @@ export const PERMISSIONS = {
   audit: {
     read: ['ADMIN'],
   },
+  // Phase 5 US8 (T140): the transfer destination mirrors the SecurityConfig
+  // family rule "/api/transfers/** -> hasAnyRole(ADMIN, DOCTOR, NURSE)".
+  // RECEPTIONIST and every other operational role stay off the screen the
+  // same way the server refuses their requests. The per-command source/
+  // destination role and hospital narrowing (T089: source-side actions for
+  // DOCTOR/NURSE/ADMIN of the source hospital; destination accept/reject/
+  // complete for DOCTOR/ADMIN of the destination hospital; a wrong HOSPITAL
+  // is a generic 404) stays entirely server-side — the screen only lists
+  // what the server returns for the acting context. UI mirroring only;
+  // SecurityConfig stays authoritative.
+  transfer: {
+    read: ['ADMIN', 'DOCTOR', 'NURSE'],
+    request: ['ADMIN', 'DOCTOR', 'NURSE'],
+    sourceTransition: ['ADMIN', 'DOCTOR', 'NURSE'],
+    destinationDecision: ['ADMIN', 'DOCTOR'],
+  },
 };
 
 // can(session, action, resource) — the only capability question the UI asks.

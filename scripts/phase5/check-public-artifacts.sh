@@ -59,7 +59,9 @@ MRUNTIME='medicore-runtime'
 HOME_PAT='/ho''me/[A-Za-z0-9._-]+/'
 ROOT_PAT='/(ro''ot|Us''ers)/[A-Za-z0-9._-]+/'
 PRIVTOP='(^|[^0-9.])(10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|192\.168\.[0-9]{1,3}\.[0-9]{1,3}|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3})([^0-9.]|$)'
-CRED1='(password|passwd|secret|api[_-]?key|access[_-]?token|token)[[:space:]]*[:=][[:space:]]*["'"'"']?[-A-Za-z0-9_.=+/]{16,}'
+# Quoted literals may contain dots (JWT-like values); unquoted bare values
+# exclude dots so references such as payload.accessToken are not credentials.
+CRED1='(password|passwd|secret|api[_-]?key|access[_-]?token|token)[[:space:]]*[:=][[:space:]]*(["'"'"'][-A-Za-z0-9_.=+/]{16,}|[-A-Za-z0-9_=+/]{16,})'
 CRED2='(DB|POSTGRES|SPRING_DATASOURCE|HOSPITAL)_[A-Z_]*(PASSWORD|SECRET|TOKEN)[[:space:]]*=[[:space:]]*["'"'"']?[A-Za-z0-9+/_-]{8,}'
 CRED3="[Bb]earer[[:space:]]+[-A-Za-z0-9_.=+/]{20,}"
 CRED4='(gh[pousr]_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|xox[baprs][-][A-Za-z0-9-]{10,}|sk[-][A-Za-z0-9]{20,})'
@@ -209,7 +211,9 @@ run_scan() {
 # this source file never contains a matchable literal.
 # ---------------------------------------------------------------------------
 self_test() {
-  STDIR="$(mktemp -d /tmp/phase5_guard_selftest.XXXXXX)" || exit 2
+  local scratch_base="${TMPDIR:-${XDG_CACHE_HOME:-$HOME/.cache}}"
+  mkdir -p "$scratch_base" || exit 2
+  STDIR="$(mktemp -d "$scratch_base/phase5_guard_selftest.XXXXXX")" || exit 2
   trap 'rm -rf "$STDIR"' EXIT INT TERM
   local tmp="$STDIR"
 
@@ -260,8 +264,11 @@ EOF
   # Values must never be printed: findings show path:line only.
   out="$(run_scan "$tmp/cred.txt" "$tmp/leak.txt" "$tmp/claims.txt" 2>&1)"; rc=$?
   [ "$rc" -eq 1 ] || { echo 'SELF-TEST FAIL: mixed scan rc='$rc >&2; return 1; }
-  printf '%s' "$out" | grep -q 's3cr3tv4lue' && { echo 'SELF-TEST FAIL: secret value leaked to output' >&2; return 1; }
-  printf '%s' "$out" | grep -qE '192\.168|/home/' && { echo 'SELF-TEST FAIL: topology/path value leaked to output' >&2; return 1; }
+  # Findings include the test candidate's scratch filename; exclude that
+  # path itself when checking whether a scanned line's value leaked.
+  local redacted="${out//"$tmp"/<scratch>}"
+  printf '%s' "$redacted" | grep -q 's3cr3tv4lue' && { echo 'SELF-TEST FAIL: secret value leaked to output' >&2; return 1; }
+  printf '%s' "$redacted" | grep -qE '192\.168|/home/' && { echo 'SELF-TEST FAIL: topology/path value leaked to output' >&2; return 1; }
 
   # Missing explicit candidate must fail closed.
   out="$(run_scan "$tmp/does-not-exist.md" 2>&1)"; rc=$?

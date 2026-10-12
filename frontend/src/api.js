@@ -18,8 +18,8 @@ function messageFor(status) {
   return 'The request failed (' + status + '). Please try again.';
 }
 
-export async function apiFetch(path, { method = 'GET', token, body, onUnauthorized } = {}) {
-  const headers = {};
+export async function apiFetch(path, { method = 'GET', token, body, headers: extraHeaders, onUnauthorized } = {}) {
+  const headers = { ...extraHeaders };
   if (token) headers.Authorization = 'Bearer ' + token;
   if (body !== undefined) headers['Content-Type'] = 'application/json';
 

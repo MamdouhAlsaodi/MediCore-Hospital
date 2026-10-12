@@ -133,3 +133,25 @@ Terminal fresh run (2026-09-16): **PASS** — `scripts/phase4/acceptance.sh` exi
 ## Phase 4 stop gate
 
 Phase 4 closes with the terminal canonical acceptance run and the FR-001..020 / SC-001..010 evidence map in `docs/evidence/phase4-verification.md`. A terminal PASS authorizes exactly the synthetic Training/Portfolio demonstration scope — no Pilot, no real data, no clinical use, no production/capacity/SLA/compliance claim, and no deployment or release without the owner's explicit, separate decision.
+
+---
+
+# Phase 5 — enterprise hospital network operations (accepted locally; synthetic only)
+
+**Verdict: canonical local PASS, limited to the synthetic Training/Portfolio scope.** The fresh run recorded in `docs/evidence/phase5-verification.md` completed all 15 acceptance checkpoints and exited 0. The planning-time `NOT RUN` table in `specs/005-enterprise-hospital-network-operations/traceability.md` and the earlier pre-canonical `PARTIAL` checkpoint in the evidence file are retained as historical snapshots; current per-ID mapping is in that traceability file.
+
+## Fresh canonical verification
+
+- Phase 4 baseline: **13/13** stages passed.
+- Phase 5 canonical runner: **15/15 checkpoints passed, exit 0**; untracked local log: `$TMPDIR/phase5-canonical.log`.
+- Backend: **392 tests, 0 failures, 0 errors, 0 skipped** (`-Dapi.version=1.44`); separate disposable PostgreSQL transfer concurrency gate passed.
+- Frontend: **343 tests / 24 files passed**, with strict typecheck and production build in the passing gate.
+- Browser: **7 passed, 3 intentionally skipped** (mobile duplicate cases). Compose health, browser journey, restart/recovery, and database-loss readiness/liveness checks passed; the run verified 7 applied migrations and 0 pending after restart.
+- Migration: empty-database and Phase 4-shaped disposable PostgreSQL rehearsals passed. OpenAPI served-contract drift check was clean. Public artifact scan was clean. Audit/log/metrics and documentation-traceability stages passed.
+- Cleanup: canonical `disposable-cleanup-proof` passed; disposable containers, network, and volumes were removed.
+
+The full FR-001..035 and SC-001..014 mapping identifies concrete source/test coverage pointers separately from direct canonical stage execution. Passing a suite or naming a test is not presented as independent proof outside the stages that ran it.
+
+## Limits and stop gate
+
+All evidence is local, synthetic, and non-clinical. It does not demonstrate production readiness, clinical safety/use, real-data migration, regulatory or security certification, SaaS tenancy, distributed concurrency, production capacity, or SLA/SLO performance. Three mobile duplicate E2E cases were intentionally skipped. No deployment, release, pilot, or real-data use is authorized. No commit or push was performed.

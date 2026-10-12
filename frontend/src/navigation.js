@@ -19,6 +19,12 @@
 //                             own branch, or own department — so navigating
 //                             as ADMIN never sees more than the server
 //                             returns for that scope)
+//   - /api/transfers/**     -> ADMIN, DOCTOR, NURSE (Phase 5 US8 T140: the
+//                             visible list is the server-derived source-or-
+//                             destination slice of the acting hospital, and
+//                             every per-command role/hospital narrowing
+//                             (T089) stays server-side — the wrong hospital
+//                             is a generic 404, the wrong role a 403)
 import { PERMISSIONS } from './authorization.js';
 
 const DESTINATIONS = [
@@ -76,6 +82,17 @@ const DESTINATIONS = [
     label: 'Audit',
     heading: 'Audit Evidence',
     roles: PERMISSIONS.audit.read,
+    implemented: true,
+  },
+  {
+    // Phase 5 US8 (T140): inter-hospital transfers. The role set mirrors the
+    // server family rule on /api/transfers/** (ADMIN, DOCTOR, NURSE); the
+    // visible transfer list and the per-command permissions stay server
+    // decisions inside the screen — navigating here never widens a scope.
+    id: 'transfers',
+    label: 'Transfers',
+    heading: 'Transfers',
+    roles: PERMISSIONS.transfer.read,
     implemented: true,
   },
 ];

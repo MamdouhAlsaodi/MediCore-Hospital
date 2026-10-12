@@ -27,16 +27,21 @@ describe('navigation registry (plan1.md Task 9 + plan2.md Tasks 2-4)', () => {
 
   it('offers ADMIN every destination including invoices and the audit evidence screen', () => {
     expect(destinationIds(['ADMIN'])).toEqual(
-      ['dashboard', 'patients', 'appointments', 'admissions', 'emergency-visits', 'beds', 'invoices', 'audit'],
+      ['dashboard', 'patients', 'appointments', 'admissions', 'emergency-visits', 'beds', 'invoices', 'audit', 'transfers'],
     );
   });
 
   it('offers the four clinical-administrative roles the admissions, emergency-visits, and beds destinations but never audit or invoices', () => {
-    for (const role of ['DOCTOR', 'NURSE', 'RECEPTIONIST']) {
+    for (const role of ['DOCTOR', 'NURSE']) {
       expect(destinationIds([role])).toEqual(
-        ['dashboard', 'patients', 'appointments', 'admissions', 'emergency-visits', 'beds'],
+        ['dashboard', 'patients', 'appointments', 'admissions', 'emergency-visits', 'beds', 'transfers'],
       );
     }
+    // RECEPTIONIST is patient/appointment/admission/bed-capable but never a
+    // transfer role (the server family rule on /api/transfers/** refuses it).
+    expect(destinationIds(['RECEPTIONIST'])).toEqual(
+      ['dashboard', 'patients', 'appointments', 'admissions', 'emergency-visits', 'beds'],
+    );
   });
 
   it('offers BILLING exactly the dashboard plus the invoices family destination', () => {
@@ -57,17 +62,41 @@ describe('navigation registry (plan1.md Task 9 + plan2.md Tasks 2-4)', () => {
 
   it('offers multi-role sessions the union of their destination sets', () => {
     // Combining roles may add destinations but never widens past the
-    // per-role sets: audit stays reachable through ADMIN only.
+    // per-role sets: audit stays reachable through ADMIN only, transfers
+    // through the three server transfer roles.
     expect(destinationIds(['DOCTOR', 'BILLING'])).toEqual(
-      ['dashboard', 'patients', 'appointments', 'admissions', 'emergency-visits', 'beds', 'invoices'],
+      ['dashboard', 'patients', 'appointments', 'admissions', 'emergency-visits', 'beds', 'invoices', 'transfers'],
     );
     expect(destinationIds(['LAB_TECH', 'BILLING'])).toEqual(['dashboard', 'invoices']);
     expect(destinationIds(['RECEPTIONIST', 'HR'])).toEqual(
       ['dashboard', 'patients', 'appointments', 'admissions', 'emergency-visits', 'beds'],
     );
     expect(destinationIds(['ADMIN', 'LAB_TECH'])).toEqual(
-      ['dashboard', 'patients', 'appointments', 'admissions', 'emergency-visits', 'beds', 'invoices', 'audit'],
+      ['dashboard', 'patients', 'appointments', 'admissions', 'emergency-visits', 'beds', 'invoices', 'audit', 'transfers'],
     );
+  });
+
+  it('transfers is an implemented destination for exactly the three transfer roles (T139)', () => {
+    // T139: the Transfers destination mirrors the /api/transfers/** family
+    // rule — ADMIN, DOCTOR, NURSE — and nothing else. RECEPTIONIST and the
+    // dashboard-only roles never see it, exactly as the server refuses them.
+    expect(destinationIds(['ADMIN'])).toEqual(
+      ['dashboard', 'patients', 'appointments', 'admissions', 'emergency-visits', 'beds', 'invoices', 'audit', 'transfers'],
+    );
+    for (const role of ['DOCTOR', 'NURSE']) {
+      expect(destinationIds([role])).toEqual(
+        ['dashboard', 'patients', 'appointments', 'admissions', 'emergency-visits', 'beds', 'transfers'],
+      );
+    }
+    for (const role of ['RECEPTIONIST', 'BILLING', 'LAB_TECH', 'RADIOLOGY_TECH', 'PHARMACIST', 'HR', 'STAFF']) {
+      expect(destinationIds([role])).not.toContain('transfers');
+    }
+    const transfers = permittedDestinations(sessionFor('NURSE').roles)
+      .find((destination) => destination.id === 'transfers');
+    expect(transfers).toBeDefined();
+    expect(transfers.implemented).toBe(true);
+    expect(transfers.label).toBe('Transfers');
+    expect(transfers.heading).toBe('Transfers');
   });
 
   it('admissions is an implemented destination with its own label and heading', () => {

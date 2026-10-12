@@ -186,3 +186,32 @@ Dated baseline results, environment assumptions, the regression budget definitio
 
 ## PostgreSQL review profile (Phase 4)
 Use the `postgres` Spring profile only with runtime-provided `DB_URL`, `DB_USER`, and `DB_PASSWORD` (Flyway-managed, `validate` mode — never `ddl-auto=update`). The Phase 4 review stack (Docker Compose), disposable migration/backup/restore rehearsals, and the canonical acceptance command supersede the earlier "later" note above; public deployment remains outside this project's scope.
+
+## Phase 5 local review and migration (synthetic only)
+
+Phase 5 review is local and disposable only. Do not use real patient data, shared databases, production credentials, or a remote Docker daemon. The scripts generate disposable process-local credentials; do not print, persist, or reuse them. No Phase 5 command is a deployment or release instruction.
+
+### Phase 4-shaped migration rehearsal
+
+The focused rehearsal owns its Testcontainers PostgreSQL instance, runs synthetic Phase 4-shaped migration fixtures, and removes its resources through Testcontainers cleanup. It does not connect to a caller-selected database or Compose project. Requirements: local Docker daemon, JDK 21, and Maven running on JDK 21.
+
+```bash
+scripts/phase5/migrate-phase4-shaped-postgres.sh --check-capability
+scripts/phase5/migrate-phase4-shaped-postgres.sh run
+```
+
+The first command is read-only and returns `2`/BLOCKED when local Docker or toolchain capability is unavailable. The second runs focused V5 backfill/refusal tests for Phase 4-shaped data. This is not by itself proof of all Phase 5 migration, workflow, or acceptance criteria.
+
+### Disposable browser/recovery journey
+
+The container journey requires Docker Compose and npm. It installs pinned root dependencies with lifecycle scripts, audit, and fund disabled; generates secrets in-process; starts a uniquely named Compose project on selected loopback ports; proves ownership/health; runs the Phase 5 Playwright journeys; and tears down the project and volumes on exit.
+
+```bash
+scripts/phase5/container-network-journey.sh run
+```
+
+Do not bring up the review stack manually or pass commands that act on an unrelated Compose project. The script exposes explicit owner-checked control actions (`restart-backend`, `stop-postgres`, `start-postgres`, `assert-no-pending-migrations`, and `down`) for the E2E runner; they require that run's `E2E_STACK_PROJECT` and credentials in the same process environment, so they are not standalone operator commands. The run's teardown removes owned containers, network, and volumes.
+
+### Current Phase 5 gate status
+
+At this documentation revision, Phase 5 test results reported for the worktree are: backend **392/392** (including PostgreSQL Testcontainers), frontend **343/343**, browser **7/7 passed with 3 intentionally skipped mobile duplicates**, and OpenAPI drift **clean**. These focused results do not establish all requirements or an overall Phase 5 PASS. `scripts/phase5/acceptance.sh` and `scripts/phase5/test-transfer-concurrency.sh` are present, and the acceptance script lists 15 checkpoints. It is not executable as checked out; use `bash scripts/phase5/acceptance.sh ...` if invoking it. Its full acceptance run and final evidence/traceability review have not been established by this documentation change. See [`docs/implementation-status.md`](implementation-status.md) for the current partial verdict.

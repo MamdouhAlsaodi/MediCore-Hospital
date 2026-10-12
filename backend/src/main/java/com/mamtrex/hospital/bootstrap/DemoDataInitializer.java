@@ -23,6 +23,9 @@ import com.mamtrex.hospital.organization.HospitalFacilityRepository;
 import com.mamtrex.hospital.organization.HospitalOrganization;
 import com.mamtrex.hospital.organization.HospitalOrganizationRepository;
 import com.mamtrex.hospital.patient.Patient;
+import com.mamtrex.hospital.patient.PatientAccessSource;
+import com.mamtrex.hospital.patient.PatientHospitalAccess;
+import com.mamtrex.hospital.patient.PatientHospitalAccessRepository;
 import com.mamtrex.hospital.patient.PatientRepository;
 import com.mamtrex.hospital.staff.StaffAvailability;
 import com.mamtrex.hospital.staff.StaffAvailabilityRepository;
@@ -111,6 +114,8 @@ import java.util.UUID;
 public class DemoDataInitializer implements ApplicationRunner {
 
     private final PatientRepository patientRepository;
+    /** Phase 5 US8: seeded patients need their LOCAL_REGISTRATION access grant to be readable. */
+    private final PatientHospitalAccessRepository accessRepository;
     private final StaffMemberRepository staffMemberRepository;
     private final StaffAvailabilityRepository staffAvailabilityRepository;
     private final AppointmentRepository appointmentRepository;
@@ -150,7 +155,8 @@ public class DemoDataInitializer implements ApplicationRunner {
                                HospitalFacilityRepository hospitalRepository,
                                BranchRepository branchRepository,
                                DepartmentRepository departmentRepository,
-                               AuditService auditService) {
+                               AuditService auditService,
+                               PatientHospitalAccessRepository accessRepository) {
         this.patientRepository = patientRepository;
         this.staffMemberRepository = staffMemberRepository;
         this.staffAvailabilityRepository = staffAvailabilityRepository;
@@ -165,6 +171,7 @@ public class DemoDataInitializer implements ApplicationRunner {
         this.branchRepository = branchRepository;
         this.departmentRepository = departmentRepository;
         this.auditService = auditService;
+        this.accessRepository = accessRepository;
     }
 
     @Override
@@ -488,12 +495,23 @@ public class DemoDataInitializer implements ApplicationRunner {
      */
     private Patient seedPatient(Branch branch, String mrn, String fullName, LocalDate dateOfBirth, String sex,
                                 String phone, String email, String nationalId, String address) {
-        return patientRepository.findByMedicalRecordNumber(mrn).orElseGet(() -> {
+        Patient patient = patientRepository.findByMedicalRecordNumber(mrn).orElseGet(() -> {
             Patient saved = patientRepository.save(
                     new Patient(branch, mrn, fullName, dateOfBirth, sex, phone, email, nationalId, address));
             recordSystemEvent(branch, "CREATE", "Patient", saved.getId().toString(), mrn);
             return saved;
         });
+        // Phase 5 (FR-012): visibility requires an ACTIVE hospital grant.
+        // Repair pre-US8 synthetic patients seeded after V6, but never restore
+        // access that a user deliberately revoked, nor adopt a colliding MRN.
+        if (patient.getBranch() == null || !branch.getId().equals(patient.getBranch().getId())) {
+            throw new IllegalStateException("Synthetic patient MRN is owned by a different branch: " + mrn);
+        }
+        if (!accessRepository.existsByPatientIdAndHospitalId(patient.getId(), branch.getHospital().getId())) {
+            accessRepository.save(new PatientHospitalAccess(patient, branch.getHospital(),
+                    PatientAccessSource.LOCAL_REGISTRATION, null));
+        }
+        return patient;
     }
 
     /**

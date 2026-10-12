@@ -1,6 +1,10 @@
 # Phase 5 Planning Traceability
 
-**Status:** Planned mappings only. Evidence columns remain `NOT RUN` until separately authorized implementation occurs.
+**Status:** The tables below are the original planning baseline; their `NOT RUN`
+cells are historical, not current verdicts. Current acceptance and the complete
+FR/SC-to-evidence mapping are in the **Fresh canonical acceptance mapping**
+section at the end of this file and in
+`docs/evidence/phase5-verification.md`.
 
 ## Functional requirements
 
@@ -54,4 +58,87 @@
 
 ## Planning gate
 
-The planning artifact is complete when all documents exist, contain no unresolved placeholders, task IDs are sequential, requirements are mapped, and only planning files changed. That gate does **not** change any `NOT RUN` implementation status.
+The planning artifact was complete when its documents existed, tasks were
+sequential, and requirements were mapped. This historical planning gate is not
+an implementation acceptance verdict; see the fresh acceptance mapping below.
+
+## Fresh canonical acceptance mapping (T166)
+
+**Current verdict (2026-10-12): PASS — local synthetic portfolio scope.** The
+fresh canonical run recorded in `docs/evidence/phase5-verification.md` exited
+0 with all 15 checkpoints passed. The historical `NOT RUN` cells above are
+deliberately retained as the planning snapshot; they are not current verdicts.
+
+Evidence notation: **Direct** means the named canonical stage executed that
+test/gate in this run; **coverage pointer** means the source/test documents
+what the requirement covers, but is not by itself an independently executed
+proof. Stage references resolve to `scripts/phase5/acceptance.sh` stage names;
+the combined `compose-health + desktop-mobile-journey + restart-recovery`
+checkpoint reports its three sub-results separately in the canonical log.
+Passing local synthetic evidence is not production, clinical, regulatory, or
+security certification.
+
+### Functional requirements
+
+| Requirement | Concrete implementation / coverage pointers | Direct canonical proof (stage → evidence) | Verdict |
+|---|---|---|---|
+| FR-001 | `backend/src/main/java/com/mamtrex/hospital/organization/`; `V5__hospital_network_hierarchy.sql`; `NetworkHierarchyApiTest` | `phase4-shaped-migration` → disposable Phase 4-shaped PostgreSQL migration; `backend-suite` → hierarchy API tests | PASS local |
+| FR-002 | `backend/src/main/java/com/mamtrex/hospital/auth/BranchAccessService.java`, `NetworkHierarchyService.java`; `NetworkHierarchyApiTest`, `HospitalFacilityTest` | `backend-suite` → hierarchy/ownership tests | PASS local |
+| FR-003 | `V5__hospital_network_hierarchy.sql`; `Phase5MigrationIntegrationTest` | `empty-migrations`, `phase4-shaped-migration` → migration test and shaped rehearsal | PASS local |
+| FR-004 | `backend/src/main/java/com/mamtrex/hospital/auth/BranchAccessService.java`, `auth/ActingContextService.java`; `NetworkHierarchyApiTest`, `SecurityAuthorizationTest` | `backend-suite` → hierarchy and immediate invalidation tests | PASS local |
+| FR-005 | `auth/ActingAssignment.java`, `auth/ActingContextService.java`; `HierarchicalActingContextApiTest` | `backend-suite` → auth/context tests | PASS local |
+| FR-006 | `auth/ActingContextService.java`, `auth/JwtFilter.java`; `HierarchicalActingContextApiTest`, `SecurityAuthorizationTest` | `backend-suite` → reload/tamper security tests | PASS local |
+| FR-007 | `auth/ActingContextService.java`, `frontend/src/features/network/NetworkContextSelector.jsx`; `HierarchicalActingContextApiTest`, `NetworkContextSelector.test.jsx` | `backend-suite`, `frontend-tests-build`; desktop/mobile journey sub-checkpoint | PASS local |
+| FR-008 | `api/openapi/medicore-v1.yaml`, `frontend/src/generated/api/`; `OpenApiContractTest`, acting-context tests | `backend-suite` → OpenAPI contract test; `openapi-drift` → served/tracked byte drift clean | PASS local |
+| FR-009 | `frontend/src/auth.js`, `frontend/src/AppShell.jsx`, `frontend/src/DashboardPage.jsx`; `AppShell.test.jsx`, `DashboardPage.test.jsx`, `e2e/phase5-context-discrimination.spec.js` | `frontend-tests-build`; `compose-health + desktop-mobile-journey + restart-recovery` → context-discrimination journeys | PASS local |
+| FR-010 | `patient/Patient.java`, `V6__network_patient_identity.sql`; `NetworkPatientIdentityApiTest`, `NetworkPatientConcurrencyIntegrationTest` | `empty-migrations`, `phase4-shaped-migration`, `backend-suite` | PASS local |
+| FR-011 | `patient/PatientHospitalAccess.java`, `PatientHospitalAccessRepository.java`; `NetworkPatientIdentityApiTest` | `backend-suite` → grant-scoped visibility tests | PASS local |
+| FR-012 | `V6__network_patient_identity.sql`, `DemoDataInitializer.java`; `Phase5MigrationIntegrationTest`, `DemoDataInitializerTest` | `empty-migrations`, `phase4-shaped-migration`, `backend-suite` | PASS local |
+| FR-013 | `patient/PatientService.java`; `NetworkPatientIdentityApiTest` | `backend-suite` → server-derived patient access tests | PASS local |
+| FR-014 | `transfer/TransferRequest.java`, `V7__transfer_reservation_idempotency.sql`; `TransferWorkflowApiTest` | `backend-suite` → transfer API suite | PASS local |
+| FR-015 | `transfer/TransferRequest.java`, `TransferWorkflowApiTest` | `backend-suite` → lifecycle-state tests | PASS local |
+| FR-016 | `transfer/TransferAuthorizationMatrixTest`, `TransferWorkflowApiTest` | `backend-suite`, `postgres-concurrency` | PASS local |
+| FR-017 | `transfer/TransferService.java`, `TransferBedReservation.java`; `TransferWorkflowApiTest`, `TransferConcurrencyIntegrationTest` | `backend-suite`, `postgres-concurrency` → disposable PostgreSQL race suite | PASS local |
+| FR-018 | `transfer/TransferService.java`, `TransferBedReservation.java`; `TransferWorkflowApiTest` | `backend-suite` → cancellation/rejection and reservation tests | PASS local |
+| FR-019 | `transfer/TransferService.java`, `TransferWorkflowApiTest` | `backend-suite`, `postgres-concurrency` | PASS local |
+| FR-020 | `backend/src/main/java/com/mamtrex/hospital/idempotency/IdempotencyService.java`, `TransferWorkflowApiTest`, `TransferV7IntegrityIntegrationTest` | `backend-suite`, `postgres-concurrency` → PostgreSQL transfer concurrency/integrity | PASS local |
+| FR-021 | `V7__transfer_reservation_idempotency.sql`; `TransferConcurrencyIntegrationTest`, `NetworkPatientConcurrencyIntegrationTest`, `TransferV7IntegrityIntegrationTest` | `postgres-concurrency` → disposable PostgreSQL concurrency stage | PASS local |
+| FR-022 | `reporting/FacilityCapacityService.java`; `FacilityCapacityApiTest` | `backend-suite` → capacity API tests | PASS local |
+| FR-023 | `reporting/FacilityCapacityApiTest`, `TransferConcurrencyIntegrationTest`; bed/admission service tests | `backend-suite`, `postgres-concurrency` | PASS local |
+| FR-024 | `reporting/NetworkOperationsDashboardService.java`; `NetworkOperationsDashboardApiTest`, `HospitalNetworkSummary.test.jsx` | `backend-suite`, `frontend-tests-build` | PASS local |
+| FR-025 | `reporting/NetworkOperationsDashboardService.java`; `NetworkOperationsDashboardApiTest`, `HospitalNetworkSummary.test.jsx` | `backend-suite`, `frontend-tests-build` | PASS local |
+| FR-026 | `audit/NetworkAudit*`, audit schema migration; `NetworkAuditIsolationApiTest` | `backend-suite`, `audit-log-metrics` | PASS local |
+| FR-027 | `transfer/TransferService.java`, `NetworkAuditIsolationApiTest`; `TransferWorkflowApiTest` | `backend-suite`, `postgres-concurrency`, `audit-log-metrics` | PASS local |
+| FR-028 | `NetworkHierarchyApiTest`, `NetworkPatientIdentityApiTest`, `NetworkAuditIsolationApiTest` | `backend-suite`, `audit-log-metrics` | PASS local |
+| FR-029 | `api/openapi/medicore-v1.yaml`, `frontend/src/generated/api/`; `OpenApiContractTest` | `backend-suite` → contract test; `openapi-drift` → no drift | PASS local |
+| FR-030 | `backend/src/main/resources/db/migration/V5__hospital_network_hierarchy.sql` through `V7__transfer_reservation_idempotency.sql`; `Phase5MigrationIntegrationTest` | `empty-migrations`, `phase4-shaped-migration` | PASS local |
+| FR-031 | `Phase5MigrationIntegrationTest`, `TransferConcurrencyIntegrationTest`, `NetworkPatientConcurrencyIntegrationTest` | `empty-migrations`, `phase4-shaped-migration`, `postgres-concurrency` → disposable PostgreSQL | PASS local |
+| FR-032 | `e2e/phase5-*.spec.js`; `frontend/src/AppShell.test.jsx`, `DashboardPage.test.jsx` | `compose-health + desktop-mobile-journey + restart-recovery` → 7 passed, 3 intentional mobile duplicate skips | PASS local |
+| FR-033 | `scripts/phase5/acceptance.sh`; this mapping and `docs/evidence/phase5-verification.md` | canonical runner itself: all 15 checkpoints, exit 0; `docs-traceability` | PASS local |
+| FR-034 | `scripts/phase5/check-public-artifacts.sh`; synthetic fixtures and evidence docs | `public-artifact-scan` → clean, including negative self-test | PASS local |
+| FR-035 | Phase 5 planning scope and stop-gate docs; no commit/push performed | `capability-negative-proof`, `docs-traceability`, `disposable-cleanup-proof`; this run made no commit/push/deploy/release | PASS for enforced boundary only |
+
+### Success criteria
+
+| Criterion | Concrete files / coverage pointers | Direct canonical proof (stage → evidence) | Verdict |
+|---|---|---|---|
+| SC-001 | `DemoDataInitializer.java`, `DemoDataInitializerTest`, `NetworkHierarchyApiTest` | `backend-suite` → synthetic fixture and deterministic hierarchy tests | PASS local |
+| SC-002 | `NetworkHierarchyApiTest`, `NetworkHierarchyService.java` | `backend-suite` → hierarchy auth/non-enumeration matrix | PASS local |
+| SC-003 | `HierarchicalActingContextApiTest`, `SecurityAuthorizationTest`, context-discrimination E2E | `backend-suite`, `frontend-tests-build`, desktop/mobile journey sub-checkpoint | PASS local |
+| SC-004 | `V6__network_patient_identity.sql`, `NetworkPatientIdentityApiTest`, `NetworkPatientConcurrencyIntegrationTest` | `empty-migrations`, `phase4-shaped-migration`, `backend-suite`, `postgres-concurrency` | PASS local |
+| SC-005 | `TransferWorkflowApiTest`, `TransferAuthorizationMatrixTest`, `TransferConcurrencyIntegrationTest` | `backend-suite`, `postgres-concurrency` | PASS local |
+| SC-006 | `TransferConcurrencyIntegrationTest`, `NetworkPatientConcurrencyIntegrationTest`; `test-transfer-concurrency.sh` | `postgres-concurrency` → disposable PostgreSQL race run | PASS local |
+| SC-007 | `IdempotencyService.java`, `TransferWorkflowApiTest`, `TransferV7IntegrityIntegrationTest` | `backend-suite`, `postgres-concurrency` | PASS local |
+| SC-008 | `FacilityCapacityApiTest`, `NetworkOperationsDashboardApiTest`, aggregate service tests | `backend-suite`; dashboard and capacity API proof | PASS local |
+| SC-009 | `e2e/phase5-*.spec.js`, `AppShell.test.jsx`, `DashboardPage.test.jsx` | desktop/mobile journey sub-checkpoint → 7 passed, 3 intentional skips; frontend tests | PASS local |
+| SC-010 | `OpenApiContractTest`, `api/openapi/medicore-v1.yaml`, generated client | `backend-suite`; `openapi-drift` → clean, exit 0 | PASS local |
+| SC-011 | `scripts/phase4/acceptance.sh`, Phase 4/5 evidence documents | `phase4-baseline` → 13/13; `backend-suite` → 392/392; frontend → 343/343 | PASS local |
+| SC-012 | `scripts/phase5/check-public-artifacts.sh`, `docs/evidence/phase5-verification.md` | `public-artifact-scan` → clean | PASS local |
+| SC-013 | `scripts/phase5/acceptance.sh`, cleanup proof | canonical runner → 15/15, exit 0; `disposable-cleanup-proof` passed | PASS local |
+| SC-014 | This per-ID mapping, `docs/evidence/phase5-verification.md`, implementation status | `docs-traceability` → passed; programmatic completeness check recorded in verification evidence | PASS local |
+
+**Scope / stop gate:** These verdicts authorize only a synthetic, local
+Training/Portfolio demonstration. The browser run intentionally skipped three
+mobile duplicate cases. No production deployment, release, pilot, real-data
+use, clinical operation, compliance/security certification, capacity/SLA claim,
+or SaaS tenancy is approved or implied. No commit or push is part of this work.

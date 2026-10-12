@@ -240,7 +240,7 @@ scripts/phase5/
 
 ## Security and Privacy Invariants
 
-- Never read `/home/server/.config/medicore/runtime.env` or `/home/server/medicore-runtime/trial.env`.
+- Never read protected runtime environment files or live credentials.
 - Never print credentials, tokens, connection strings, request bodies, patient names/contact fields, or private topology.
 - JWT claims point to assignment/context but do not grant authority; server reload is authoritative.
 - Network/hospital/branch/department IDs must match one active chain.

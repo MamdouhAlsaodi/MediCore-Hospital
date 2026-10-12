@@ -7,6 +7,7 @@ import InvoicesPage from './features/billing/InvoicesPage.jsx';
 import BedsPage from './features/beds/BedsPage.jsx';
 import AppointmentsPage from './features/appointments/AppointmentsPage.jsx';
 import AuditPage from './features/audit/AuditPage.jsx';
+import TransfersPage from './features/transfers/TransfersPage.jsx';
 import PatientsPage from './features/patients/PatientsPage.jsx';
 import NetworkContextSelector from './features/network/NetworkContextSelector.jsx';
 import { fetchNetworkHierarchy } from './features/network/networkApi.js';
@@ -49,6 +50,9 @@ function Screen({ destination, session, onSessionExpired, onNavigate }) {
   }
   if (destination.id === 'audit') {
     return <AuditPage session={session} onSessionExpired={onSessionExpired} />;
+  }
+  if (destination.id === 'transfers') {
+    return <TransfersPage session={session} onSessionExpired={onSessionExpired} />;
   }
   return (
     <DashboardPage

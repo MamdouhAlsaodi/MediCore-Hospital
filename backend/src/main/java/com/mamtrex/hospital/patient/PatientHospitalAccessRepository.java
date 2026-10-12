@@ -18,4 +18,7 @@ public interface PatientHospitalAccessRepository extends JpaRepository<PatientHo
 
     /** The visibility predicate: an ACTIVE grant for this hospital. */
     boolean existsByPatientIdAndHospitalIdAndStatus(UUID patientId, UUID hospitalId, PatientAccessStatus status);
+
+    /** Includes revoked history: demo bootstrap must not override a deliberate revocation. */
+    boolean existsByPatientIdAndHospitalId(UUID patientId, UUID hospitalId);
 }

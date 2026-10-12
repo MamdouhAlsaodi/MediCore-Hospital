@@ -115,7 +115,7 @@ exactly (61 events = 59 CREATE + 2 bed-assignment UPDATE).
 
 ## 6. Fresh commands and totals (the freshness authority)
 
-JDK: Temurin 21.0.12 (`/home/server/.cache/yui/jdk-21-temurin/bin` first on
+JDK: Temurin 21.0.12 (review host's JDK 21 toolchain on
 PATH); Maven runs through the containerized toolchain
 (`scripts/phase4/maven-toolchain.sh`).
 
@@ -211,7 +211,7 @@ person, credential, private topology, or protected runtime value appears here.
 
 ## 2. Fresh commands and totals (freshness authority)
 
-JDK: Temurin 21.0.12 (`/home/server/.cache/yui/jdk-21-temurin/bin` first on
+JDK: Temurin 21.0.12 (review host's JDK 21 toolchain first on
 PATH); Maven via `scripts/phase4/maven-toolchain.sh`.
 
 | Gate | Command | Result |
@@ -247,8 +247,7 @@ authorization.
 - Session-changed paths are exactly the packet allowlist (5 auth files, the new
   test, generated contract artifacts, evidence/tasks/reports). `BranchRepository`
   was touched and byte-reverted in-session; no residual delta.
-- Protected env (`/home/server/.config/medicore/runtime.env`,
-  `/home/server/medicore-runtime/trial.env`) never read; only H2/Testcontainers
+- Protected runtime environment files were never read; only H2/Testcontainers
   disposable stores used.
 - No dependency install, no frontend auth/UI changes (generated client only),
   no commit/push/PR/merge/deploy/release. T055 remains unchecked and unstarted.
@@ -343,7 +342,7 @@ person, credential, private topology, or protected runtime value appears here.
 
 ## 3. Fresh commands and totals (freshness authority)
 
-JDK: Temurin 21.0.12 (`/home/server/.cache/yui/jdk-21-temurin/bin` first on
+JDK: Temurin 21.0.12 (review host's JDK 21 toolchain first on
 PATH); Maven via `scripts/phase4/maven-toolchain.sh`.
 
 | Gate | Command | Result |
@@ -380,8 +379,93 @@ PATH); Maven via `scripts/phase4/maven-toolchain.sh`.
   views, and the context key resolves it server-issued-field by
   server-issued-field; no invented or client-expanded hospital authority
   exists anywhere.
-- Protected env (`/home/server/.config/medicore/runtime.env`,
-  `/home/server/medicore-runtime/trial.env`) never read; runs used H2 and
+- Protected runtime environment files were never read; runs used H2 and
   Testcontainers disposable stores only.
-- No dependency install, no commit/push/PR/merge/deploy/release. T062 and
-  later remain unchecked and unstarted.
+- This historical US2 checkpoint preceded US3–US8; its command totals and
+  scope statements apply to that checkpoint only. Later evidence follows.
+
+## Historical implementation checkpoint — US8 (pre-canonical snapshot)
+
+This is the earlier implementation checkpoint, preserved as history. At that
+point, coverage pointers and focused local runs had been recorded but the
+canonical acceptance had not yet run. Its `PARTIAL`/pending judgments below
+are explicitly historical and are superseded by the fresh canonical record
+that follows. All evidence remains synthetic and non-clinical.
+
+| Requirements | Tasks | Source / tests / runtime proof | Historical checkpoint verdict |
+|---|---|---|---|
+| FR-001 FR-002 FR-003 FR-004 | T011–T045 | `organization/NetworkHierarchy*`, `NetworkHierarchyApiTest`, V5, Compose hierarchy reads | Local tests pass; canonical pending |
+| FR-005 FR-006 FR-007 FR-008 FR-009 | T019–T025, T046–T061 | `auth/Hierarchical*`, `HierarchicalActingContextApiTest`, `AppShell.test.jsx`, context-switch E2E | Local tests pass; canonical pending |
+| FR-010 FR-011 FR-012 FR-013 | T062–T077 | `patient/PatientHospitalAccess*`, `NetworkPatientIdentityApiTest`, V6, `DemoDataInitializerTest` grant repair | Local tests pass; canonical pending |
+| FR-014 FR-015 FR-016 FR-017 FR-018 FR-019 FR-020 FR-021 | T078–T103 | `transfer/Transfer*`, V7, `TransferWorkflowApiTest`, `TransferConcurrencyIntegrationTest`, conflict E2E | Local tests pass; canonical pending |
+| FR-022 FR-023 | T104–T115 | `reporting/FacilityCapacity*`, `FacilityCapacityApiTest`, PostgreSQL concurrency cases | Local tests pass; canonical pending |
+| FR-024 FR-025 | T116–T126 | `reporting/NetworkOperationsDashboard*`, `NetworkOperationsDashboardApiTest`, `DashboardPage.test.jsx` | Local tests pass; canonical pending |
+| FR-026 FR-027 FR-028 | T127–T138 | `audit/NetworkAudit*`, `NetworkAuditIsolationApiTest`, `MetricsBoundaryIntegrationTest`, conflict E2E | Local tests pass; canonical pending |
+| FR-029 | T040–T042, T101–T102, T122 | `api/openapi/medicore-v1.yaml`, `frontend/src/generated/api/`, served-contract drift check | Local drift check passed; canonical pending |
+| FR-030 FR-031 | T014–T016, T063–T064, T081, T155–T156 | `Phase5MigrationIntegrationTest`, V5–V7, Testcontainers; shaped rehearsal pending | PARTIAL |
+| FR-032 | T139–T154 | `e2e/phase5-*.spec.js`, owned Compose desktop/mobile run: 7 passed, 3 intentional skips | Local pass; canonical pending |
+| FR-033 | T157–T159, T168–T169 | `scripts/phase5/acceptance.sh` 15-stage runner; complete run pending | PARTIAL |
+| FR-034 | T010, T160, T167 | `scripts/phase5/check-public-artifacts.sh` self-test and exact changed/untracked/spec candidate scan | Local pass; final candidate rescan pending |
+| FR-035 | T001–T005, T170 | intact worktree and documented stop gate | No new commit/push by this run; terminal verdict pending |
+
+| Criterion | Tasks | Exact local test/runtime/doc evidence | Historical checkpoint verdict |
+|---|---|---|---|
+| SC-001 SC-002 | T027, T032–T045 | `DemoDataInitializerTest`, `NetworkHierarchyApiTest`; V5 / hierarchy endpoint | Local tests pass |
+| SC-003 | T046–T061 | `HierarchicalActingContextApiTest`, context-discrimination desktop/mobile E2E | Local tests pass |
+| SC-004 | T062–T077 | `NetworkPatientIdentityApiTest`, `NetworkPatientConcurrencyIntegrationTest`, V6 / grant repair tests | Local tests pass |
+| SC-005 SC-006 SC-007 | T078–T103, T150, T156 | `TransferWorkflowApiTest`, `TransferConcurrencyIntegrationTest`, idempotency `201/201/409` and stale `409` E2E; separate race script pending | PARTIAL |
+| SC-008 | T104–T126 | `FacilityCapacityApiTest`, `NetworkOperationsDashboardApiTest` and SQL aggregate tests | Local tests pass |
+| SC-009 | T139–T154 | desktop/mobile Playwright journey + context switch, 7 pass / 3 intentional skip | Local pass |
+| SC-010 | T040–T042, T101–T102, T122 | `OpenApiContractTest`, generated-client typecheck, byte-drift check; repeated-generation canonical gate pending | PARTIAL |
+| SC-011 | T005, T168 | Phase 4 baseline and Phase 5 backend/frontend results; canonical Phase 4 run pending | PARTIAL |
+| SC-012 | T010, T160, T167 | public-artifact scanner self-test and changed/untracked/spec candidate scan clean; final rescan pending | PARTIAL |
+| SC-013 | T157–T159, T168–T170 | `scripts/phase5/acceptance.sh`, 15-stage run pending | PARTIAL |
+| SC-014 | T166, T169 | this matrix + planning traceability; fresh terminal re-read pending | PARTIAL |
+
+## Fresh canonical acceptance — T166 mapping (2026-10-12)
+
+**Current verdict: PASS — local synthetic portfolio scope only.** This section
+supersedes the historical checkpoint above, including its `PARTIAL` statuses.
+The planning-time `NOT RUN` cells in
+`specs/005-enterprise-hospital-network-operations/traceability.md` remain
+unchanged as an explicitly historical snapshot. The current per-ID map is in
+that spec's **Fresh canonical acceptance mapping (T166)** section.
+
+### Exact canonical results
+
+Canonical command: `bash scripts/phase5/acceptance.sh`; its untracked local
+log was captured as `$TMPDIR/phase5-canonical.log`. The run ended with
+`PASS CANONICAL PHASE 5 ACCEPTANCE: 15 checkpoints passed` and process exit 0.
+The 15 checkpoints and exact outcomes were:
+
+| # | Checkpoint | Direct result |
+|---:|---|---|
+| 1 | `capability-negative-proof` | PASS; missing Docker, psql, Java, and Node each refused with exit 2 (BLOCKED), not false PASS |
+| 2 | `public-artifact-scan` | PASS; scan clean, including scanner negative self-test |
+| 3 | `phase4-baseline` | PASS; canonical Phase 4 baseline 13/13 |
+| 4 | `empty-migrations` | PASS; `Phase5MigrationIntegrationTest` on disposable PostgreSQL |
+| 5 | `phase4-shaped-migration` | PASS; disposable Phase 4-shaped PostgreSQL migration rehearsal |
+| 6 | `backend-suite` | PASS; 392 tests, 0 failures, 0 errors, 0 skipped; `-Dapi.version=1.44` |
+| 7 | `postgres-concurrency` | PASS; `TransferConcurrencyIntegrationTest` 5/5, 0 failures/errors/skips |
+| 8 | `frontend-tests-build` | PASS; 343 tests / 24 files, strict typecheck and production build passed |
+| 9 | `openapi-drift` | PASS; “no drift — tracked artifacts match the served contract” |
+| 10 | `compose-health` | PASS |
+| 11 | `desktop-mobile-journey` | PASS; 7 passed, 3 intentionally skipped mobile duplicate cases |
+| 12 | `restart-recovery` | PASS; 7 migrations applied, 0 pending after backend restart; DB-loss readiness/liveness recovery checked |
+| 13 | `audit-log-metrics` | PASS; 15 tests, 0 failures/errors/skips (NetworkAuditIsolationApiTest 6, StructuredLogSanitizationIntegrationTest 6, MetricsBoundaryIntegrationTest 3) |
+| 14 | `docs-traceability` | PASS |
+| 15 | `disposable-cleanup-proof` | PASS; disposable Compose containers, project network, and volumes removed |
+
+The acceptance run proves these local gate outcomes; it does not turn every
+coverage pointer into a separately invoked test or certify production/clinical
+behavior. Read the traceability matrix's **Coverage pointers** and **Direct
+canonical proof** columns as distinct evidence types. FR-035 is a procedural
+boundary only: the run and this documentation authorize no commit, push,
+deployment, release, pilot, real-data use, or clinical/production claim.
+
+### Programmatic mapping completeness check
+
+After the mapping was written, a script extracted its FR and SC table keys and
+verified exact ordered sets `FR-001..FR-035` (35 unique IDs) and `SC-001..SC-014`
+(14 unique IDs), with no missing or duplicate IDs. Result: PASS. The three
+requested documentation files were also checked with `git diff --check` (clean).
